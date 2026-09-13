@@ -1,33 +1,58 @@
-# Design Lens
+# Sidecar design lens
 
-## Status
+Established by the beta 4 roadmap and the 2026-09-13 phase handoff.
+These cross-ticket decisions complement the authoritative SC phases.
 
-There are currently no active project-specific design guardrails recorded here.
+## Framework remains the skill execution authority
 
-## Purpose
+- **Decision:** Use the public catalog, validation, invocation, observer and named
+  REST SPI. The framework owns skill validation, authorization, nesting and
+  execution lifetime; Sidecar owns transport, admission and retention.
+- **Why this is non-obvious:** Re-parsing manifests or replacing internal beans
+  can appear to simplify startup or HTTP error handling while creating a second
+  authority and an unsupported dependency.
+- **Applies to:** All integration, production and test code.
+- **Exceptions:** New framework contracts require deliberate developer planning.
 
-This document preserves durable, non-obvious, cross-cutting decisions that future research, planning, implementation, and review must remember. It is intentionally a placeholder until this app develops such constraints.
+## One admission owner and one retained record
 
-An entry belongs here only when all of the following are true:
+- **Decision:** Coordinate worker/queue capacity and queued bytes with one owner;
+  publish terminal outcome and selected history together in the same record.
+  Count/TTL bounds and input byte limits are distinct; neither bounds total heap.
+- **Why this is non-obvious:** Separate semaphores, staging queues and history
+  stores can duplicate authority and publish partial outcomes.
+- **Applies to:** Execution admission, diagnostics and shutdown cleanup.
+- **Exceptions:** None in beta 4.
 
-- it is specific to this app rather than general software-engineering advice;
-- it applies across multiple tickets or feature areas;
-- it is expected to remain valid long enough to guide future work;
-- violating it could produce a plausible but incorrect implementation; and
-- the rule cannot be reliably reconstructed from the checked-out code and tests alone.
+## Trusted identity stays outside model inputs
 
-Do not add repository architecture summaries, coding conventions visible in the source, ticket-specific requirements, temporary implementation notes, or generic reminders such as testing, authorization, validation, and error handling. Put those in the relevant code, tests, ticket, plan, or command instead.
+- **Decision:** JWT-only inbound identity is propagated through queued execution
+  via Spring Security. Ownership uses issuer and subject. Passthrough forwards
+  the captured credential; Sidecar never mints, refreshes or exchanges tokens.
+- **Why this is non-obvious:** Request-thread authentication is lost at ordinary
+  executor boundaries; input-carried identity is not a trusted substitute.
+- **Applies to:** Execution API, authorization, ownership and REST callbacks.
+- **Exceptions:** Test issuers may mint local fixture tokens.
 
-Possible future subjects include AI decision authority, provenance and audit requirements for AI-derived values, model data boundaries, evaluation requirements for prompt or model changes, failure and fallback policy, and whether AI results may initiate external side effects. These examples are not current policy.
+## Startup activation and one framework shutdown budget
 
-## Entry Format
+- **Decision:** Skills/routes load at startup and change on restart. Sidecar
+  immediately stops dispatch and discards queued work on close; framework
+  shutdown owns already-admitted work. Keep clients/callers alive until its
+  completion/cutoff, then clean up without another drain period.
+- **Why this is non-obvious:** Queue draining, ordered listeners or early client
+  teardown can defeat the framework's existing deadline and nested work.
+- **Applies to:** Configuration, workers, HTTP clients, readiness and packaging.
+- **Exceptions:** None in beta 4; reload requires new planning.
 
-```markdown
-## <Guardrail name>
+## Preserve the available diagnostic contract
 
-- **Decision:** <The rule future work must preserve.>
-- **Why this is non-obvious:** <What a reasonable implementation might otherwise get wrong.>
-- **Applies to:** <Features, data, integrations, or workflows covered by the rule.>
-- **Exceptions:** <Explicit exceptions, or `None`.>
-- **Established by:** <Ticket, decision, date, or other authoritative source.>
-```
+- **Decision:** Return text unchanged and retain all selected public observer
+  events without Sidecar size truncation. Preserve the facade's primary failure.
+  History is available completed diagnostics, not a guaranteed complete trace.
+- **Why this is non-obvious:** An observer may never run after pre-session or
+  mapping/finalization failures. Waiting for it or parsing internal traces creates
+  unsupported behavior. Diagnostic events may contain business data.
+- **Applies to:** Failure envelopes, diagnostics, retention and client guidance.
+- **Exceptions:** NEVER/ONERROR selection and whole-record completion TTL remain
+  the agreed policies; no new sanitization or durable-history contract.
