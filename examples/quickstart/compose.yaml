@@ -1,0 +1,42 @@
+services:
+  host:
+    build: ./host
+    environment:
+      QUICKSTART_ISSUER: http://host:8081
+      QUICKSTART_AUDIENCE: loomspan-sidecar
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health')"]
+      interval: 2s
+      timeout: 1s
+      retries: 15
+    ports:
+      - "${QUICKSTART_HOST_PORT:-8081}:8081"
+
+  sidecar:
+    image: ${SIDECAR_IMAGE:-loomspan-sidecar:sc5-local}
+    depends_on:
+      host:
+        condition: service_healthy
+    environment:
+      LOOMSPAN_CONNECTIONS_LOCAL_DRIVER: openai
+      LOOMSPAN_CONNECTIONS_LOCAL_BASE_URL: http://host:8081/v1
+      LOOMSPAN_CONNECTIONS_LOCAL_API_KEY: local-example-only
+      LOOMSPAN_MODELS_LOCALPLANNER_CONNECTION: local
+      LOOMSPAN_MODELS_LOCALPLANNER_PROVIDER_MODEL: deterministic-planner
+      LOOMSPAN_SIDECAR_AUTH_JWT_ISSUER_URI: http://host:8081
+      LOOMSPAN_SIDECAR_AUTH_JWT_AUDIENCE: loomspan-sidecar
+      LOOMSPAN_SIDECAR_AUTH_JWT_PUBLIC_KEY_LOCATION: file:/sidecar/keys/public.pem
+      LOOMSPAN_SIDECAR_AUTH_JWT_CLOCK_SKEW: 0s
+      LOOMSPAN_SIDECAR_EXECUTIONS_DIAGNOSTICS: ALWAYS
+      LOOMSPAN_SHUTDOWN_TIMEOUT: 10s
+    volumes:
+      - ./sidecar:/sidecar:ro
+    ports:
+      - "${SIDECAR_API_PORT:-8080}:8080"
+      - "${SIDECAR_MANAGEMENT_PORT:-9091}:9091"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:9091/actuator/health/readiness"]
+      interval: 2s
+      timeout: 1s
+      retries: 30
+      start_period: 10s

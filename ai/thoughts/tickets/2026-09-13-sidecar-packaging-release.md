@@ -69,10 +69,12 @@ release gates. Starting this ticket does not authorize publication.
   down immediately at shutdown. Liveness remains up during a long execution.
 - Preserve and prove the existing independent shutdown gates in the packaged
   application. At owning-context close, reject new execution admission with
-  `503`, prevent new dispatch into `SkillTemplate.invoke`, and discard waiting
+  `503`, prevent new dispatch into `SkillInvocationHandoff`, and discard waiting
   requests directly, releasing queue count/bytes and input/security references.
-  Synchronize dequeue/dispatch so a dequeued request cannot begin a new invocation
-  after dispatch closes. Do not drain queued requests through the framework.
+  Synchronize dequeue/dispatch so a dequeued request cannot transfer to framework
+  ownership after dispatch closes. A successful handoff is the atomic ownership
+  boundary: Sidecar discards work that has not crossed it, while Loomspan owns
+  handed-off work. Do not drain queued requests through the framework.
 - The independent `ContextClosedEvent` listener returns promptly, opts out of
   asynchronous execution and ignores other contexts' close events. It does not
   wait, invoke the framework, depend on listener order or start a Sidecar drain
@@ -85,11 +87,16 @@ release gates. Starting this ticket does not authorize publication.
   teardown must be bounded, without early interruption, another grace period or
   unbounded executor `close()` waits. A shorter Spring lifecycle-phase timeout
   must not shorten the framework budget.
-- Prove the actual listener/client/caller wiring with both relative close-listener
-  orders, active observer delivery as well as skill execution, blocked trace
-  writes, management-context close events and asynchronous standard event
-  multicasting. Use supported public APIs and standard Spring facilities only.
-  No internal bean overrides, internal phase/name dependencies, new shutdown API,
+- Prove the Sidecar-owned boundary with both deterministic close-or-handoff race
+  outcomes, active skill and observer delivery through the actual client/caller
+  wiring, management-context close events, and asynchronous standard event
+  multicasting. Sidecar integration proves normal accepted-work completion and
+  that its resources are not torn down early; matching framework lifecycle tests
+  own internal listener ordering, blocked trace finalization, the single shutdown
+  budget, and cutoff after successful handoff. Do not treat framework tests as
+  evidence for Sidecar-owned admission, discard, resource wiring, or cleanup.
+  Use supported public APIs and standard Spring facilities only. No internal bean
+  overrides, internal phase/name dependencies, new Sidecar shutdown API,
   reflection bypasses or cross-repository priority conventions.
 - Reuse the common Sidecar application fixture for HTTP/JWT/queue/route
   integration. Focused tests retain exhaustive binder/authentication coverage;
@@ -140,39 +147,41 @@ release gates. Starting this ticket does not authorize publication.
 
 ### Local snapshot preparation, before framework publication
 
-- [ ] Local image build succeeds against the installed snapshot. The image runs
+- [x] Local image build succeeds against the installed snapshot. The image runs
   non-root with documented JVM defaults and starts using environment variables
   and the mounted skills/route configuration. Location overrides remain usable;
   no framework source build or snapshot repository is added to Sidecar builds.
-- [ ] Packaged readiness remains down until skill registration and route
+- [x] Packaged readiness remains down until skill registration and route
   validation finish; invalid configuration prevents readiness. Management probes
   operate on their separate port and liveness stays up during long work.
-- [ ] Snapshot integration proves pre-dispatch rejection, asynchronous JWT
+- [x] Snapshot integration proves pre-dispatch rejection, asynchronous JWT
   propagation through planner/REST callbacks to a verifying host, owner-scoped
   polling and `NEVER`, `ONERROR`, `ALWAYS` diagnostics with intact selected
   events/outcomes. Local deterministic fixtures require no external account.
-- [ ] Shutdown promptly lowers readiness, rejects new admission with `503` and
+- [x] Shutdown promptly lowers readiness, rejects new admission with `503` and
   closes dispatch, including dequeue races. Waiting work is discarded directly;
   reservations and input/security references are released without queue draining.
-- [ ] Actual Sidecar shutdown wiring handles active skills/observers, blocked
-  trace writes, either listener order, management-context events and asynchronous
-  multicasting through public contracts. Callers/clients survive until framework
-  completion/cutoff; shorter Spring phase timeout does not shorten the budget.
-  Framework cutoff and subsequent cleanup introduce no unbounded wait, second
-  drain period or early resource teardown.
-- [ ] Quick-start commands succeed as written against the local image with one
+- [x] Actual Sidecar shutdown wiring proves both close-or-handoff ownership
+  outcomes, active skills/observers, management-context events, asynchronous
+  multicasting, normal accepted-work completion and no early Sidecar resource
+  teardown through public contracts. Matching framework lifecycle tests prove
+  internal listener ordering, blocked trace finalization, the single shutdown
+  budget and cutoff after handoff. Framework evidence is not substituted for
+  Sidecar-owned admission, discard, client/caller wiring or cleanup. Subsequent
+  cleanup introduces no unbounded wait or second drain period.
+- [x] Quick-start commands succeed as written against the local image with one
   planner, two REST leaves, local model configuration/stub, JWT issuer and host
   that verifies the callback token. The Kubernetes example reflects the same
   configuration/probes and documented shutdown behavior.
-- [ ] Configuration reference is tested against bound properties, and examples
+- [x] Configuration reference is tested against bound properties, and examples
   use the separate route file. Security, diagnostics/data limits, restart-only
   activation and state loss are accurately documented. Public-surface architecture
   checks and the required Sidecar build/integration suites pass.
-- [ ] CI/release preparation includes image build/tests and a tag workflow for
+- [x] CI/release preparation includes image build/tests and a tag workflow for
   image/JAR/checksums, enforcing released framework `1.0.0-beta.4` and refusing
   SNAPSHOT release dependencies. Nonpublishing validation succeeds; no publishing
   operation is performed by local preparation.
-- [ ] Retained local evidence identifies exact commands/results and both tested
+- [x] Retained local evidence identifies exact commands/results and both tested
   source states in the existing framework readiness record. Any discovered
   framework defects have been fixed, reinstalled by the developer and retested.
   The handoff states local readiness and all remaining publication/CI gates
@@ -189,6 +198,42 @@ release gates. Starting this ticket does not authorize publication.
   written against the published image. Release evidence identifies the artifacts
   and source state; no release is overwritten. These checks stay pending until
   they actually run, even if local implementation/review is complete.
+
+## Local snapshot execution note — 2026-09-14
+
+The initial independently executable local snapshot-stage checks passed against
+the installed `1.0.0-beta.4-SNAPSHOT`, with exact source states, commands,
+results, and image identity retained in the framework beta 4 readiness record.
+Independent review cycle 3 subsequently found that the Sidecar transition ended
+before actual framework admission and that the required trace-finalization
+lifecycle evidence lacked a supported boundary. The developer authorized the
+recommended framework remediation rather than weakening the atomic-dispatch
+requirement.
+
+Framework commit `5d19c7a` added the supported `SkillInvocationHandoff` and
+`AdmittedSkillInvocation` API; cleanup is committed at framework revision
+`bfc2764bb661a6eccad9fd120cd687e6a911e99a`. On 2026-09-14 the developer
+confirmed that a new `1.0.0-beta.4-SNAPSHOT` was installed. The local starter
+JAR contains both public API classes and has SHA-256
+`901769CACBAF7F0CD2B39845ED1D7AC3D63294D64F74CC9D411C16925620D2AA`.
+Sidecar must now adopt the handoff, resolve the remaining lifecycle-evidence
+finding through supported contracts, and rerun affected integration and release
+gates before local SC5 readiness is current again.
+
+Review cycle 4 confirmed that Sidecar correctly adopts the public handoff and
+that the remaining blocker was solely the ticket's demand for a Sidecar-local
+blocked trace-finalization boundary. The developer then clarified the intended
+ownership model: Sidecar directly discards all work that has not successfully
+crossed `SkillInvocationHandoff`; Loomspan exclusively owns accepted work,
+including blocked trace finalization, its listener ordering, deadline and cutoff.
+Accordingly, this ticket no longer requires a public trace-writer SPI or a
+Sidecar test that blocks framework-internal finalization. Sidecar still must
+prove its own handoff race outcomes, discard/reference cleanup, real resource
+wiring, and normal accepted-work completion without internal dependencies.
+
+No tag, publication, publishing-workflow dispatch, hosted-CI claim, or released-
+dependency claim was made. The two post-publication acceptance criteria remain
+pending and require separate authorization and actual external evidence.
 
 ## Context
 
@@ -235,3 +280,8 @@ existing repository/release conventions. Keep process and code proportional.
   dependency verification when framework publication is confirmed. Ticket
   execution alone does not authorize either project's tag/publication, and
   deferred gates must not be marked passed or waived.
+- Developer decision on 2026-09-14: a successful public invocation handoff is
+  the sole Sidecar-to-framework ownership boundary. Sidecar dumps all work that
+  has not crossed it; framework tests own blocked trace finalization and cutoff
+  after it. Do not add a public trace-finalization API solely to duplicate that
+  framework-owned proof in Sidecar.

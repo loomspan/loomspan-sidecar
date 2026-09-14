@@ -21,3 +21,7 @@ jobs:
         run: |
           chmod +x mvnw
           ./mvnw -B -ntp -Dloomspan.version=1.0.0-beta.4 verify
+      - name: Build and verify image without publishing
+        run: |
+          docker build --tag loomspan-sidecar:ci .
+          python scripts/verify-image.py --image loomspan-sidecar:ci --verify-kubernetes

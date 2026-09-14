@@ -1,0 +1,14 @@
+name: quickstartPlanner
+description: Plan two deterministic local REST calls.
+model: localplanner
+planning_mode: true
+concurrency: false
+max_steps: 4
+allowed_skills:
+  - name: identityLeaf
+  - name: detailLeaf
+input_schema:
+  type: object
+  properties:
+    message: {type: string}
+  required: [message]

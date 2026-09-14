@@ -1,11 +1,14 @@
 package ai.loomspan.sidecar.management;
 
+import ai.loomspan.sidecar.execution.ExecutionCoordinator;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.actuate.endpoint.web.WebEndpointsSupplier;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalManagementPort;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.context.event.ContextClosedEvent;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -36,6 +39,12 @@ class ManagementEndpointIntegrationTest
     @Autowired
     WebEndpointsSupplier webEndpointsSupplier;
 
+    @Autowired
+    ExecutionCoordinator coordinator;
+
+    @Autowired
+    ConfigurableApplicationContext applicationContext;
+
     @Test
     void healthAndReadinessAreExposedOnlyOnSeparateManagementPort() throws Exception
     {
@@ -43,6 +52,7 @@ class ManagementEndpointIntegrationTest
 
         HttpResponse<String> health = get(managementPort, "/actuator/health");
         HttpResponse<String> readiness = get(managementPort, "/actuator/health/readiness");
+        HttpResponse<String> liveness = get(managementPort, "/actuator/health/liveness");
         HttpResponse<String> info = get(managementPort, "/actuator/info");
         HttpResponse<String> applicationHealth = get(applicationPort, "/actuator/health");
 
@@ -50,11 +60,21 @@ class ManagementEndpointIntegrationTest
         assertThat(health.body()).contains("\"status\":\"UP\"");
         assertThat(readiness.statusCode()).isEqualTo(200);
         assertThat(readiness.body()).contains("\"status\":\"UP\"");
+        assertThat(liveness.statusCode()).isEqualTo(200);
+        assertThat(liveness.body()).contains("\"status\":\"UP\"");
         assertThat(info.statusCode()).isNotEqualTo(200);
         assertThat(applicationHealth.statusCode()).isNotEqualTo(200);
         assertThat(webEndpointsSupplier.getEndpoints())
                 .extracting(endpoint -> endpoint.getEndpointId().toString())
                 .containsExactly("health");
+
+        coordinator.onApplicationEvent(new ContextClosedEvent(applicationContext));
+        HttpResponse<String> refusing = get(managementPort, "/actuator/health/readiness");
+        HttpResponse<String> liveDuringRefusal = get(managementPort, "/actuator/health/liveness");
+        assertThat(refusing.statusCode()).isEqualTo(503);
+        assertThat(refusing.body()).contains("OUT_OF_SERVICE");
+        assertThat(liveDuringRefusal.statusCode()).isEqualTo(200);
+        assertThat(liveDuringRefusal.body()).contains("\"status\":\"UP\"");
     }
 
     private HttpResponse<String> get(int port, String path) throws Exception

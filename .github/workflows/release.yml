@@ -1,0 +1,107 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - id: version
+        name: Verify tag and released framework pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x mvnw
+          version="$(./mvnw -q -DforceStdout help:evaluate -Dexpression=project.version)"
+          loomspan="$(./mvnw -q -DforceStdout help:evaluate -Dexpression=loomspan.version)"
+          python scripts/prepare-release.py --validate-only --project-version "$version" --loomspan-version "$loomspan" --tag "${GITHUB_REF_NAME}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Verify application and image
+        run: |
+          ./mvnw -B -ntp -Prelease verify
+          docker build --tag loomspan-sidecar:release-candidate .
+          python scripts/verify-image.py --image loomspan-sidecar:release-candidate --verify-kubernetes
+      - name: Prepare JAR archive and checksums
+        run: |
+          python scripts/prepare-release.py --project-version "${{ steps.version.outputs.version }}" --loomspan-version 1.0.0-beta.4 --tag "${GITHUB_REF_NAME}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: target/release/*
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: target/release
+      - name: Refuse to overwrite an existing GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}")"
+          case "$status" in
+            404) ;;
+            200) echo "Release ${GITHUB_REF_NAME} already exists; refusing to overwrite it." >&2; exit 1 ;;
+            *) echo "Could not establish whether release ${GITHUB_REF_NAME} exists (HTTP $status)." >&2; exit 1 ;;
+          esac
+      - name: Recreate executable JAR for the runtime image
+        run: |
+          chmod +x mvnw
+          ./mvnw -B -ntp -Prelease -DskipTests package
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Refuse to overwrite an existing image tag
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY}:${{ needs.verify.outputs.version }}"
+          if output="$(docker manifest inspect "$image" 2>&1)"; then
+            echo "Image tag $image already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+          if ! grep -Eqi 'manifest unknown|no such manifest' <<<"$output"; then
+            echo "Could not establish whether image tag $image exists: $output" >&2
+            exit 1
+          fi
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository }}:${{ needs.verify.outputs.version }}
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: target/release/*

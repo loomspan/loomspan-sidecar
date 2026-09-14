@@ -2,7 +2,7 @@
 date: 2026-09-14
 repository: loomspan-sidecar
 branch: main
-commit: d4471c0393051ee2ba0b8e3decfd48690bb5f404
+commit: d83902713bcf84375c3f54b8d33a66e048f0aa39
 ticket: ai/thoughts/tickets/2026-09-13-sidecar-packaging-release.md
 tags: [sc5, packaging, container, lifecycle, readiness, release]
 ---
@@ -20,339 +20,361 @@ contracts and release gates constrain SC5?
 
 The current checkout is a repackageable Spring Boot JAR, not a containerized
 application. It has no Dockerfile or build-image configuration, no image or tag
-release workflow, no Kubernetes or runnable quick-start fixture, and no Sidecar
-release evidence record. Its sole workflow runs Maven verification against an
-override to the future published framework version.
+release workflow, no Kubernetes example, no runnable image quick-start fixture,
+and no Sidecar-local SC5 evidence record. Its sole workflow runs Maven
+verification against an override to the future released framework version.
 
-Existing production code supplies JWT authentication, owner-scoped asynchronous
-execution, bounded in-memory admission/retention, diagnostic selection, a
-close-event gate, and separate-port Actuator health. The current tests cover
-those components mostly in-process. They do not exercise the SC5 packaged
-lifecycle matrix, image startup, a production callback client, or a full local
-quick start.
+The checked-out production application does contain the completed SC1-SC4
+runtime: startup-only mounted YAML skills and REST routes, a production
+`RestSkillHandler`, target-specific bounded HTTP clients, JWT authentication,
+owner-scoped asynchronous execution, bounded admission/retention, diagnostic
+selection, management-port health, and independent framework/Sidecar shutdown
+ownership. The broad HTTP integration already uses the production REST handler
+and a loopback callback which verifies the original token after a YAML planner
+invokes a REST leaf. These are in-process tests, not packaged-image evidence.
 
-The ticket's assertion that the generic production REST handler is already
-implemented does not match the checked-out tree. There is no production
-`RestSkillHandler`, route configuration class, route loader, binding, or HTTP
-client. Commit `c709cab` is titled as the REST implementation but its tree diff
-adds the generic-handler ticket and changes authenticated-execution plans/tests;
-commit `d4471c0` removes those plans. The README still explicitly calls the
-outbound REST handler future SC4 work. The existing nested REST test supplies a
-test-only handler, so it proves security-context propagation to an injected
-callback, not the production route/transport path required by SC5.
+The remaining lifecycle evidence is narrower than the ticket's packaged matrix.
+The coordinator closes admission/readiness and drains queued tasks under its gate,
+but a successful `begin` releases that gate before calling `SkillTemplate.invoke`,
+leaving the dequeue/begin-to-framework-entry interval untested. Existing real
+context-close tests prove REST clients outlive direct framework calls through
+completion or cutoff, but do not combine actual Sidecar worker/caller wiring,
+observer delivery, management-context events, or asynchronous event
+multicasting. Listener ordering, blocked trace finalization, the single shutdown
+budget, and cutoff are framework-owned behaviors rather than Sidecar-local proof
+obligations.
 
-The local framework checkout is clean at
-`e62b7769a93d98d74ed56a63d4b0ed4b8b641d1f`, later than the initial source pin
-`385729a254261de128df491505acd8898cc0a021`. Changes after the pin include a
-production observability route-collision update, but the lifecycle and supported
-REST SPI inspected for this research retain the documented beta 4 shape. Per
-repository policy, the developer-managed install workflow is the authority that
-keeps this checkout and the locally installed
-`1.0.0-beta.4-SNAPSHOT` artifact aligned; SC5 still has to record the exact
-tested framework revision.
+The matching framework checkout is clean at
+`e62b7769a93d98d74ed56a63d4b0ed4b8b641d1f`. Since the repository's initial pin,
+its only production-source change is an observability route-collision check; the
+inspected public REST SPI, `SkillTemplate` contract, and lifecycle implementation
+retain the beta 4 shape. Repository policy treats the developer-managed install
+as aligned with that checkout; SC5 evidence still has to name the exact tested
+framework and Sidecar states. Publication and post-publication gates remain
+explicitly pending and unauthorized.
 
 ## Repository State
 
-- Observed at `2026-09-13T23:56:42-07:00` in `loomspan-sidecar`.
-- Branch `main`, commit `d4471c0393051ee2ba0b8e3decfd48690bb5f404`.
-- Before this research artifact was created, the only working-tree entry was the
-  untracked ticket
-  `ai/thoughts/tickets/2026-09-13-sidecar-packaging-release.md`; it is developer
-  input and must be preserved.
-- Ignored local build/log material already exists under `target/` and in six
-  `sc1-*.log` files. It was not treated as current SC5 evidence.
+- Observed at `2026-09-14T08:45:53-07:00` in `loomspan-sidecar`.
+- Branch `main`, commit `d83902713bcf84375c3f54b8d33a66e048f0aa39`.
+- The Sidecar worktree was clean before this research artifact was updated. The
+  pre-existing artifact described commit `d4471c0` and was stale relative to the
+  subsequently committed SC4 implementation.
 - The framework checkout was clean on branch `main` at
   `e62b7769a93d98d74ed56a63d4b0ed4b8b641d1f`.
+- Ignored `target/` output was not treated as current SC5 verification evidence.
+  No live external service or publication action was invoked.
 
 ## Current Behavior and Data Flow
 
-### Startup, configuration, and readiness
+### Startup, routes, and readiness
 
-`LoomspanSidecarApplication` enables only `SidecarExecutionProperties` and
-`SidecarJwtProperties` (`src/main/java/ai/loomspan/sidecar/LoomspanSidecarApplication.java:9`).
-The production YAML supplies two `/sidecar/skills` resource patterns, disables
-framework observability, reserves `file:/sidecar/rest-routes.yaml`, configures
-execution defaults, and exposes health on management port 9091
-(`src/main/resources/application.yml:1`). The route-location value is currently
-an environment property only: no production Sidecar class binds or consumes it.
+`LoomspanSidecarApplication` binds execution, JWT, and route-location properties
+(`src/main/java/ai/loomspan/sidecar/LoomspanSidecarApplication.java:10`). The
+production YAML defaults skill discovery to `/sidecar/skills/**/*.yaml` and
+`/**/*.yml`, routes to `/sidecar/rest-routes.yaml`, disables Loomspan
+observability, and exposes only health on management port 9091
+(`src/main/resources/application.yml:1`). Both skill and route locations are
+startup overrides.
 
-Framework YAML registration is eager. The framework registrar reads all skill
-definitions during singleton completion and requires exactly one
-`RestSkillHandler` only when REST definitions exist
+`RestRouteLoader` eagerly reads one required route document during bean creation,
+resolves required Spring placeholders, and validates the closed target/route
+schema without contacting targets (`src/main/java/ai/loomspan/sidecar/rest/RestRouteLoader.java:46`).
+It requires `targets` and `routes` maps; validates unique names, HTTP(S) base URLs,
+auth mode and headers, SSL-bundle references, positive connect/read timeouts and
+response caps, GET/POST, safe path variables, and target references
+(`src/main/java/ai/loomspan/sidecar/rest/RestRouteLoader.java:82`).
+
+Framework registration eagerly completes all YAML definitions and requires
+exactly one public `RestSkillHandler` when REST skills exist
 (`C:/opendev/code/loomspan-framework/loomspan-spring-boot-starter/src/main/java/ai/loomspan/internal/skill/YamlSkillCapabilityRegistrar.java:34`).
-The public catalog constructor explicitly completes registration before it
-snapshots descriptors
-(`C:/opendev/code/loomspan-framework/loomspan-spring-boot-starter/src/main/java/ai/loomspan/internal/skillapi/DefaultSkillCatalog.java:20`).
-Consequently invalid model-backed skill registration prevents application
-startup, while the current Sidecar does not validate `rest-routes.yaml`; mounted
-REST manifests cannot start without some externally supplied handler bean.
+The Sidecar always supplies one production handler. `RestRouteCatalogValidator`
+then compares every configured route with the completed public catalog and
+requires a one-to-one route for every REST skill
+(`src/main/java/ai/loomspan/sidecar/rest/RestRouteCatalogValidator.java:20`).
+Both registration and route validation complete before application startup can
+finish, so invalid skills/routes prevent a ready running context.
 
-Actuator health and readiness endpoints are enabled and exposed only on the
-management server (`src/main/resources/application.yml:25`). There is no custom
-startup readiness component. A running valid test application reports health
-and readiness `UP` on the management port
-(`src/test/java/ai/loomspan/sidecar/management/ManagementEndpointIntegrationTest.java:38`).
-The coordinator explicitly publishes `REFUSING_TRAFFIC` when its owning context
-closes (`src/main/java/ai/loomspan/sidecar/execution/ExecutionCoordinator.java:168`).
-No current test observes the management readiness endpoint during slow startup,
-invalid route validation, long execution, or shutdown.
+Boot health probes are exposed on the separate management server
+(`src/main/resources/application.yml:25`). A valid running test context reports
+health and readiness `UP`, while the application port does not expose Actuator
+(`src/test/java/ai/loomspan/sidecar/management/ManagementEndpointIntegrationTest.java:39`).
+The coordinator publishes `REFUSING_TRAFFIC` for its owning close event
+(`src/main/java/ai/loomspan/sidecar/execution/ExecutionCoordinator.java:168`). No
+current test observes readiness over HTTP during slow startup, invalid route
+startup, active long work, or shutdown, and no liveness group is directly tested.
 
-### Authenticated asynchronous execution
+### Authenticated asynchronous execution and callbacks
 
-Every `/v1/**` request is stateless JWT-authenticated; health and framework
-observability namespaces are separately permitted and all other application
-routes are denied (`src/main/java/ai/loomspan/sidecar/security/JwtSecurityConfiguration.java:86`).
-JWT construction supports issuer discovery, an explicit JWKS URI, or an RSA
-public key. Validators require signature, issuer, audience, timestamp,
-nonblank issuer/subject, and expiration (`src/main/java/ai/loomspan/sidecar/security/JwtSecurityConfiguration.java:34`).
-Roles come from configurable `roles-claim` and `role-prefix`, with the same
-prefix exposed through Spring's `GrantedAuthorityDefaults`
-(`src/main/java/ai/loomspan/sidecar/security/JwtSecurityConfiguration.java:71`).
+Every `/v1/**` request is stateless JWT-authenticated. JWT construction supports
+issuer discovery, an explicit JWKS URI, or an RSA public key, with issuer,
+audience, timestamp, nonblank subject/issuer, signature, and configurable role
+validation (`src/main/java/ai/loomspan/sidecar/security/JwtSecurityConfiguration.java:35`).
+Health and framework observability namespaces are separately permitted; all
+other application paths are denied (`src/main/java/ai/loomspan/sidecar/security/JwtSecurityConfiguration.java:88`).
 
-For a POST, `ExecutionController` verifies the catalog name, reads a bounded
-JSON object, calls the public `SkillTemplate.validate` pre-dispatch, then admits
-the validated map with its verified authentication and `(issuer, subject)`
-owner (`src/main/java/ai/loomspan/sidecar/api/ExecutionController.java:41`). The
-public framework contract states that validation does not reserve framework
-execution admission
-(`C:/opendev/code/loomspan-framework/loomspan-spring-boot-starter/src/main/java/ai/loomspan/api/SkillTemplate.java:11`).
-Accepted work returns `202` and a polling location. Polling returns a snapshot
-only when both owner fields match (`src/main/java/ai/loomspan/sidecar/execution/ExecutionCoordinator.java:100`).
+For a POST, `ExecutionController` resolves the public catalog entry, reads a
+bounded JSON object, calls public `SkillTemplate.validate` before admission, then
+captures `(issuer, subject)` ownership and the verified JWT authentication in
+the coordinator (`src/main/java/ai/loomspan/sidecar/api/ExecutionController.java:41`).
+The framework contract states that validation does not reserve framework root
+admission (`C:/opendev/code/loomspan-framework/loomspan-spring-boot-starter/src/main/java/ai/loomspan/api/SkillTemplate.java:13`).
+Accepted work returns `202` and a poll location. Polling discloses a record only
+when both owner fields match (`src/main/java/ai/loomspan/sidecar/execution/ExecutionCoordinator.java:100`).
 
-`ExecutionCoordinator` owns the record map, fixed worker pool, transfer queue,
-queued count/bytes, expiry sweeper, and one lock used for admission and dispatch
-state (`src/main/java/ai/loomspan/sidecar/execution/ExecutionCoordinator.java:35`).
-The worker restores the captured JWT authentication before calling public
-`SkillTemplate.invoke`, gathers available public observer events, clears the
-security context, and clears task input/authentication references on exit
+`ExecutionCoordinator` owns one record map, fixed worker pool, transfer queue,
+queued count/bytes, expiry sweeper, and gate lock
+(`src/main/java/ai/loomspan/sidecar/execution/ExecutionCoordinator.java:35`). A
+worker installs the captured authentication, invokes public `SkillTemplate`,
+collects available public observer events, clears the security context, and
+clears task input/authentication references
 (`src/main/java/ai/loomspan/sidecar/execution/ExecutionCoordinator.java:260`).
-Terminal publication selects no events for `NEVER`, failed-work events for
+Terminal publication retains no events for `NEVER`, failed-work events for
 `ONERROR`, and all available terminal events for `ALWAYS`; result text and
-events are stored without Sidecar truncation
+selected events are not Sidecar-truncated
 (`src/main/java/ai/loomspan/sidecar/execution/ExecutionCoordinator.java:141`).
 
-The existing HTTP integration uses a deterministic loopback OpenAI-compatible
-model stub and a test-only `RestSkillHandler`. It proves rejection before
-admission, accepted polling/ownership, queue-time token expiry at the HTTP
-boundary, worker token retention, and a nested YAML plan exposing the original
-JWT to that test bean
-(`src/test/java/ai/loomspan/sidecar/execution/AuthenticatedExecutionApiIntegrationTest.java:59`,
-`src/test/java/ai/loomspan/sidecar/execution/AuthenticatedExecutionApiIntegrationTest.java:140`,
-`src/test/java/ai/loomspan/sidecar/execution/AuthenticatedExecutionApiIntegrationTest.java:201`,
-`src/test/java/ai/loomspan/sidecar/execution/AuthenticatedExecutionApiIntegrationTest.java:290`).
-It does not make a production outbound HTTP call or validate a callback host.
+`GenericRestSkillHandler` maps a public `RestSkillInvocation` to the startup
+route snapshot, validates JSON-compatible input, binds safe path/query/body data,
+adds static headers or the captured original bearer token, invokes a target's
+isolated client, and converts bounded transport failures to `SkillException`
+(`src/main/java/ai/loomspan/sidecar/rest/GenericRestSkillHandler.java:36`).
+`RestTargetClients` creates one redirect/retry-disabled Apache client per target,
+applies connect/read limits and optional Boot SSL bundles, bounds the response
+stream, and closes all clients idempotently
+(`src/main/java/ai/loomspan/sidecar/rest/RestTargetClients.java:33`).
+
+`AuthenticatedExecutionApiIntegrationTest` uses loopback model and callback
+servers plus the production route file/handler. It proves HTTP pre-dispatch
+role/input rejection, async admission and owner polling, callback-time expiry,
+worker-context isolation, and a YAML planner invoking a REST leaf while the host
+verifies the original token's signature, issuer, audience, expiry, subject, and
+roles (`src/test/java/ai/loomspan/sidecar/execution/AuthenticatedExecutionApiIntegrationTest.java:76`,
+`:142`, `:180`, `:207`). It is not yet a shared packaged application fixture and
+does not run the image or the documented quick-start commands.
 
 ### Shutdown and resource lifetime
 
-For its owning `ContextClosedEvent`, `ExecutionCoordinator` sets its `open` gate
-false, publishes readiness refusal, drains waiting runnables directly, removes
-their records, releases reservations, and clears input/authentication references.
-The listener ignores other contexts and opts out of asynchronous listener
+For its owning close event, `ExecutionCoordinator` acquires its gate, closes
+Sidecar admission, publishes readiness refusal, drains waiting runnables directly,
+removes their records, releases queue reservations, and clears input/security
+references. It ignores other contexts and opts out of asynchronous listener
 execution (`src/main/java/ai/loomspan/sidecar/execution/ExecutionCoordinator.java:168`).
-Admission, queue operations, task `begin`, and close use the same lock. A task
-whose `begin` observes the closed gate cannot call the framework
-(`src/main/java/ai/loomspan/sidecar/execution/ExecutionCoordinator.java:125`).
+Admission, queue accounting, dequeue release, task `begin`, and close use the same
+gate. If `begin` observes closure, it prevents framework invocation. Once `begin`
+returns true, however, it releases the gate before `run` enters
+`SkillTemplate.invoke` (`src/main/java/ai/loomspan/sidecar/execution/ExecutionCoordinator.java:125`,
+`:277`). The focused race test covers close winning before `begin`, not close
+occurring after successful `begin` and before facade entry
+(`src/test/java/ai/loomspan/sidecar/execution/ExecutionCoordinatorTest.java:346`).
 
-The actual call to `SkillTemplate.invoke` occurs after `begin` releases the gate
-(`src/main/java/ai/loomspan/sidecar/execution/ExecutionCoordinator.java:277`).
-Current tests prove that a synthetic task beginning after close does not invoke,
-and that queued work is discarded while a directly mocked active call can
-finish (`src/test/java/ai/loomspan/sidecar/execution/ExecutionCoordinatorTest.java:130`,
-`src/test/java/ai/loomspan/sidecar/execution/ExecutionCoordinatorTest.java:346`).
-They do not exercise the exact scheduling interval between a successful `begin`
-and facade entry, nor close a real application with active framework skill and
-observer work.
-
-At bean destruction, the coordinator immediately stops the sweeper and calls
-`shutdownNow` on its worker executor, clearing any returned waiting tasks; it
-does not wait or establish another timeout
+At destruction the coordinator immediately stops its sweeper and calls
+`shutdownNow` on worker threads, directly clearing any waiting tasks; it does not
+wait or establish another timeout
 (`src/main/java/ai/loomspan/sidecar/execution/ExecutionCoordinator.java:190`).
-There is currently no production REST HTTP client resource whose close order can
-be tested. The focused Sidecar shutdown integration has only two tests: async
-listener opt-out and owning-versus-foreign context/readiness publication
-(`src/test/java/ai/loomspan/sidecar/execution/ExecutionShutdownIntegrationTest.java:17`).
+The generic REST handler is a lower-phase (`0`) `SmartLifecycle`; its stop closes
+target clients (`src/main/java/ai/loomspan/sidecar/rest/GenericRestSkillHandler.java:77`).
+Current real-context lifecycle tests show a direct framework REST call and its
+client survive until normal completion, and that a blocked call is cut off and
+the context/client close within a bounded interval without a second Sidecar wait
+(`src/test/java/ai/loomspan/sidecar/rest/RestHandlerLifecycleIntegrationTest.java:25`,
+`:86`).
 
-The framework independently closes root admission on its owning close event and
-does not wait in that listener. Its `SmartLifecycle.stop` then waits for roots
-within the single configured deadline, stops its executor, publishes cutoff if
-needed, and provides a nonwaiting destruction fallback
+The framework independently closes root admission in its synchronous,
+owner-scoped close listener, establishes its single deadline, waits during its
+highest-phase lifecycle stop, publishes cutoff if roots/executor remain, and has
+a nonwaiting destruction fallback
 (`C:/opendev/code/loomspan-framework/loomspan-spring-boot-starter/src/main/java/ai/loomspan/internal/core/FrameworkExecutionLifecycle.java:73`,
-`C:/opendev/code/loomspan-framework/loomspan-spring-boot-starter/src/main/java/ai/loomspan/internal/core/FrameworkExecutionLifecycle.java:101`,
-`C:/opendev/code/loomspan-framework/loomspan-spring-boot-starter/src/main/java/ai/loomspan/internal/core/FrameworkExecutionLifecycle.java:181`).
-Its internal phase is `Integer.MAX_VALUE`; repository guidance explicitly makes
-that source evidence, not a supported Sidecar dependency. Framework tests cover
-owning contexts, synchronous closure under an asynchronous multicaster, either
-independent listener registration order, shorter Spring phase timeout, observer
-lifetime, blocked writers, interruption, and nonwaiting fallback, but those are
-framework-only tests rather than Sidecar wiring proof.
+`:101`, `:181`). Framework tests cover both close-listener orders, foreign
+contexts, asynchronous standard event multicasting, observer lifetime, blocked
+writers, interruption, shorter Spring phase timeouts, and nonwaiting fallback.
+Those tests are framework evidence and do not instantiate the complete Sidecar
+caller/client/observer wiring required by SC5.
 
 ### Build, image, examples, and release
 
-The Maven project is Java 21 / Boot 4.1.0 and currently uses
-`loomspan-spring-boot-starter:1.0.0-beta.4-SNAPSHOT`
-(`pom.xml:12`). The Spring Boot Maven plugin runs `repackage`, producing an
-executable JAR (`pom.xml:86`). There is no configured OCI image goal, container
-metadata, non-root user declaration, sidecar JVM defaults, or archive/checksum
-assembly.
+The Maven project uses Java 21, Boot 4.1.0, and the locally installed
+`loomspan-spring-boot-starter:1.0.0-beta.4-SNAPSHOT` (`pom.xml:12`). The Boot Maven
+plugin only configures `repackage`, producing an executable JAR (`pom.xml:91`).
+There is no OCI image goal, Dockerfile, container metadata, non-root declaration,
+sidecar JVM defaults, archive assembly, or checksum generation.
 
-The repository has no Dockerfile, Compose file, Kubernetes manifest, bundled
-quick-start directory, local issuer/callback host, or standalone model stub.
-The README documents local Maven/JAR startup and configuration fragments, but
-its mounted-configuration section says route parsing is future SC4 work
-(`README.md:26`), and it has no runnable image/JWT/curl/poll sequence.
+The repository has no Compose/Kubernetes manifest or runnable sample `/sidecar`
+tree with one planner and two leaves. It has no bundled standalone model stub or
+JWT issuer/callback host. The README documents local Maven/JAR startup, route
+schema, TLS/JWT/security, API polling, bounds, diagnostics, and restart-only
+activation, but has no image run/JWT/curl/poll quick start
+(`README.md:9`, `:30`, `:150`, `:194`).
 
-`.github/workflows/ci.yml` contains one push/PR job. It runs `verify` on Java 21
-with `-Dloomspan.version=1.0.0-beta.4`, so it is prepared for the future
-published dependency but does not build or run an image
-(`.github/workflows/ci.yml:10`). No `v<version>` workflow exists, and current
-automation does not reject a SNAPSHOT release, package a JAR archive, generate
-checksums, publish an image, or provide a nonpublishing validation mode.
+`.github/workflows/ci.yml` has one Java 21 push/PR verification job. It overrides
+the framework dependency with `1.0.0-beta.4`, so it cannot succeed until that
+artifact is published, and it does not build or test an image
+(`.github/workflows/ci.yml:10`). There is no Sidecar `v<version>` release workflow,
+release-version/SNAPSHOT guard, JAR archive/checksum packaging, image publication,
+or local nonpublishing workflow validation path.
 
-The framework readiness record still marks Sidecar SC5 snapshot integration and
-all final release-commit/manual validation gates pending
+The framework readiness record still marks Sidecar SC5 snapshot integration,
+integration remediation, final release-commit checks, and both manual
+nonpublishing validations pending
 (`C:/opendev/code/loomspan-framework/ai/thoughts/release-readiness/1.0.0-beta.4.md:10`,
-`C:/opendev/code/loomspan-framework/ai/thoughts/release-readiness/1.0.0-beta.4.md:91`).
-Framework tag workflows already separate manual nonpublishing validation from
-tag-triggered publication; actual tag/publish actions remain outside this
-ticket's authorization.
+`:91`). Framework workflows already separate manual validation from tag-triggered
+publication. Neither repository is authorized for tagging or publication by this
+ticket.
 
 ## Key Components
 
-- `pom.xml:12` — Java/Boot/framework versions and executable-JAR build.
-- `src/main/resources/application.yml:1` — current mount, execution, and
-  management defaults; route location is declared but unconsumed.
-- `src/main/java/ai/loomspan/sidecar/security/SidecarJwtProperties.java:8` — all
-  bound Sidecar JWT fields and validation constraints.
-- `src/main/java/ai/loomspan/sidecar/config/SidecarExecutionProperties.java:8`
-  — all bound execution fields, defaults, and positive-value validation.
-- `src/main/java/ai/loomspan/sidecar/api/ExecutionController.java:41` — public
-  pre-dispatch validation, admission, and owner-scoped polling entry points.
-- `src/main/java/ai/loomspan/sidecar/execution/ExecutionCoordinator.java:35` —
-  queue/store ownership, security-context handoff, diagnostics, close gates,
-  and worker destruction.
-- `src/test/java/ai/loomspan/sidecar/execution/AuthenticatedExecutionApiIntegrationTest.java:38`
-  — current HTTP/JWT/model fixture; REST behavior is supplied by a test bean.
-- `src/test/java/ai/loomspan/sidecar/execution/ExecutionShutdownIntegrationTest.java:17`
-  — current limited application-listener shutdown coverage.
-- `src/test/java/ai/loomspan/sidecar/management/ManagementEndpointIntegrationTest.java:17`
-  — separate management-port exposure evidence.
+- `pom.xml:12` — Java, Boot, snapshot dependency, and executable-JAR build.
+- `src/main/resources/application.yml:1` — mount, execution, and management defaults.
+- `src/main/java/ai/loomspan/sidecar/config/RestRoutesProperties.java:5` — bound route location and default.
+- `src/main/java/ai/loomspan/sidecar/security/SidecarJwtProperties.java:8` — bound JWT fields and constraints.
+- `src/main/java/ai/loomspan/sidecar/config/SidecarExecutionProperties.java:8` — bound execution fields, defaults, and constraints.
+- `src/main/java/ai/loomspan/sidecar/api/ExecutionController.java:41` — pre-dispatch validation, admission, and polling.
+- `src/main/java/ai/loomspan/sidecar/execution/ExecutionCoordinator.java:35` — queue/store, identity handoff, diagnostics, close gate, and worker destruction.
+- `src/main/java/ai/loomspan/sidecar/rest/RestRouteLoader.java:33` — eager unified target/route document parsing and validation.
+- `src/main/java/ai/loomspan/sidecar/rest/GenericRestSkillHandler.java:25` — authorized REST SPI implementation and lower-phase client lifecycle.
+- `src/test/java/ai/loomspan/sidecar/execution/AuthenticatedExecutionApiIntegrationTest.java:38` — current full HTTP/JWT/model/production-callback fixture.
+- `src/test/java/ai/loomspan/sidecar/rest/RestHandlerLifecycleIntegrationTest.java:22` — current real-context REST resource lifecycle proof.
+- `src/test/java/ai/loomspan/sidecar/management/ManagementEndpointIntegrationTest.java:17` — separate management-port evidence.
 - `.github/workflows/ci.yml:1` — released-dependency Maven verification only.
-- `C:/opendev/code/loomspan-framework/loomspan-spring-boot-starter/src/main/java/ai/loomspan/api/RestSkillHandler.java:3`
-  — authorized application-provided REST leaf SPI.
-- `C:/opendev/code/loomspan-framework/loomspan-spring-boot-starter/src/main/java/ai/loomspan/internal/core/FrameworkExecutionLifecycle.java:20`
-  — framework's current one-budget lifecycle implementation, inspected as source
-  evidence only.
-- `C:/opendev/code/loomspan-framework/ai/thoughts/release-readiness/1.0.0-beta.4.md:91`
-  — authoritative pending SC5 evidence gate.
+- `C:/opendev/code/loomspan-framework/loomspan-spring-boot-starter/src/main/java/ai/loomspan/api/RestSkillHandler.java:3` — authorized application REST SPI.
+- `C:/opendev/code/loomspan-framework/loomspan-spring-boot-starter/src/main/java/ai/loomspan/internal/core/FrameworkExecutionLifecycle.java:20` — framework one-budget lifecycle, source evidence only.
+- `C:/opendev/code/loomspan-framework/ai/thoughts/release-readiness/1.0.0-beta.4.md:91` — authoritative pending SC5 evidence gate.
 
 ## Affected Areas
 
 | Area | Current behavior and evidence |
 | --- | --- |
-| Production REST path | Absent. Only test code declares a `RestSkillHandler`; no route loader, binder, transport client, TLS/bundle integration, or startup route validation exists. |
-| Container packaging | Executable Boot JAR only; no image mechanism or non-root/JVM configuration exists. |
-| Probes | Boot health/readiness are exposed on port 9091; startup/route-validation timing, long-work liveness, and shutdown HTTP transitions are not exercised. |
-| Admission and dispatch | One coordinator lock bounds record/queue state and prevents `begin` after close; exact dequeue-to-invoke shutdown wiring remains unproved. |
-| Resource lifecycle | Coordinator listener is synchronous and owner-scoped; destruction uses nonwaiting `shutdownNow`. There is no production REST client to order around framework lifecycle stop. |
-| Quick start | README contains fragments and PowerShell API examples, but no self-contained image, test issuer, callback host, model stub, or sample planner/two leaves. |
-| Configuration reference | README documents many current keys, but there is no complete generated/asserted reference and the route key has no bound implementation. |
-| CI/release | Push/PR Maven verification targets the released framework override; image build/test and tag release automation are absent. |
-| Release evidence | Framework record is pending SC5 and still needs exact Sidecar/framework states plus actual commands/results. No publication is authorized. |
+| Production REST path | Present and startup-bound: route loader/catalog validator, isolated target clients, production public-SPI handler, caller token forwarding, TLS bundles, response bounds, and lifecycle tests. |
+| Container packaging | Executable Boot JAR only; no image mechanism, non-root/JVM metadata, mounted example, or image test exists. |
+| Probes | Health/readiness are exposed on port 9091 and close publishes readiness refusal; startup timing, long-work liveness, and shutdown HTTP transitions are not exercised. |
+| Admission and dispatch | One gate bounds queue/record transitions and rejects close-before-begin; the successful-begin-to-facade-entry close interval remains open in code and untested. |
+| Resource lifecycle | Direct real framework REST calls preserve clients through completion/cutoff; the full Sidecar worker/client/observer/listener/management wiring matrix is absent. |
+| Quick start | README has configuration and API fragments, but no self-contained image fixture, local issuer, callback host, model stub, planner/two leaves, or verified commands. |
+| Configuration reference | README covers current property groups and unified route format; defaults have a focused assertion, but no test asserts reference completeness against all bound property fields. |
+| CI/release | Push/PR Maven verification targets the released framework override; image CI and tag release/archive/checksum/SNAPSHOT safeguards are absent. |
+| Release evidence | Framework readiness remains pending SC5 and needs exact Sidecar/framework states plus actual commands/results. No publication is authorized. |
 
 ## Existing Tests and Fixtures
 
-- `SidecarDefaultsTest` asserts exact values currently present in
-  `application.yml`, including the unbound route-location key and management
-  settings (`src/test/java/ai/loomspan/sidecar/config/SidecarDefaultsTest.java:10`).
-- `SidecarExecutionPropertiesTest` and `JwtSecurityConfigurationTest` cover the
-  current execution/JWT property constraints. The JWT tests use local keys and a
-  loopback discovery/JWKS server; no external IdP is required.
-- `MountedSkillRegistrationIntegrationTest` copies YAML/YML skills to temporary
-  directories, demonstrates custom locations, and proves missing model
-  configuration fails startup. Its `rest-routes.yaml` fixture is intentionally
-  invalid as a skill and only proves the route file is outside skill globs
-  (`src/test/java/ai/loomspan/sidecar/skill/MountedSkillRegistrationIntegrationTest.java:25`).
-- `AuthenticatedExecutionApiIntegrationTest` is the broadest current application
-  fixture. It uses a loopback model server and test handler, but it is not shared
-  as a reusable support fixture with other integration suites.
-- `ExecutionCoordinatorTest` covers direct handoff, count/byte/retention bounds,
-  simultaneous admission, rollback, expiry, queue discard, identity handoff,
-  and a close-before-begin case. It mocks the framework facade.
-- `ExecutionDiagnosticsTest` covers `NEVER`, `ONERROR`, `ALWAYS`, exact large
+- `SidecarDefaultsTest` asserts the exact production YAML defaults, including
+  mounts, JWT role/skew settings, execution bounds, and management port/exposure
+  (`src/test/java/ai/loomspan/sidecar/config/SidecarDefaultsTest.java:11`).
+- `SidecarExecutionPropertiesTest` and `JwtSecurityConfigurationTest` cover
+  execution/JWT constraints. JWT tests use local keys and loopback discovery/JWKS;
+  no external IdP is required.
+- `MountedSkillRegistrationIntegrationTest` proves YAML/YML discovery, location
+  overrides, separation from the route file, and startup failure for a missing
+  model (`src/test/java/ai/loomspan/sidecar/skill/MountedSkillRegistrationIntegrationTest.java:25`).
+- `RestRouteLoaderTest`, `RestRouteStartupIntegrationTest`, and
+  `RestRouteRestartIntegrationTest` cover route parsing, placeholders and safe
+  diagnostics, catalog agreement, one production handler, overrides, explicit
+  empty configuration, and restart-only snapshots.
+- `GenericRestSkillHandlerTest` covers GET/POST binding, all auth modes, input
+  rejection before I/O, response/media/error bounds, redirects/retries, and read
+  timeout (`src/test/java/ai/loomspan/sidecar/rest/GenericRestSkillHandlerTest.java:45`).
+  `RestTransportTlsIntegrationTest` covers per-target SSL bundle and client identity.
+- `AuthenticatedExecutionApiIntegrationTest` is the broadest application fixture:
+  it uses local keys plus loopback model and verifying callback servers through
+  the production handler. It is a single test class rather than shared support.
+- `ExecutionCoordinatorTest` covers workers/queue/count/byte/record bounds,
+  concurrency, rollback, expiry, queue discard, identity handoff, and close before
+  `begin`. `ExecutionDiagnosticsTest` covers all three selection modes, exact
   result/event retention, primary failure classification, missing observer
-  callback, and whole-record expiry
-  (`src/test/java/ai/loomspan/sidecar/execution/ExecutionDiagnosticsTest.java:33`).
-- `ExecutionShutdownIntegrationTest` does not start a Spring application or
-  framework execution; it directly invokes the coordinator listener with mocks.
-- `SupportedLoomspanApiArchitectureTest` forbids dependencies on
-  `ai.loomspan.internal..` and `ai.loomspan.autoconfigure..` in both main and test
-  classes and forbids Java `@SkillMethod` declarations
-  (`src/test/java/ai/loomspan/sidecar/architecture/SupportedLoomspanApiArchitectureTest.java:13`).
-- No checked-in test builds an image, asserts its Unix user/JVM defaults/mount
-  behavior, runs quick-start commands, validates Kubernetes configuration,
-  checks release-workflow gating, or records retained SC5 results.
-- No tests were run during this read-only research step; descriptions above are
-  source inspection, not fresh execution results.
+  callback, and whole-record expiry.
+- `ExecutionShutdownIntegrationTest` only invokes the coordinator listener with
+  mocks to prove async opt-out, foreign-context filtering, and readiness event
+  publication (`src/test/java/ai/loomspan/sidecar/execution/ExecutionShutdownIntegrationTest.java:18`).
+- `RestHandlerLifecycleIntegrationTest` closes a real non-web Sidecar context with
+  an active direct framework REST invocation, but does not exercise HTTP admission,
+  coordinator callers, observers, management contexts, or async multicasting.
+  Trace blocking, actual framework listener order, budget, and cutoff are
+  framework-owned proof obligations.
+- `SupportedLoomspanApiArchitectureTest` forbids main/test dependencies on
+  `ai.loomspan.internal..` and `ai.loomspan.autoconfigure..` and forbids Sidecar
+  Java `@SkillMethod` declarations.
+- No checked-in test builds/runs an image, inspects its Unix user/JVM defaults,
+  executes the quick start, validates Kubernetes files, or checks a Sidecar
+  release workflow. No test suite was run in this research step; a read-only
+  Maven dependency-tree command freshly confirmed resolution of the snapshot.
 
 ## Dependencies and Operational Constraints
 
-- Sidecar uses Java 21, Boot 4.1.0, Boot's Jackson 3 mapper, Apache HttpClient 5,
-  and the locally installed framework snapshot (`pom.xml:12`, `pom.xml:43`).
-  Apache HttpClient is declared but unused by current production source.
-- Application and test dependencies must remain inside `ai.loomspan.api`; the
-  framework lifecycle internals cited here cannot become Sidecar dependencies.
-- Framework source currently exposes `SkillTemplate`, catalog/value types, and
-  the deliberately authorized `RestSkillHandler` SPI. It does not expose a
-  public shutdown API for Sidecar coordination.
-- The framework default shutdown timeout is documented as 30 seconds and must be
-  positive. Already admitted roots may continue nested work until completion or
-  the shared cutoff; Sidecar must not create another framework budget.
-- Docker CLI and `curl.exe` are installed on this research host. Daemon state,
-  image-build capability, network access, credentials, registry access, Maven
-  Central availability, and hosted CI were not exercised.
-- Local deterministic tests can use loopback servers and checked-in test keys;
-  external model/IdP accounts are not needed by the existing fixture.
-- The ticket authorizes updating the framework readiness record with local SC5
-  evidence, but it does not authorize tags, pushes, workflow dispatches,
-  registry/Maven uploads, or either project publication.
-- The post-publication acceptance criteria cannot execute while framework
-  `1.0.0-beta.4` is unpublished. They remain required deferred gates, not local
-  preparation failures.
+- Sidecar uses Java 21, Boot 4.1.0 with Jackson 3, Apache HttpClient 5, and
+  `ai.loomspan:loomspan-spring-boot-starter:1.0.0-beta.4-SNAPSHOT`. Maven resolves
+  that snapshot from the local repository; the build declares no snapshot
+  repository and does not build framework source.
+- Application and test Loomspan types must remain inside `ai.loomspan.api`.
+  Framework lifecycle internals cited here are source evidence, not a supported
+  Sidecar dependency. No public framework shutdown API exists for Sidecar use.
+- The framework lifecycle default is `30s`; admitted roots can continue nested
+  work until completion or the shared cutoff. Sidecar currently uses lifecycle
+  phase ordering through standard Spring `SmartLifecycle` only.
+- Docker client and daemon are available locally (29.5.3), as are `curl.exe` and
+  Maven 3.9.11 using JetBrains Java 21.0.2. Image build behavior, network access,
+  credentials, registry access, Maven Central resolution, and hosted CI were not
+  exercised.
+- Local deterministic tests can use checked-in keys, temporary files, and
+  loopback servers. The current production callback integration does not require
+  external model or identity-provider accounts.
+- Updating the framework readiness record with local SC5 evidence is in ticket
+  scope. Tags, pushes, workflow dispatches, registry/Maven uploads, and either
+  project publication require separate authorization.
+- Post-publication Sidecar criteria cannot execute during the snapshot stage;
+  they remain required pending gates and are not local-preparation successes.
 
 ## Historical Context
 
-The authoritative SC5 phase assigns image/probes, resource lifecycle, quick
-start, configuration guidance, and release workflow to this unit
-(`ai/thoughts/phases/phase-sc5.md:13`). The design lens keeps execution authority
-in the framework, transport/admission/retention in Sidecar, trusted identity out
-of model input, startup-only activation, and one framework shutdown budget
-(`ai/thoughts/design-lens.md`). The framework readiness record already contains
-framework-only lifecycle test results but explicitly rejects them as a
-substitute for packaged Sidecar integration.
+The SC5 phase owns the image/probes, packaged lifecycle proof, runnable quick
+start, configuration guidance, and release workflow
+(`ai/thoughts/phases/phase-sc5.md:13`). The design lens keeps framework execution
+authority separate from Sidecar transport/admission/retention, keeps trusted
+identity outside model input, makes skill/route activation startup-only, and
+assigns already-admitted work one framework shutdown budget
+(`ai/thoughts/design-lens.md:25`, `:56`).
 
-Git history records SC1 at `e3c3f58`, authenticated execution at `2597238`, its
-cleanup at `fba8351`, then `c709cab` and `d4471c0`. Contrary to the SC5 ticket's
-context sentence, inspection of `c709cab` shows no production REST-handler files
-or modifications. This mismatch is checked-out evidence, not a conclusion about
-developer intent.
+Git history records the scaffold at `e3c3f58`, authenticated execution at
+`2597238` plus cleanup `fba8351`, and production REST implementation at `f71d2a4`
+plus cleanup `d839027`. The earlier version of this research artifact was created
+at `d4471c0`, before `f71d2a4`; its claim that SC4 was absent is superseded by
+the checked-out source.
 
-The framework's original alignment pin was `385729a...`; the current clean
-framework checkout is `e62b776...`. Its intervening production change is in the
-observability collision detector rather than the inspected execution lifecycle
-or REST SPI. The readiness record currently still names the earlier reviewed
-pin and marks SC5 pending.
+The framework's original alignment pin is `385729a...`; its current clean state
+is `e62b776...`. The only production-source change between those revisions is
+`ObservabilityRouteCollisionDetector` at commit `fffd844`; current public REST
+and lifecycle contracts inspected above are otherwise unchanged. The framework
+readiness record names the earlier handoff pin and intentionally leaves SC5 and
+final release gates pending.
+
+## Review Cycle 3 Remediation Update
+
+Independent review exposed that Sidecar could not make its close-or-dispatch
+decision atomic using `SkillTemplate.invoke`: the framework admitted a root only
+inside that long-running call. The approved framework remediation adds the public
+`SkillInvocationHandoff` and `AdmittedSkillInvocation` contracts at framework
+checkout `bfc2764bb661a6eccad9fd120cd687e6a911e99a` (implementation commit
+`5d19c7a`). The locally installed beta.4 snapshot starter has SHA-256
+`901769CACBAF7F0CD2B39845ED1D7AC3D63294D64F74CC9D411C16925620D2AA` and contains
+both API classes.
+
+Sidecar now transfers ownership through that public handoff while its existing
+dispatch gate is held, then invokes the admitted handle outside the gate. Its
+deterministic tests cover Sidecar-close-first, framework-admission-first, and a
+framework-close-first failure without invoking the root. The developer clarified
+that successful handoff is the sole ownership boundary: Sidecar proves discard
+and cleanup before that boundary plus its actual caller/client/observer wiring
+and normal accepted-work completion. The matching framework lifecycle tests own
+listener ordering, blocked trace finalization, the single shutdown budget, and
+cutoff. They are not substituted for Sidecar-owned behavior, and no new trace
+SPI, framework internals, or replacement beans were introduced in Sidecar.
 
 ## Open Questions
 
-- Was the missing SC4 production implementation intentionally omitted from the
-  current branch, or must the SC5 implementation plan absorb/restore the
-  generic-handler ticket before packaged callback and route-validation criteria
-  can be met? The current tree cannot execute the required production REST path.
-- Which exact current framework snapshot revision is installed locally for the
-  first SC5 verification pass? Repository policy says the developer-managed
-  artifact is aligned with the checkout; the retained SC5 evidence must record
-  the tested value, which is currently `e62b776...` in source.
-- The framework release and all post-publication Sidecar gates are intentionally
-  deferred and separately authorized. Planning needs a durable local-stage
-  handoff boundary that leaves those checks visibly pending without treating
-  them as passed.
+- Which exact uncommitted Sidecar state will be present when each retained SC5
+  command runs? The readiness record requires the tested commit plus changes, so
+  this is evidence captured at execution time rather than inferable now.
+- If packaged integration exposes a framework defect, the resulting framework
+  revision and developer reinstall cannot be known during research; affected
+  Sidecar evidence becomes current only after that reinstall and retest.
+- Framework publication, released-dependency resolution, hosted Sidecar CI, and
+  published-image quick-start results remain intentionally unknowable in the
+  local snapshot stage and must remain visibly pending until separately run.

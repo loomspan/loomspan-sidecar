@@ -4,8 +4,9 @@ Loomspan Sidecar is a Java 21 / Spring Boot 4.1 application that loads mounted,
 model-backed Loomspan YAML skills and exposes an authenticated asynchronous
 execution API. SC2 and SC3 add verified JWT identity, owner-scoped polling,
 bounded in-memory workers and retention, prompt shutdown gates, and a generic
-bounded outbound REST handler for mounted REST skills. Container packaging remains
-SC5 work.
+bounded outbound REST handler for mounted REST skills. The supported container
+runs as a fixed non-root user and consumes environment configuration plus a
+read-only `/sidecar` mount.
 
 ## Build locally
 
@@ -23,6 +24,63 @@ documentation lookups in that directory. Then rerun affected Sidecar checks:
 
 On POSIX systems use `./mvnw`. Tests use temporary local files and loopback-only
 configuration; they do not need a model provider account.
+
+## Container and deterministic quick start
+
+Build the executable JAR first, then the runtime-only image. The Docker build
+never resolves Maven dependencies or checks out framework source:
+
+```powershell
+.\mvnw.cmd -B -ntp package
+docker build --tag loomspan-sidecar:sc5-local .
+```
+
+The image uses UID/GID `10001:10001`, exposes application port 8080 and
+management port 9091, and starts Java with
+`-XX:MaxRAMPercentage=75.0 -XX:InitialRAMPercentage=25.0
+-XX:+ExitOnOutOfMemoryError`. Replace `JAVA_TOOL_OPTIONS` when deployment-specific
+heap or GC settings are needed. The Java entry point is exec-form so container
+SIGTERM reaches Spring directly.
+
+The self-contained example uses only local containers: an example-only issuer,
+an OpenAI-compatible deterministic model stub, and a callback host that verifies
+the forwarded JWT signature, issuer, audience, expiry, subject, and roles. Its
+checked-in private key is intentionally public test material and must never be
+used outside this example.
+
+```powershell
+$env:SIDECAR_IMAGE = "loomspan-sidecar:sc5-local"
+docker compose -f examples/quickstart/compose.yaml up -d --build
+$token = (Invoke-RestMethod http://localhost:8081/token).access_token
+$headers = @{ Authorization = "Bearer $token" }
+$accepted = Invoke-RestMethod http://localhost:8080/v1/skills/quickstartPlanner/executions `
+  -Method Post -Headers $headers -ContentType application/json -Body '{"message":"hello"}'
+do {
+  Start-Sleep -Milliseconds 250
+  $result = Invoke-RestMethod "http://localhost:8080/v1/executions/$($accepted.id)" -Headers $headers
+} until ($result.status -in @("COMPLETED", "FAILED"))
+$result
+Invoke-RestMethod http://localhost:8081/status
+docker compose -f examples/quickstart/compose.yaml down
+```
+
+The terminal result is `quickstart complete`; host status contains both callback
+paths with subject `quickstart-user` and role `QUICKSTART_USER`. Run the exact
+automated packaging contract, including negative startup, ownership, probes,
+SIGTERM, and Kubernetes checks, with:
+
+```powershell
+python scripts/verify-image.py --image loomspan-sidecar:sc5-local --verify-kubernetes
+```
+
+The Compose and verifier host ports default to `8080`, `8081`, and `9091`.
+When those host ports are already in use, leave the container ports unchanged
+and run the same verification on isolated alternatives, for example:
+
+```powershell
+python scripts/verify-image.py --image loomspan-sidecar:sc5-local --verify-kubernetes `
+  --api-port 18080 --host-port 18081 --management-port 19091
+```
 
 ## Mounted configuration
 
@@ -155,6 +213,11 @@ spring:
 The application port remains Boot's default `8080`. Health is exposed separately
 on management port `9091` at `/actuator/health` and
 `/actuator/health/readiness`. Other Actuator endpoints are not exposed.
+Startup, readiness, and liveness probe groups are available at
+`/actuator/health/readiness` and `/actuator/health/liveness`. Registration and
+route validation are eager, so invalid configuration prevents startup from
+becoming ready. Readiness changes to refusing traffic synchronously when the
+owning application context closes; liveness remains up during ordinary long work.
 Loomspan observability routes are disabled by default, so no Console operator
 API is exposed. When Loomspan Console observability is enabled, its
 reserved `/_loomspan/observability/v1/**` namespace remains protected by the
@@ -265,12 +328,53 @@ selected events. Record count, TTL and queued-input bytes therefore do not bound
 total heap: running inputs, results, diagnostics, and uncooperative framework
 work may consume additional memory.
 
-Skills and REST routes remain startup-only. Restart to activate either change;
-doing so loses all queued, active and retained execution records. REST clients stay
+Skills and REST routes remain startup-only. Before restarting to activate a
+change, finish active work and retrieve any results you need. Restart loses all
+queued, active and retained execution records, shutdown discards waiting work,
+and unfinished admitted work may be interrupted at the framework deadline. Disk
+edits never change a running process and invalid skills or routes prevent startup
+and readiness until corrected; there is no hot reload or durable recovery. REST clients stay
 available for framework-owned admitted work until normal completion or the single
 `loomspan.shutdown.timeout` cutoff, then close without a second drain period. SC5
-will add the image and exhaustive packaged resource-lifecycle/release proof; this
-repository documentation does not claim that packaging or publication is complete.
+uses the framework's 30-second default; configure orchestrator termination grace
+above that budget plus cleanup margin (the Kubernetes example uses 45 seconds).
+
+## Sidecar configuration reference
+
+<!-- configuration-reference:start -->
+
+| Key | Default / requirement |
+| --- | --- |
+| `loomspan-sidecar.rest-routes-location` | `file:/sidecar/rest-routes.yaml`; required readable unified route document; override at startup. |
+| `loomspan-sidecar.auth.jwt.issuer-uri` | Required nonblank issuer; also used with an explicit local key or JWKS URL. |
+| `loomspan-sidecar.auth.jwt.audience` | Required nonblank audience. |
+| `loomspan-sidecar.auth.jwt.jwk-set-uri` | Optional explicit JWKS URL; mutually exclusive with the public-key location. |
+| `loomspan-sidecar.auth.jwt.public-key-location` | Optional RSA PEM resource; mutually exclusive with the JWKS URL. |
+| `loomspan-sidecar.auth.jwt.clock-skew` | `60s`; zero is allowed, negative values are rejected. |
+| `loomspan-sidecar.auth.jwt.roles-claim` | `roles`; required nonblank trusted claim name. |
+| `loomspan-sidecar.auth.jwt.role-prefix` | `ROLE_`; required but may be empty. |
+| `loomspan-sidecar.executions.max-input-size` | `1MB`; positive raw HTTP body limit. |
+| `loomspan-sidecar.executions.max-retained` | `1000`; positive count of queued, running, and terminal records. |
+| `loomspan-sidecar.executions.completed-ttl` | `15m`; positive terminal-record lifetime. |
+| `loomspan-sidecar.executions.max-concurrent` | `32`; positive worker count. |
+| `loomspan-sidecar.executions.max-queued` | `128`; positive waiting-record count. |
+| `loomspan-sidecar.executions.max-queued-input-size` | `64MB`; positive total serialized input bytes reserved by waiting work. |
+| `loomspan-sidecar.executions.diagnostics` | `NEVER`; allowed values are `NEVER`, `ONERROR`, and `ALWAYS`. |
+
+<!-- configuration-reference:end -->
+
+The route schema and `${NAME}` environment placeholders are described in
+[REST skill routes](#rest-skill-routes). Skill discovery stays under documented
+`loomspan.skills.locations`; framework shutdown remains
+`loomspan.shutdown.timeout`; inbound server and outbound mTLS configuration
+remains under standard `server.ssl.*` and `spring.ssl.bundle.*` namespaces. The
+image honors those standard Boot environment and command-line overrides.
+
+The Kubernetes example at `examples/kubernetes/deployment.yaml` keeps the
+application and Sidecar in one pod, mounts skill files and the separate route
+document read-only, sources credentials from Secrets, uses port 9091 for all
+management probes, and leaves resource requests/limits for the operator to size
+from actual model concurrency and diagnostic retention.
 
 ## Dependency and release boundary
 
@@ -282,6 +386,20 @@ Maven Central. The delivery order is local Sidecar integration against the
 snapshot, framework release checks and publication, then Sidecar verification
 against the released artifact. This project does not build framework source in
 its own build or CI.
+
+Release tags are exactly `v<project-version>`. The guarded workflow requires a
+non-SNAPSHOT Sidecar version and framework `1.0.0-beta.4`, reruns Maven and image
+verification, then publishes an immutable GHCR version tag and a GitHub release
+containing the executable JAR, a reproducible ZIP archive, and SHA-256 files.
+Local preparation is intentionally nonpublishing:
+
+```powershell
+python scripts/prepare-release.py --validate-only --project-version 1.0.0-beta.4 --loomspan-version 1.0.0-beta.4
+```
+
+The current local stage remains on `1.0.0-beta.4-SNAPSHOT`. Do not change that
+pin, create either project tag, dispatch publication, or claim hosted CI until
+the framework release is separately authorized, published, and resolvable.
 
 See the [delivery handoff](ai/thoughts/beta4-handoff.md),
 [SC2 phase](ai/thoughts/phases/phase-sc2.md), and

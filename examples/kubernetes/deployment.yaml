@@ -1,0 +1,100 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loomspan-sidecar-config
+data:
+  planner.yaml: |
+    name: applicationPlanner
+    description: Coordinate application callbacks.
+    model: applicationmodel
+    planning_mode: true
+    concurrency: false
+    max_steps: 4
+    allowed_skills:
+      - name: identityLeaf
+      - name: detailLeaf
+  identity-leaf.yaml: |
+    name: identityLeaf
+    description: Fetch caller identity.
+    rest: true
+  detail-leaf.yaml: |
+    name: detailLeaf
+    description: Fetch application detail.
+    rest: true
+  rest-routes.yaml: |
+    targets:
+      application:
+        base-url: http://localhost:8081
+        auth: {mode: caller-passthrough}
+        connect-timeout: 5s
+        read-timeout: 30s
+        max-response-size: 1MB
+    routes:
+      identityLeaf: {target: application, method: POST, path: /callbacks/identity}
+      detailLeaf: {target: application, method: POST, path: /callbacks/detail}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: example-with-loomspan-sidecar
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: example-with-loomspan-sidecar}
+  template:
+    metadata:
+      labels: {app: example-with-loomspan-sidecar}
+    spec:
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: application
+          image: example/application:replace-me
+          ports:
+            - {name: callbacks, containerPort: 8081}
+        - name: loomspan-sidecar
+          image: ghcr.io/loomspan/loomspan-sidecar:1.0.0-beta.4
+          ports:
+            - {name: api, containerPort: 8080}
+            - {name: management, containerPort: 9091}
+          env:
+            - name: LOOMSPAN_CONNECTIONS_APPLICATION_DRIVER
+              value: openai
+            - name: LOOMSPAN_CONNECTIONS_APPLICATION_BASE_URL
+              value: https://model.example/v1
+            - name: LOOMSPAN_CONNECTIONS_APPLICATION_API_KEY
+              valueFrom: {secretKeyRef: {name: loomspan-sidecar-secrets, key: model-api-key}}
+            - name: LOOMSPAN_MODELS_APPLICATIONMODEL_CONNECTION
+              value: application
+            - name: LOOMSPAN_MODELS_APPLICATIONMODEL_PROVIDER_MODEL
+              value: replace-me
+            - name: LOOMSPAN_SIDECAR_AUTH_JWT_ISSUER_URI
+              valueFrom: {secretKeyRef: {name: loomspan-sidecar-secrets, key: issuer-uri}}
+            - name: LOOMSPAN_SIDECAR_AUTH_JWT_AUDIENCE
+              valueFrom: {secretKeyRef: {name: loomspan-sidecar-secrets, key: audience}}
+            - name: LOOMSPAN_SIDECAR_AUTH_JWT_PUBLIC_KEY_LOCATION
+              value: file:/sidecar/keys/public.pem
+            - name: LOOMSPAN_SHUTDOWN_TIMEOUT
+              value: 30s
+          volumeMounts:
+            - {name: sidecar-config, mountPath: /sidecar/skills/planner.yaml, subPath: planner.yaml, readOnly: true}
+            - {name: sidecar-config, mountPath: /sidecar/skills/identity-leaf.yaml, subPath: identity-leaf.yaml, readOnly: true}
+            - {name: sidecar-config, mountPath: /sidecar/skills/detail-leaf.yaml, subPath: detail-leaf.yaml, readOnly: true}
+            - {name: sidecar-config, mountPath: /sidecar/rest-routes.yaml, subPath: rest-routes.yaml, readOnly: true}
+            - {name: jwt-key, mountPath: /sidecar/keys, readOnly: true}
+          startupProbe:
+            httpGet: {path: /actuator/health/readiness, port: management}
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: {path: /actuator/health/readiness, port: management}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /actuator/health/liveness, port: management}
+            periodSeconds: 10
+      volumes:
+        - name: sidecar-config
+          configMap: {name: loomspan-sidecar-config}
+        - name: jwt-key
+          secret:
+            secretName: loomspan-sidecar-jwt-key
+            items: [{key: public.pem, path: public.pem}]

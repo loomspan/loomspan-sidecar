@@ -21,6 +21,7 @@ import com.nimbusds.jwt.SignedJWT;
 import com.sun.net.httpserver.HttpServer;
 
 import ai.loomspan.sidecar.support.JwtTestTokens;
+import ai.loomspan.sidecar.support.SidecarApplicationFixture;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterAll;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -29,6 +30,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.security.converter.RsaKeyConverters;
+import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.context.event.ContextClosedEvent;
+import org.springframework.test.annotation.DirtiesContext;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -47,20 +51,21 @@ import static org.assertj.core.api.Assertions.assertThat;
         "loomspan-sidecar.executions.max-input-size=64B"
 })
 class AuthenticatedExecutionApiIntegrationTest {
-    private static final ConcurrentLinkedQueue<String> MODEL_RESPONSES = new ConcurrentLinkedQueue<>();
-    private static final HttpServer MODEL_SERVER = modelServer();
-    private static final CallbackFixture CALLBACK = CallbackFixture.start();
-    private static final Path ROUTES = routeFile();
+    private static final SidecarApplicationFixture FIXTURE = new SidecarApplicationFixture();
+    private static final ConcurrentLinkedQueue<String> MODEL_RESPONSES = FIXTURE.modelResponses();
+    private static final SidecarApplicationFixture.CallbackFixture CALLBACK = FIXTURE.callback();
+    private static final Path ROUTES = FIXTURE.routes();
     @LocalServerPort int port;
     private final HttpClient client = HttpClient.newHttpClient();
     private final ObjectMapper mapper = new ObjectMapper();
     @Autowired ExecutionCoordinator coordinator;
+    @Autowired ConfigurableApplicationContext applicationContext;
 
     @DynamicPropertySource
     static void modelProperties(DynamicPropertyRegistry properties) {
         properties.add("loomspan.connections.fixture.driver", () -> "openai");
         properties.add("loomspan.connections.fixture.base-url",
-                () -> "http://127.0.0.1:" + MODEL_SERVER.getAddress().getPort() + "/v1");
+                () -> "http://127.0.0.1:" + FIXTURE.modelPort() + "/v1");
         properties.add("loomspan.connections.fixture.api-key", () -> "local-test-key");
         properties.add("loomspan.models.fixture-model.connection", () -> "fixture");
         properties.add("loomspan.models.fixture-model.provider-model", () -> "fixture-provider-model");
@@ -69,8 +74,7 @@ class AuthenticatedExecutionApiIntegrationTest {
 
     @AfterAll
     static void stopModelServer() {
-        MODEL_SERVER.stop(0);
-        CALLBACK.server.stop(0);
+        FIXTURE.close();
     }
 
     @Test
@@ -232,32 +236,33 @@ class AuthenticatedExecutionApiIntegrationTest {
         assertThat(CALLBACK.lastRoles).contains("REST_USER");
     }
 
-    private static String completion(String content) {
-        String escaped = content.replace("\\", "\\\\").replace("\"", "\\\"")
-                .replace("\r", "").replace("\n", "");
-        return "{\"id\":\"fixture\",\"object\":\"chat.completion\",\"created\":1,"
-                + "\"model\":\"fixture-provider-model\",\"choices\":[{\"index\":0,"
-                + "\"message\":{\"role\":\"assistant\",\"content\":\"" + escaped
-                + "\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,"
-                + "\"completion_tokens\":1,\"total_tokens\":2}}";
+    @Test
+    @DirtiesContext(methodMode = DirtiesContext.MethodMode.AFTER_METHOD)
+    void ownerCloseImmediatelyRefusesTrafficAndDiscardsWaitingWork() throws Exception {
+        CALLBACK.blockEntered = new CountDownLatch(1);
+        CALLBACK.blockRelease = new CountDownLatch(1);
+        String token = JwtTestTokens.token("shutdown-owner", List.of("REST_USER"));
+        var active = send("POST", "/v1/skills/echoRest/executions", token, "{\"message\":\"block\"}");
+        assertThat(active.statusCode()).isEqualTo(202);
+        assertThat(CALLBACK.blockEntered.await(2, TimeUnit.SECONDS)).isTrue();
+        var waiting = send("POST", "/v1/skills/echoRest/executions", token, "{\"message\":\"queued\"}");
+        String activeId = mapper.readTree(active.body()).path("id").asText();
+        String waitingId = mapper.readTree(waiting.body()).path("id").asText();
+        assertThat(coordinator.queuedCount()).isEqualTo(1);
+
+        coordinator.onApplicationEvent(new ContextClosedEvent(applicationContext));
+        assertThat(send("POST", "/v1/skills/echoRest/executions", token, "{\"message\":\"new\"}").statusCode())
+                .isEqualTo(503);
+        assertThat(send("GET", "/v1/executions/" + waitingId, token, null).statusCode()).isEqualTo(404);
+        assertThat(coordinator.queuedCount()).isZero();
+        assertThat(coordinator.queuedBytes()).isZero();
+
+        CALLBACK.blockRelease.countDown();
+        assertThat(poll(activeId, token).path("status").asText()).isEqualTo("COMPLETED");
     }
 
-    private static HttpServer modelServer() {
-        try {
-            var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-            server.createContext("/v1/chat/completions", exchange -> {
-                String response = MODEL_RESPONSES.poll();
-                if (response == null) response = "{}";
-                byte[] body = response.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().set("Content-Type", "application/json");
-                exchange.sendResponseHeaders(200, body.length);
-                try (var output = exchange.getResponseBody()) { output.write(body); }
-            });
-            server.start();
-            return server;
-        } catch (java.io.IOException failure) {
-            throw new ExceptionInInitializerError(failure);
-        }
+    private static String completion(String content) {
+        return SidecarApplicationFixture.completion(content);
     }
 
     private JsonNode poll(String id, String token) throws Exception {
@@ -296,106 +301,4 @@ class AuthenticatedExecutionApiIntegrationTest {
         return client.send(request, HttpResponse.BodyHandlers.ofString());
     }
 
-    private static Path routeFile() {
-        try {
-            Path file = Files.createTempFile("sidecar-rest-routes-", ".yaml");
-            Files.writeString(file, """
-                    targets:
-                      callback:
-                        base-url: http://127.0.0.1:%d
-                        auth: {mode: caller-passthrough}
-                        connect-timeout: 1s
-                        read-timeout: 5s
-                        max-response-size: 16KB
-                    routes:
-                      echoRest: {target: callback, method: POST, path: /echo}
-                    """.formatted(CALLBACK.server.getAddress().getPort()));
-            file.toFile().deleteOnExit();
-            return file;
-        } catch (Exception failure) {
-            throw new ExceptionInInitializerError(failure);
-        }
-    }
-
-    static final class CallbackFixture {
-        final HttpServer server;
-        final java.util.concurrent.atomic.AtomicReference<String> lastToken = new java.util.concurrent.atomic.AtomicReference<>();
-        final java.util.concurrent.atomic.AtomicReference<String> lastIssuer = new java.util.concurrent.atomic.AtomicReference<>();
-        final java.util.concurrent.atomic.AtomicReference<String> lastSubject = new java.util.concurrent.atomic.AtomicReference<>();
-        final CopyOnWriteArrayList<String> seenTokens = new CopyOnWriteArrayList<>();
-        final CopyOnWriteArrayList<String> lastRoles = new CopyOnWriteArrayList<>();
-        volatile CountDownLatch blockEntered = new CountDownLatch(0);
-        volatile CountDownLatch blockRelease = new CountDownLatch(0);
-
-        private CallbackFixture(HttpServer server) { this.server = server; }
-
-        static CallbackFixture start() {
-            try {
-                HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-                CallbackFixture fixture = new CallbackFixture(server);
-                server.createContext("/echo", fixture::handle);
-                server.start();
-                return fixture;
-            } catch (Exception failure) {
-                throw new ExceptionInInitializerError(failure);
-            }
-        }
-
-        private void handle(com.sun.net.httpserver.HttpExchange exchange) throws java.io.IOException {
-            String authorization = exchange.getRequestHeaders().getFirst("Authorization");
-            String token = authorization != null && authorization.startsWith("Bearer ")
-                    ? authorization.substring(7) : "";
-            lastToken.set(token);
-            seenTokens.add(token);
-            try {
-                SignedJWT jwt = SignedJWT.parse(token);
-                var claims = jwt.getJWTClaimsSet();
-                if (!jwt.verify(new RSASSAVerifier(publicKey()))
-                        || !"https://issuer.test".equals(claims.getIssuer())
-                        || !claims.getAudience().contains("sidecar")
-                        || claims.getExpirationTime() == null
-                        || !claims.getExpirationTime().toInstant().isAfter(Instant.now())
-                        || claims.getSubject() == null || claims.getSubject().isBlank()) {
-                    respond(exchange, 401, "invalid token");
-                    return;
-                }
-                lastIssuer.set(claims.getIssuer());
-                lastSubject.set(claims.getSubject());
-                lastRoles.clear();
-                lastRoles.addAll(claims.getStringListClaim("roles"));
-                String body = new String(exchange.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-                String message = new ObjectMapper().readTree(body).path("message").asText();
-                if ("block".equals(message)) {
-                    blockEntered.countDown();
-                    try {
-                        if (!blockRelease.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("fixture timeout");
-                    } catch (InterruptedException failure) {
-                        Thread.currentThread().interrupt();
-                        throw new IllegalStateException("fixture interrupted", failure);
-                    }
-                }
-                if ("fail".equals(message)) {
-                    respond(exchange, 503, "fixture-secret");
-                    return;
-                }
-                respond(exchange, 200, "REST: " + message);
-            } catch (Exception failure) {
-                respond(exchange, 401, "invalid token");
-            }
-        }
-
-        private static RSAPublicKey publicKey() throws java.io.IOException {
-            try (var input = CallbackFixture.class.getClassLoader().getResourceAsStream("fixtures/jwt-public.pem")) {
-                return (RSAPublicKey) RsaKeyConverters.x509().convert(input);
-            }
-        }
-
-        private static void respond(com.sun.net.httpserver.HttpExchange exchange, int status, String value)
-                throws java.io.IOException {
-            byte[] body = value.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=UTF-8");
-            exchange.sendResponseHeaders(status, body.length);
-            try (var output = exchange.getResponseBody()) { output.write(body); }
-        }
-    }
 }

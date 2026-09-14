@@ -1,0 +1,9 @@
+name: identityLeaf
+description: Return the independently verified caller identity.
+rest: true
+input_schema:
+  type: object
+  properties:
+    message: {type: string}
+  required: [message]
+rbac_roles: [QUICKSTART_USER]

@@ -50,7 +50,8 @@ class ExecutionDiagnosticsTest {
         });
         var properties = new SidecarExecutionProperties();
         properties.setDiagnostics(SidecarExecutionProperties.Diagnostics.ALWAYS);
-        var coordinator = new ExecutionCoordinator(template, properties, mock(ApplicationContext.class));
+        var coordinator = new ExecutionCoordinator(TestSkillInvocationHandoff.from(template), properties,
+                mock(ApplicationContext.class));
         var authentication = authentication();
         var owner = ExecutionOwner.from(authentication);
         try {
@@ -93,7 +94,8 @@ class ExecutionDiagnosticsTest {
         });
         var properties = new SidecarExecutionProperties();
         properties.setDiagnostics(SidecarExecutionProperties.Diagnostics.ONERROR);
-        var coordinator = new ExecutionCoordinator(template, properties, mock(ApplicationContext.class));
+        var coordinator = new ExecutionCoordinator(TestSkillInvocationHandoff.from(template), properties,
+                mock(ApplicationContext.class));
         var authentication = authentication();
         var owner = ExecutionOwner.from(authentication);
         try {
@@ -124,7 +126,8 @@ class ExecutionDiagnosticsTest {
         when(template.invoke(anyString(), anyMap(), any())).thenThrow(new SkillException("no callback"));
         var properties = new SidecarExecutionProperties();
         properties.setDiagnostics(SidecarExecutionProperties.Diagnostics.ALWAYS);
-        var coordinator = new ExecutionCoordinator(template, properties, mock(ApplicationContext.class));
+        var coordinator = new ExecutionCoordinator(TestSkillInvocationHandoff.from(template), properties,
+                mock(ApplicationContext.class));
         var authentication = authentication();
         var owner = ExecutionOwner.from(authentication);
         try {
@@ -152,7 +155,8 @@ class ExecutionDiagnosticsTest {
         properties.setDiagnostics(SidecarExecutionProperties.Diagnostics.ALWAYS);
         properties.setCompletedTtl(Duration.ofMinutes(1));
         var clock = new MutableClock(Instant.parse("2026-09-13T00:00:00Z"));
-        var coordinator = new ExecutionCoordinator(template, properties, mock(ApplicationContext.class), clock);
+        var coordinator = new ExecutionCoordinator(TestSkillInvocationHandoff.from(template), properties,
+                mock(ApplicationContext.class), clock);
         var authentication = authentication();
         var owner = ExecutionOwner.from(authentication);
         try {
@@ -180,7 +184,8 @@ class ExecutionDiagnosticsTest {
         });
         var properties = new SidecarExecutionProperties();
         properties.setDiagnostics(diagnostics);
-        var coordinator = new ExecutionCoordinator(template, properties, mock(ApplicationContext.class));
+        var coordinator = new ExecutionCoordinator(TestSkillInvocationHandoff.from(template), properties,
+                mock(ApplicationContext.class));
         var authentication = authentication();
         var owner = ExecutionOwner.from(authentication);
         try {

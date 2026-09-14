@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
@@ -15,10 +16,12 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 
+import ai.loomspan.api.AdmittedSkillInvocation;
 import ai.loomspan.api.SkillExecutionEvent;
 import ai.loomspan.api.SkillExecutionView;
-import ai.loomspan.api.SkillTemplate;
+import ai.loomspan.api.SkillInvocationHandoff;
 import ai.loomspan.sidecar.config.SidecarExecutionProperties;
 import ai.loomspan.sidecar.security.ExecutionOwner;
 import jakarta.annotation.PreDestroy;
@@ -34,7 +37,7 @@ import org.springframework.stereotype.Component;
 
 @Component("sidecarExecutionCoordinator")
 public class ExecutionCoordinator implements ApplicationListener<ContextClosedEvent> {
-    private final SkillTemplate skillTemplate;
+    private final SkillInvocationHandoff skillInvocationHandoff;
     private final SidecarExecutionProperties properties;
     private final ApplicationContext owningContext;
     private final Clock clock;
@@ -42,23 +45,30 @@ public class ExecutionCoordinator implements ApplicationListener<ContextClosedEv
     private final ReentrantLock gate = new ReentrantLock();
     private final ThreadPoolExecutor executor;
     private final ScheduledExecutorService expirationSweeper;
+    private final Consumer<ExecutionTask> beforeDispatchHandoff;
     private boolean open = true;
     private int queuedCount;
     private long queuedBytes;
 
     @Autowired
-    public ExecutionCoordinator(SkillTemplate skillTemplate, SidecarExecutionProperties properties,
+    public ExecutionCoordinator(SkillInvocationHandoff skillInvocationHandoff, SidecarExecutionProperties properties,
             ApplicationContext owningContext) {
-        this(skillTemplate, properties, owningContext, Clock.systemUTC());
+        this(skillInvocationHandoff, properties, owningContext, Clock.systemUTC());
     }
 
-    ExecutionCoordinator(SkillTemplate skillTemplate, SidecarExecutionProperties properties,
+    ExecutionCoordinator(SkillInvocationHandoff skillInvocationHandoff, SidecarExecutionProperties properties,
             ApplicationContext owningContext, Clock clock) {
+        this(skillInvocationHandoff, properties, owningContext, clock, task -> { });
+    }
+
+    ExecutionCoordinator(SkillInvocationHandoff skillInvocationHandoff, SidecarExecutionProperties properties,
+            ApplicationContext owningContext, Clock clock, Consumer<ExecutionTask> beforeDispatchHandoff) {
         properties.validate();
-        this.skillTemplate = skillTemplate;
+        this.skillInvocationHandoff = skillInvocationHandoff;
         this.properties = properties;
         this.owningContext = owningContext;
         this.clock = clock;
+        this.beforeDispatchHandoff = beforeDispatchHandoff;
         BlockingQueue<Runnable> queue = new AdmissionQueue();
         this.executor = new ThreadPoolExecutor(properties.getMaxConcurrent(), properties.getMaxConcurrent(),
                 0L, TimeUnit.MILLISECONDS, queue,
@@ -122,17 +132,30 @@ public class ExecutionCoordinator implements ApplicationListener<ContextClosedEv
         }
     }
 
-    boolean begin(ExecutionTask task) {
+    AdmittedSkillInvocation handoff(ExecutionTask task) {
         gate.lock();
         try {
             task.releaseQueueReservationLocked();
             if (!open || records.get(task.record.id) != task.record) {
                 records.remove(task.record.id, task.record);
-                return false;
+                return null;
+            }
+            var previousContext = SecurityContextHolder.getContext();
+            var handoffContext = SecurityContextHolder.createEmptyContext();
+            handoffContext.setAuthentication(task.authentication);
+            SecurityContextHolder.setContext(handoffContext);
+            AdmittedSkillInvocation admitted;
+            try {
+                admitted = Objects.requireNonNull(
+                        skillInvocationHandoff.handoff(task.record.skillName, task.input),
+                        "skill invocation handoff must not return null");
+            } finally {
+                SecurityContextHolder.setContext(previousContext);
             }
             task.record.snapshot = new ExecutionSnapshot(task.record.id, task.record.skillName,
                     ExecutionStatus.RUNNING, task.record.createdAt, null, null, null, null);
-            return true;
+            task.clear();
+            return admitted;
         } finally {
             gate.unlock();
         }
@@ -276,18 +299,18 @@ public class ExecutionCoordinator implements ApplicationListener<ContextClosedEv
 
         @Override
         public void run() {
-            if (!coordinator.begin(this)) { clear(); return; }
-            var context = SecurityContextHolder.createEmptyContext();
-            context.setAuthentication(authentication);
-            SecurityContextHolder.setContext(context);
+            coordinator.beforeDispatchHandoff.accept(this);
             var views = new ArrayList<SkillExecutionView>(1);
+            AdmittedSkillInvocation admitted = null;
             try {
-                String result = coordinator.skillTemplate.invoke(record.skillName, input, views::add);
+                admitted = coordinator.handoff(this);
+                if (admitted == null) { clear(); return; }
+                String result = admitted.invoke(views::add);
                 coordinator.complete(this, result, null, events(views));
             } catch (RuntimeException failure) {
                 coordinator.complete(this, null, failure, events(views));
             } finally {
-                SecurityContextHolder.clearContext();
+                if (admitted != null) admitted.release();
                 clear();
             }
         }
@@ -298,6 +321,7 @@ public class ExecutionCoordinator implements ApplicationListener<ContextClosedEv
 
         void releaseQueueReservationLocked() { coordinator.releaseQueueReservationLocked(this); }
         void discardLocked() { releaseQueueReservationLocked(); clear(); }
+        boolean referencesCleared() { return input == null && authentication == null; }
         private void clear() { input = null; authentication = null; }
     }
 }

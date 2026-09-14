@@ -15,6 +15,8 @@ import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 
 import ai.loomspan.api.SkillExecutionView;
+import ai.loomspan.api.SkillException;
+import ai.loomspan.api.SkillInvocationHandoff;
 import ai.loomspan.api.SkillTemplate;
 import ai.loomspan.sidecar.config.SidecarExecutionProperties;
 import ai.loomspan.sidecar.security.ExecutionOwner;
@@ -59,7 +61,7 @@ class ExecutionCoordinatorTest {
             return "done";
         });
         var context = mock(ApplicationContext.class);
-        var coordinator = new ExecutionCoordinator(template, properties(), context);
+        var coordinator = new ExecutionCoordinator(TestSkillInvocationHandoff.from(template), properties(), context);
         var firstAuthentication = authentication("token-one", "owner");
         var secondAuthentication = authentication("token-two", "owner");
         var owner = ExecutionOwner.from(firstAuthentication);
@@ -102,7 +104,7 @@ class ExecutionCoordinatorTest {
         });
         var properties = properties();
         ApplicationContext context = mock(ApplicationContext.class);
-        var coordinator = new ExecutionCoordinator(template, properties, context);
+        var coordinator = new ExecutionCoordinator(TestSkillInvocationHandoff.from(template), properties, context);
         var authentication = authentication("token-a", "owner");
         var owner = ExecutionOwner.from(authentication);
         try {
@@ -138,7 +140,7 @@ class ExecutionCoordinatorTest {
             return "done";
         });
         var context = mock(ApplicationContext.class);
-        var coordinator = new ExecutionCoordinator(template, properties(), context);
+        var coordinator = new ExecutionCoordinator(TestSkillInvocationHandoff.from(template), properties(), context);
         var authentication = authentication("token", "owner");
         var owner = ExecutionOwner.from(authentication);
         try {
@@ -165,7 +167,8 @@ class ExecutionCoordinatorTest {
         var properties = properties();
         properties.setCompletedTtl(Duration.ofMillis(40));
         var clock = new MutableClock(Instant.parse("2026-09-13T00:00:00Z"));
-        var coordinator = new ExecutionCoordinator(template, properties, mock(ApplicationContext.class), clock);
+        var coordinator = new ExecutionCoordinator(TestSkillInvocationHandoff.from(template), properties,
+                mock(ApplicationContext.class), clock);
         var authentication = authentication("token", "owner");
         var owner = ExecutionOwner.from(authentication);
         try {
@@ -198,7 +201,8 @@ class ExecutionCoordinatorTest {
         properties.setMaxQueued(2);
         properties.setMaxQueuedInputSize(DataSize.ofBytes(100));
         properties.setMaxRetained(3);
-        var coordinator = new ExecutionCoordinator(template, properties, mock(ApplicationContext.class));
+        var coordinator = new ExecutionCoordinator(TestSkillInvocationHandoff.from(template), properties,
+                mock(ApplicationContext.class));
         var authentication = authentication("token", "owner");
         var owner = ExecutionOwner.from(authentication);
         var accepted = new ConcurrentLinkedQueue<java.util.UUID>();
@@ -252,7 +256,8 @@ class ExecutionCoordinatorTest {
         properties.setMaxQueued(2);
         properties.setMaxQueuedInputSize(DataSize.ofBytes(10));
         properties.setMaxRetained(10);
-        var coordinator = new ExecutionCoordinator(template, properties, mock(ApplicationContext.class));
+        var coordinator = new ExecutionCoordinator(TestSkillInvocationHandoff.from(template), properties,
+                mock(ApplicationContext.class));
         var authentication = authentication("token", "owner");
         var owner = ExecutionOwner.from(authentication);
         try {
@@ -285,7 +290,7 @@ class ExecutionCoordinatorTest {
             return "done";
         });
         var context = mock(ApplicationContext.class);
-        var coordinator = new ExecutionCoordinator(template, properties(), context);
+        var coordinator = new ExecutionCoordinator(TestSkillInvocationHandoff.from(template), properties(), context);
         var authentication = authentication("token", "owner");
         var owner = ExecutionOwner.from(authentication);
         try {
@@ -325,7 +330,8 @@ class ExecutionCoordinatorTest {
         properties.setMaxRetained(1);
         properties.setCompletedTtl(Duration.ofMinutes(1));
         var clock = new MutableClock(Instant.parse("2026-09-13T00:00:00Z"));
-        var coordinator = new ExecutionCoordinator(template, properties, mock(ApplicationContext.class), clock);
+        var coordinator = new ExecutionCoordinator(TestSkillInvocationHandoff.from(template), properties,
+                mock(ApplicationContext.class), clock);
         var authentication = authentication("token", "owner");
         var owner = ExecutionOwner.from(authentication);
         try {
@@ -347,7 +353,7 @@ class ExecutionCoordinatorTest {
     void preventsFacadeEntryWhenBeginLosesTheCloseRace() {
         SkillTemplate template = mock(SkillTemplate.class);
         var context = mock(ApplicationContext.class);
-        var coordinator = new ExecutionCoordinator(template, properties(), context);
+        var coordinator = new ExecutionCoordinator(TestSkillInvocationHandoff.from(template), properties(), context);
         var authentication = authentication("token", "owner");
         var owner = ExecutionOwner.from(authentication);
         try {
@@ -356,6 +362,101 @@ class ExecutionCoordinatorTest {
             new ExecutionCoordinator.ExecutionTask(coordinator, record, Map.of("secret", "value"), 2,
                     authentication).run();
             verify(template, never()).invoke(anyString(), anyMap(), any());
+            assertThat(coordinator.queuedCount()).isZero();
+            assertThat(coordinator.queuedBytes()).isZero();
+        } finally {
+            coordinator.destroy();
+        }
+    }
+
+    @Test
+    void dequeuedTaskDoesNotEnterFacadeWhenCloseWinsDispatchHandoff() throws Exception {
+        var activeEntered = new CountDownLatch(1);
+        var activeRelease = new CountDownLatch(1);
+        var handoffEntered = new CountDownLatch(1);
+        var handoffRelease = new CountDownLatch(1);
+        var handedOffTask = new AtomicReference<ExecutionCoordinator.ExecutionTask>();
+        var hookCalls = new AtomicInteger();
+        var frameworkHandoffs = new AtomicInteger();
+        var invocations = new AtomicInteger();
+        SkillTemplate template = mock(SkillTemplate.class);
+        when(template.invoke(anyString(), anyMap(), any())).thenAnswer(call -> {
+            invocations.incrementAndGet();
+            activeEntered.countDown();
+            activeRelease.await(5, TimeUnit.SECONDS);
+            return "done";
+        });
+        var context = mock(ApplicationContext.class);
+        SkillInvocationHandoff delegate = TestSkillInvocationHandoff.from(template);
+        SkillInvocationHandoff handoff = new SkillInvocationHandoff() {
+            @Override public ai.loomspan.api.AdmittedSkillInvocation handoff(String skillName, Object input) {
+                frameworkHandoffs.incrementAndGet();
+                return delegate.handoff(skillName, input);
+            }
+            @Override public ai.loomspan.api.AdmittedSkillInvocation handoff(String skillName, Map<String, Object> input) {
+                frameworkHandoffs.incrementAndGet();
+                return delegate.handoff(skillName, input);
+            }
+        };
+        var coordinator = new ExecutionCoordinator(handoff, properties(), context,
+                Clock.systemUTC(), task -> {
+            if (hookCalls.incrementAndGet() == 1) return;
+            handedOffTask.set(task);
+            handoffEntered.countDown();
+            try {
+                handoffRelease.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        var authentication = authentication("secret-token", "owner");
+        var owner = ExecutionOwner.from(authentication);
+        try {
+            var activeId = coordinator.admit("skill", Map.of("active", "value"), 1, owner, authentication);
+            assertThat(activeEntered.await(2, TimeUnit.SECONDS)).isTrue();
+            var id = coordinator.admit("skill", Map.of("secret", "value"), 10, owner, authentication);
+            assertThat(coordinator.queuedCount()).isEqualTo(1);
+            assertThat(coordinator.queuedBytes()).isEqualTo(10);
+
+            activeRelease.countDown();
+            awaitTerminal(coordinator, activeId, owner);
+            assertThat(handoffEntered.await(2, TimeUnit.SECONDS)).isTrue();
+            coordinator.onApplicationEvent(new ContextClosedEvent(context));
+            handoffRelease.countDown();
+            for (int count = 0; count < 100 && coordinator.find(id, owner).isPresent(); count++) Thread.sleep(5);
+
+            assertThat(invocations).hasValue(1);
+            assertThat(frameworkHandoffs).hasValue(1);
+            assertThat(coordinator.find(id, owner)).isEmpty();
+            assertThat(coordinator.queuedCount()).isZero();
+            assertThat(coordinator.queuedBytes()).isZero();
+            assertThat(handedOffTask.get().referencesCleared()).isTrue();
+            assertThatThrownBy(() -> coordinator.admit("skill", Map.of(), 1, owner, authentication))
+                    .isInstanceOf(ExecutionUnavailableException.class);
+        } finally {
+            activeRelease.countDown();
+            handoffRelease.countDown();
+            coordinator.destroy();
+        }
+    }
+
+    @Test
+    void frameworkAdmissionClosingFirstFailsDequeuedWorkWithoutInvokingIt() throws Exception {
+        var context = mock(ApplicationContext.class);
+        SkillInvocationHandoff handoff = mock(SkillInvocationHandoff.class);
+        when(handoff.handoff(anyString(), anyMap()))
+                .thenThrow(new SkillException("Framework execution admission is closed."));
+        var coordinator = new ExecutionCoordinator(handoff, properties(), context);
+        var authentication = authentication("token", "owner");
+        var owner = ExecutionOwner.from(authentication);
+        try {
+            var id = coordinator.admit("skill", Map.of("message", "value"), 5, owner, authentication);
+
+            var terminal = awaitTerminal(coordinator, id, owner);
+
+            assertThat(terminal.status()).isEqualTo(ExecutionStatus.FAILED);
+            assertThat(terminal.failure()).isNotNull();
+            coordinator.onApplicationEvent(new ContextClosedEvent(context));
             assertThat(coordinator.queuedCount()).isZero();
             assertThat(coordinator.queuedBytes()).isZero();
         } finally {

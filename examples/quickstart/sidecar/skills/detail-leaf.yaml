@@ -1,0 +1,9 @@
+name: detailLeaf
+description: Return deterministic local detail.
+rest: true
+input_schema:
+  type: object
+  properties:
+    message: {type: string}
+  required: [message]
+rbac_roles: [QUICKSTART_USER]
