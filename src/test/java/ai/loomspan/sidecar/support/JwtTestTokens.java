@@ -36,13 +36,22 @@ public final class JwtTestTokens {
         return token(issuer, audience, subject, roles, 0, false);
     }
 
+    public static String tokenWithAuthoritiesClaim(String subject, String claimName, List<String> authorities) {
+        return token("https://issuer.test", "sidecar", subject, claimName, authorities, 300, true);
+    }
+
     private static String token(String issuer, String audience, String subject, List<String> roles,
             long lifetimeSeconds, boolean includeExpiration) {
+        return token(issuer, audience, subject, "roles", roles, lifetimeSeconds, includeExpiration);
+    }
+
+    private static String token(String issuer, String audience, String subject, String claimName,
+            List<String> authorities, long lifetimeSeconds, boolean includeExpiration) {
         try {
             Instant now = Instant.now();
             Instant issuedAt = lifetimeSeconds < 0 ? now.minusSeconds(300) : now;
             var builder = new JWTClaimsSet.Builder().issuer(issuer).subject(subject)
-                    .audience(audience).issueTime(Date.from(issuedAt)).claim("roles", roles);
+                    .audience(audience).issueTime(Date.from(issuedAt)).claim(claimName, authorities);
             if (includeExpiration) builder.expirationTime(Date.from(now.plusSeconds(lifetimeSeconds)));
             var claims = builder.build();
             var jwt = new SignedJWT(new JWSHeader(JWSAlgorithm.RS256), claims);

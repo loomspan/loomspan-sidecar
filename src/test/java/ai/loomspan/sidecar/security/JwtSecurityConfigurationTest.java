@@ -13,6 +13,7 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.security.converter.RsaKeyConverters;
 import org.springframework.security.oauth2.jwt.JwtValidationException;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -65,6 +66,13 @@ class JwtSecurityConfigurationTest {
         var ambiguous = validProperties();
         ambiguous.setJwkSetUri("https://issuer.test/jwks");
         assertThatThrownBy(ambiguous::validate).isInstanceOf(IllegalArgumentException.class);
+
+        assertInvalid(properties -> properties.setIssuerUri(" "));
+        assertInvalid(properties -> properties.setAudience(" "));
+        assertInvalid(properties -> properties.setRolesClaim(" "));
+        assertInvalid(properties -> properties.setRolePrefix(null));
+        assertInvalid(properties -> properties.setClockSkew(null));
+        assertInvalid(properties -> properties.setClockSkew(Duration.ofSeconds(-1)));
     }
 
     @Test
@@ -98,20 +106,46 @@ class JwtSecurityConfigurationTest {
             var discovery = new SidecarJwtProperties();
             discovery.setIssuerUri(issuer);
             discovery.setAudience("sidecar");
-            assertThat(new JwtSecurityConfiguration().sidecarJwtDecoder(discovery)
+            discovery.setClockSkew(Duration.ZERO);
+            var discoveryDecoder = new JwtSecurityConfiguration().sidecarJwtDecoder(discovery);
+            assertThat(discoveryDecoder
                     .decode(JwtTestTokens.token(issuer, "sidecar", "subject", List.of())).getSubject())
                     .isEqualTo("subject");
+            assertCommonValidation(discoveryDecoder, issuer);
 
             var explicit = new SidecarJwtProperties();
             explicit.setIssuerUri(issuer);
             explicit.setAudience("sidecar");
             explicit.setJwkSetUri(issuer + "/jwks");
-            assertThat(new JwtSecurityConfiguration().sidecarJwtDecoder(explicit)
+            explicit.setClockSkew(Duration.ZERO);
+            var explicitDecoder = new JwtSecurityConfiguration().sidecarJwtDecoder(explicit);
+            assertThat(explicitDecoder
                     .decode(JwtTestTokens.token(issuer, "sidecar", "subject", List.of())).getSubject())
                     .isEqualTo("subject");
+            assertCommonValidation(explicitDecoder, issuer);
         } finally {
             server.stop(0);
         }
+    }
+
+    private void assertCommonValidation(JwtDecoder decoder, String issuer) {
+        assertThatThrownBy(() -> decoder.decode(JwtTestTokens.token(issuer, "wrong", "subject", List.of())))
+                .isInstanceOf(JwtValidationException.class);
+        assertThatThrownBy(() -> decoder.decode(JwtTestTokens.token(
+                "https://wrong-issuer.test", "sidecar", "subject", List.of())))
+                .isInstanceOf(JwtValidationException.class);
+        assertThatThrownBy(() -> decoder.decode(JwtTestTokens.token(issuer, "sidecar", "", List.of())))
+                .isInstanceOf(JwtValidationException.class);
+        assertThatThrownBy(() -> decoder.decode(JwtTestTokens.tokenWithoutExpiration(
+                issuer, "sidecar", "subject", List.of())))
+                .isInstanceOf(JwtValidationException.class);
+        assertThatThrownBy(() -> decoder.decode(JwtTestTokens.token(
+                issuer, "sidecar", "subject", List.of(), -30)))
+                .isInstanceOf(JwtValidationException.class);
+        String signed = JwtTestTokens.token(issuer, "sidecar", "subject", List.of());
+        String[] segments = signed.split("\\.");
+        segments[2] = (segments[2].startsWith("A") ? "B" : "A") + segments[2].substring(1);
+        assertThatThrownBy(() -> decoder.decode(String.join(".", segments))).isInstanceOf(RuntimeException.class);
     }
 
     private void respond(com.sun.net.httpserver.HttpExchange exchange, String body) throws java.io.IOException {
@@ -127,5 +161,11 @@ class JwtSecurityConfigurationTest {
         properties.setAudience("sidecar");
         properties.setPublicKeyLocation(new ClassPathResource("fixtures/jwt-public.pem"));
         return properties;
+    }
+
+    private void assertInvalid(java.util.function.Consumer<SidecarJwtProperties> mutation) {
+        var properties = validProperties();
+        mutation.accept(properties);
+        assertThatThrownBy(properties::validate).isInstanceOf(IllegalArgumentException.class);
     }
 }

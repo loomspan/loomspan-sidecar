@@ -1,9 +1,13 @@
 package ai.loomspan.sidecar.execution;
 
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import ai.loomspan.api.SkillExecutionEvent;
 import ai.loomspan.api.SkillExecutionView;
@@ -27,6 +31,40 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class ExecutionDiagnosticsTest {
+    @Test
+    void preservesLargeResultAndOrderedSelectedEventsWithoutTruncation() throws Exception {
+        String result = "résultat\n".repeat(8_192);
+        String firstDetail = "α".repeat(12_000);
+        String secondDetail = "β".repeat(12_000);
+        var first = new SkillExecutionEvent(Instant.parse("2026-09-13T00:00:00Z"), "INFO", "first",
+                Map.of("payload", firstDetail), null, null);
+        var second = new SkillExecutionEvent(Instant.parse("2026-09-13T00:00:01Z"), "ERROR", "second",
+                Map.of("payload", secondDetail), "frame", "route");
+        SkillTemplate template = mock(SkillTemplate.class);
+        when(template.invoke(anyString(), anyMap(), any())).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            var observer = (java.util.function.Consumer<SkillExecutionView>) invocation.getArgument(2);
+            observer.accept(new SkillExecutionView("one", List.of(first)));
+            observer.accept(new SkillExecutionView("two", List.of(second)));
+            return result;
+        });
+        var properties = new SidecarExecutionProperties();
+        properties.setDiagnostics(SidecarExecutionProperties.Diagnostics.ALWAYS);
+        var coordinator = new ExecutionCoordinator(template, properties, mock(ApplicationContext.class));
+        var authentication = authentication();
+        var owner = ExecutionOwner.from(authentication);
+        try {
+            var snapshot = terminal(coordinator,
+                    coordinator.admit("skill", Map.of(), 2, owner, authentication), owner);
+            assertThat(snapshot.result()).isEqualTo(result);
+            assertThat(snapshot.events()).containsExactly(first, second);
+            assertThat(snapshot.events().get(0).details().get("payload")).isEqualTo(firstDetail);
+            assertThat(snapshot.events().get(1).details().get("payload")).isEqualTo(secondDetail);
+        } finally {
+            coordinator.destroy();
+        }
+    }
+
     @Test
     void classifiesOnlyThePrimaryFacadeFailure() {
         var issue = new SkillInputValidationIssue("$.message", "required", "Message is required");
@@ -99,6 +137,37 @@ class ExecutionDiagnosticsTest {
         }
     }
 
+    @Test
+    void expiresOutcomeAndSelectedEventsAsOneRecord() throws Exception {
+        var event = new SkillExecutionEvent(Instant.parse("2026-09-13T00:00:00Z"), "INFO", "event",
+                Map.of("value", "kept-until-expiry"), null, null);
+        SkillTemplate template = mock(SkillTemplate.class);
+        when(template.invoke(anyString(), anyMap(), any())).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            var observer = (java.util.function.Consumer<SkillExecutionView>) invocation.getArgument(2);
+            observer.accept(new SkillExecutionView("session", List.of(event)));
+            return "exact-result";
+        });
+        var properties = new SidecarExecutionProperties();
+        properties.setDiagnostics(SidecarExecutionProperties.Diagnostics.ALWAYS);
+        properties.setCompletedTtl(Duration.ofMinutes(1));
+        var clock = new MutableClock(Instant.parse("2026-09-13T00:00:00Z"));
+        var coordinator = new ExecutionCoordinator(template, properties, mock(ApplicationContext.class), clock);
+        var authentication = authentication();
+        var owner = ExecutionOwner.from(authentication);
+        try {
+            var id = coordinator.admit("skill", Map.of(), 2, owner, authentication);
+            var snapshot = terminal(coordinator, id, owner);
+            assertThat(snapshot.result()).isEqualTo("exact-result");
+            assertThat(snapshot.events()).containsExactly(event);
+            clock.advance(Duration.ofMinutes(1));
+            assertThat(coordinator.find(id, owner)).isEmpty();
+            assertThat(coordinator.retainedCount()).isZero();
+        } finally {
+            coordinator.destroy();
+        }
+    }
+
     private ExecutionSnapshot run(SidecarExecutionProperties.Diagnostics diagnostics, boolean fail) throws Exception {
         SkillTemplate template = mock(SkillTemplate.class);
         var event = new SkillExecutionEvent(Instant.now(), "INFO", "fixture.event", Map.of(), null, null);
@@ -136,5 +205,15 @@ class ExecutionDiagnosticsTest {
                 .issuer("https://issuer.test").subject("owner")
                 .issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(60)).build();
         return new JwtAuthenticationToken(jwt);
+    }
+
+    private static final class MutableClock extends Clock {
+        private final AtomicReference<Instant> instant;
+
+        private MutableClock(Instant instant) { this.instant = new AtomicReference<>(instant); }
+        private void advance(Duration duration) { instant.updateAndGet(value -> value.plus(duration)); }
+        @Override public ZoneId getZone() { return ZoneId.of("UTC"); }
+        @Override public Clock withZone(ZoneId zone) { return this; }
+        @Override public Instant instant() { return instant.get(); }
     }
 }

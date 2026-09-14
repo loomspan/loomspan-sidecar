@@ -32,9 +32,61 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ExecutionCoordinatorTest {
+    @Test
+    void directHandoffDoesNotConsumeWaitingBudgetAndHandoffReleasesBeforeCompletion() throws Exception {
+        var firstEntered = new CountDownLatch(1);
+        var firstRelease = new CountDownLatch(1);
+        var secondEntered = new CountDownLatch(1);
+        var secondRelease = new CountDownLatch(1);
+        var invocations = new AtomicInteger();
+        var seenTokens = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        SkillTemplate template = mock(SkillTemplate.class);
+        when(template.invoke(anyString(), anyMap(), any())).thenAnswer(invocation -> {
+            seenTokens.add(((JwtAuthenticationToken) org.springframework.security.core.context.SecurityContextHolder
+                    .getContext().getAuthentication()).getToken().getTokenValue());
+            if (invocations.incrementAndGet() == 1) {
+                firstEntered.countDown();
+                firstRelease.await(5, TimeUnit.SECONDS);
+            } else {
+                secondEntered.countDown();
+                secondRelease.await(5, TimeUnit.SECONDS);
+            }
+            return "done";
+        });
+        var context = mock(ApplicationContext.class);
+        var coordinator = new ExecutionCoordinator(template, properties(), context);
+        var firstAuthentication = authentication("token-one", "owner");
+        var secondAuthentication = authentication("token-two", "owner");
+        var owner = ExecutionOwner.from(firstAuthentication);
+        try {
+            var first = coordinator.admit("skill", Map.of(), 2, owner, firstAuthentication);
+            assertThat(firstEntered.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(coordinator.queuedCount()).isZero();
+            assertThat(coordinator.queuedBytes()).isZero();
+
+            var second = coordinator.admit("skill", Map.of(), 10, owner, secondAuthentication);
+            assertThat(coordinator.queuedCount()).isEqualTo(1);
+            assertThat(coordinator.queuedBytes()).isEqualTo(10);
+            firstRelease.countDown();
+            assertThat(secondEntered.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(coordinator.queuedCount()).isZero();
+            assertThat(coordinator.queuedBytes()).isZero();
+            assertThat(seenTokens).containsExactly("token-one", "token-two");
+            secondRelease.countDown();
+            awaitTerminal(coordinator, first, owner);
+            awaitTerminal(coordinator, second, owner);
+        } finally {
+            firstRelease.countDown();
+            secondRelease.countDown();
+            coordinator.destroy();
+        }
+    }
+
     @Test
     void boundsWorkersQueueCountBytesAndRetainedRecords() throws Exception {
         var entered = new CountDownLatch(1);
@@ -204,17 +256,109 @@ class ExecutionCoordinatorTest {
         var authentication = authentication("token", "owner");
         var owner = ExecutionOwner.from(authentication);
         try {
-            coordinator.admit("skill", Map.of(), 1, owner, authentication);
+            var active = coordinator.admit("skill", Map.of(), 1, owner, authentication);
             assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
-            coordinator.admit("skill", Map.of(), 10, owner, authentication);
+            var queued = coordinator.admit("skill", Map.of(), 10, owner, authentication);
             assertThat(coordinator.queuedBytes()).isEqualTo(10);
             assertThatThrownBy(() -> coordinator.admit("skill", Map.of(), 1, owner, authentication))
                     .isInstanceOf(ExecutionCapacityException.class);
             assertThat(coordinator.retainedCount()).isEqualTo(2);
             assertThat(coordinator.queuedCount()).isEqualTo(1);
             assertThat(coordinator.queuedBytes()).isEqualTo(10);
+            release.countDown();
+            awaitTerminal(coordinator, active, owner);
+            awaitTerminal(coordinator, queued, owner);
         } finally {
             release.countDown();
+            coordinator.destroy();
+        }
+    }
+
+    @Test
+    void queueRejectionRollsBackRecordAndReservationExactlyOnce() throws Exception {
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        SkillTemplate template = mock(SkillTemplate.class);
+        when(template.invoke(anyString(), anyMap(), any())).thenAnswer(invocation -> {
+            entered.countDown();
+            release.await(5, TimeUnit.SECONDS);
+            return "done";
+        });
+        var context = mock(ApplicationContext.class);
+        var coordinator = new ExecutionCoordinator(template, properties(), context);
+        var authentication = authentication("token", "owner");
+        var owner = ExecutionOwner.from(authentication);
+        try {
+            var active = coordinator.admit("skill", Map.of(), 1, owner, authentication);
+            assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
+            coordinator.admit("skill", Map.of(), 10, owner, authentication);
+            assertThatThrownBy(() -> coordinator.admit("skill", Map.of(), 1, owner, authentication))
+                    .isInstanceOf(ExecutionCapacityException.class);
+            assertThat(coordinator.retainedCount()).isEqualTo(2);
+            assertThat(coordinator.queuedCount()).isEqualTo(1);
+            assertThat(coordinator.queuedBytes()).isEqualTo(10);
+            coordinator.onApplicationEvent(new ContextClosedEvent(context));
+            assertThat(coordinator.queuedCount()).isZero();
+            assertThat(coordinator.queuedBytes()).isZero();
+            assertThat(coordinator.retainedCount()).isEqualTo(1);
+            release.countDown();
+            awaitTerminal(coordinator, active, owner);
+        } finally {
+            release.countDown();
+            coordinator.destroy();
+        }
+    }
+
+    @Test
+    void expiryReclaimsCapacityOnAdmissionWithoutExpiringActiveWork() throws Exception {
+        var activeEntered = new CountDownLatch(1);
+        var activeRelease = new CountDownLatch(1);
+        var invocation = new AtomicInteger();
+        SkillTemplate template = mock(SkillTemplate.class);
+        when(template.invoke(anyString(), anyMap(), any())).thenAnswer(call -> {
+            if (invocation.incrementAndGet() == 1) return "first";
+            activeEntered.countDown();
+            activeRelease.await(5, TimeUnit.SECONDS);
+            return "second";
+        });
+        var properties = properties();
+        properties.setMaxRetained(1);
+        properties.setCompletedTtl(Duration.ofMinutes(1));
+        var clock = new MutableClock(Instant.parse("2026-09-13T00:00:00Z"));
+        var coordinator = new ExecutionCoordinator(template, properties, mock(ApplicationContext.class), clock);
+        var authentication = authentication("token", "owner");
+        var owner = ExecutionOwner.from(authentication);
+        try {
+            var expired = coordinator.admit("skill", Map.of(), 1, owner, authentication);
+            awaitTerminal(coordinator, expired, owner);
+            clock.advance(Duration.ofMinutes(1));
+            var active = coordinator.admit("skill", Map.of(), 1, owner, authentication);
+            assertThat(activeEntered.await(2, TimeUnit.SECONDS)).isTrue();
+            clock.advance(Duration.ofHours(1));
+            assertThat(coordinator.find(active, owner)).isPresent();
+            assertThat(coordinator.retainedCount()).isEqualTo(1);
+        } finally {
+            activeRelease.countDown();
+            coordinator.destroy();
+        }
+    }
+
+    @Test
+    void preventsFacadeEntryWhenBeginLosesTheCloseRace() {
+        SkillTemplate template = mock(SkillTemplate.class);
+        var context = mock(ApplicationContext.class);
+        var coordinator = new ExecutionCoordinator(template, properties(), context);
+        var authentication = authentication("token", "owner");
+        var owner = ExecutionOwner.from(authentication);
+        try {
+            coordinator.onApplicationEvent(new ContextClosedEvent(context));
+            var record = new ExecutionRecord(java.util.UUID.randomUUID(), "skill", owner, Instant.now());
+            new ExecutionCoordinator.ExecutionTask(coordinator, record, Map.of("secret", "value"), 2,
+                    authentication).run();
+            verify(template, never()).invoke(anyString(), anyMap(), any());
+            assertThat(coordinator.queuedCount()).isZero();
+            assertThat(coordinator.queuedBytes()).isZero();
+        } finally {
             coordinator.destroy();
         }
     }

@@ -25,6 +25,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -43,7 +44,8 @@ import static org.assertj.core.api.Assertions.assertThat;
         "loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem",
         "loomspan-sidecar.auth.jwt.clock-skew=0s",
         "loomspan-sidecar.executions.max-concurrent=1",
-        "loomspan-sidecar.executions.max-queued=2"
+        "loomspan-sidecar.executions.max-queued=2",
+        "loomspan-sidecar.executions.max-input-size=64B"
 })
 @Import(AuthenticatedExecutionApiIntegrationTest.HandlerConfiguration.class)
 class AuthenticatedExecutionApiIntegrationTest {
@@ -52,6 +54,7 @@ class AuthenticatedExecutionApiIntegrationTest {
     @LocalServerPort int port;
     private final HttpClient client = HttpClient.newHttpClient();
     private final ObjectMapper mapper = new ObjectMapper();
+    @Autowired ExecutionCoordinator coordinator;
 
     @DynamicPropertySource
     static void modelProperties(DynamicPropertyRegistry properties) {
@@ -96,6 +99,45 @@ class AuthenticatedExecutionApiIntegrationTest {
     }
 
     @Test
+    void rejectsOversizeAndMalformedBodiesAtHttpBoundaryWithoutAdmission() throws Exception {
+        String token = JwtTestTokens.token("body-owner", List.of("REST_USER"));
+        int retained = coordinator.retainedCount();
+        int queued = coordinator.queuedCount();
+        long queuedBytes = coordinator.queuedBytes();
+
+        for (String body : List.of("", "null", "[]", "1", "{broken", "{} {}", "{}")) {
+            var response = sendBytes("/v1/skills/echoRest/executions", token,
+                    body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            assertThat(response.statusCode()).isEqualTo(400);
+            assertThat(response.headers().firstValue("content-type").orElse(""))
+                    .contains("application/problem+json");
+            assertThat(response.headers().firstValue("cache-control")).contains("no-store");
+            assertThat(coordinator.retainedCount()).isEqualTo(retained);
+            assertThat(coordinator.queuedCount()).isEqualTo(queued);
+            assertThat(coordinator.queuedBytes()).isEqualTo(queuedBytes);
+        }
+
+        String exact = "{\"message\":\"" + "é".repeat(24) + "x".repeat(2) + "\"}";
+        assertThat(exact.getBytes(java.nio.charset.StandardCharsets.UTF_8)).hasSize(64);
+        var accepted = sendBytes("/v1/skills/echoRest/executions", token,
+                exact.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        assertThat(accepted.statusCode()).isEqualTo(202);
+        poll(mapper.readTree(accepted.body()).path("id").asText(), token);
+        int retainedAfterAccepted = coordinator.retainedCount();
+
+        byte[] oversized = new byte[65];
+        java.util.Arrays.fill(oversized, (byte) '{');
+        var response = sendBytes("/v1/skills/echoRest/executions", token, oversized);
+        assertThat(response.statusCode()).isEqualTo(413);
+        assertThat(response.headers().firstValue("content-type").orElse(""))
+                .contains("application/problem+json");
+        assertThat(response.headers().firstValue("cache-control")).contains("no-store");
+        assertThat(coordinator.retainedCount()).isEqualTo(retainedAfterAccepted);
+        assertThat(coordinator.queuedCount()).isZero();
+        assertThat(coordinator.queuedBytes()).isZero();
+    }
+
+    @Test
     void acceptsAndPollsExactOwnedResultWithWorkerJwt() throws Exception {
         String token = JwtTestTokens.token("owner", List.of("REST_USER"));
         var accepted = send("POST", "/v1/skills/echoRest/executions", token,
@@ -133,7 +175,7 @@ class AuthenticatedExecutionApiIntegrationTest {
     }
 
     @Test
-    void queuedWorkKeepsItsOriginalJwtAfterExpiryWithoutContextLeakage() throws Exception {
+    void acceptedWorkOutlivesTheHttpResponseAndWorkerContextDoesNotLeak() throws Exception {
         HandlerConfiguration.blockEntered = new CountDownLatch(1);
         HandlerConfiguration.blockRelease = new CountDownLatch(1);
         HandlerConfiguration.seenTokens.clear();
@@ -210,7 +252,7 @@ class AuthenticatedExecutionApiIntegrationTest {
     }
 
     private JsonNode poll(String id, String token) throws Exception {
-        for (int attempt = 0; attempt < 100; attempt++) {
+        for (int attempt = 0; attempt < 500; attempt++) {
             var response = send("GET", "/v1/executions/" + id, token, null);
             JsonNode body = mapper.readTree(response.body());
             if (body.path("status").asText().matches("COMPLETED|FAILED")) return body;
@@ -234,6 +276,15 @@ class AuthenticatedExecutionApiIntegrationTest {
         if (body != null) builder.header("Content-Type", "application/json");
         builder.method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body));
         return client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> sendBytes(String path, String token, byte[] body) throws Exception {
+        var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                .timeout(Duration.ofSeconds(5))
+                .header("Authorization", "Bearer " + token)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body)).build();
+        return client.send(request, HttpResponse.BodyHandlers.ofString());
     }
 
     @TestConfiguration(proxyBeanMethods = false)
