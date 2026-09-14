@@ -17,7 +17,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "management.server.port=0",
         "loomspan.observability.enabled=false",
-        "loomspan.skills.locations=classpath:/management-test-empty/**/*.yaml"
+        "loomspan.skills.locations=classpath:/management-test-empty/**/*.yaml",
+        "loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+        "loomspan-sidecar.auth.jwt.audience=sidecar",
+        "loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem"
 })
 class ManagementEndpointIntegrationTest
 {

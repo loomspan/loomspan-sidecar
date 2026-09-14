@@ -5,9 +5,9 @@
 Prepared 2026-09-13. Framework FW1–FW3 implementation and FW4 documentation/local
 preparation are complete. The developer confirmed completed framework manual
 acceptance checks; final integration-dependent release gates remain pending.
-Sidecar baseline `20d7f92` contains the committed workflow, README and license,
-with no application yet. This handoff supplies repository guidance, phase
-authority and the scaffold ticket; it does not implement or release Sidecar.
+Sidecar scaffold `e3c3f58` is implemented and locally verified; SC1 is complete.
+The scaffold ticket records verification and the developer-managed framework
+install workflow. Authenticated execution (SC2+SC3) is the next delivery unit.
 
 The five local phases below are authoritative for Sidecar. Framework's former
 SC phase paths now forward here. The
@@ -45,8 +45,10 @@ requirements. Each unit includes its own correctness and documentation.
   Security 7.1.0 and Boot's Jackson 3 mapper (`tools.jackson`). Use the BOM,
   rather than independently selecting transitive platform versions.
 - Local checkout: `C:/opendev/code/loomspan-framework`. Consume its already-installed
-  snapshot from local Maven and record the actual installed source revision.
-  Reinstall and rerun affected checks after framework changes. Sidecar builds
+  snapshot from local Maven. The developer installs after framework changes,
+  keeping the artifact and local source/documentation aligned. No separate
+  artifact/source-revision verification is required for SC1 or ordinary
+  development. Rerun affected checks after framework changes. Sidecar builds
   and CI do not rebuild framework source; no snapshot repository is introduced.
   Hosted CI uses the published `1.0.0-beta.4` artifact after framework publication.
 - [Framework README](https://github.com/loomspan/loomspan-framework/blob/385729a254261de128df491505acd8898cc0a021/README.md),
@@ -76,6 +78,7 @@ its limits. It is not packaged integration evidence or publication permission.
 
 ## Next ticket
 
-[Scaffold ticket](tickets/2026-09-13-sidecar-scaffold.md) follows this repository's
-dated naming convention and recommends the full profile. All later tickets live
-here too. Ticket preparation does not start the implementation pipeline.
+The [scaffold ticket](tickets/2026-09-13-sidecar-scaffold.md) is locally complete.
+Prepare the authenticated execution API ticket covering SC2 and SC3 next, using
+this repository's dated naming convention. Ticket preparation does not start
+the implementation pipeline.

@@ -25,6 +25,16 @@ class SidecarDefaultsTest {
                         assertThat(environment.getProperty("loomspan.observability.enabled", Boolean.class)).isFalse();
                         assertThat(environment.getProperty("loomspan-sidecar.rest-routes-location"))
                                         .isEqualTo("file:/sidecar/rest-routes.yaml");
+                        assertThat(environment.getProperty("loomspan-sidecar.auth.jwt.roles-claim")).isEqualTo("roles");
+                        assertThat(environment.getProperty("loomspan-sidecar.auth.jwt.role-prefix")).isEqualTo("ROLE_");
+                        assertThat(environment.getProperty("loomspan-sidecar.auth.jwt.clock-skew")).isEqualTo("60s");
+                        assertThat(environment.getProperty("loomspan-sidecar.executions.max-input-size")).isEqualTo("1MB");
+                        assertThat(environment.getProperty("loomspan-sidecar.executions.max-retained", Integer.class)).isEqualTo(1000);
+                        assertThat(environment.getProperty("loomspan-sidecar.executions.completed-ttl")).isEqualTo("15m");
+                        assertThat(environment.getProperty("loomspan-sidecar.executions.max-concurrent", Integer.class)).isEqualTo(32);
+                        assertThat(environment.getProperty("loomspan-sidecar.executions.max-queued", Integer.class)).isEqualTo(128);
+                        assertThat(environment.getProperty("loomspan-sidecar.executions.max-queued-input-size")).isEqualTo("64MB");
+                        assertThat(environment.getProperty("loomspan-sidecar.executions.diagnostics")).isEqualTo("NEVER");
                         assertThat(environment.getProperty("management.server.port", Integer.class)).isEqualTo(9091);
                         assertThat(environment.getProperty("management.endpoint.health.probes.enabled", Boolean.class))
                                         .isTrue();

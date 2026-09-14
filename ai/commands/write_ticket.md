@@ -58,7 +58,8 @@ omits independent review and is eligible only when every direct condition
 is supported by the known intent and risk.
 
 Add an `Execution profile` section containing `Recommended`, `Confidence`, a
-short intent-based `Rationale`, and any `Reassessment triggers`. Use confidence
+short intent-based `Rationale`, and any `Reassessment triggers`. Use the shared
+protocol's display label for `Recommended`. Use confidence
 `high`, `medium`, or `low`. This is advisory: `0_run_pipeline.md` validates the
 recommendation against the current checkout before expensive work begins. Do
 not perform new codebase research only to increase confidence; when the
@@ -105,7 +106,7 @@ Source paths, line numbers, test names, and commands belong in a ticket only whe
 
 ## Execution profile
 
-- **Recommended:** full | fast-track | direct
+- **Recommended:** <Full 5-Step Pipeline | Fast-Track 2-Step Pipeline — Implementation & Review | Direct Implementation — No Independent Review>
 - **Confidence:** high | medium | low
 - **Rationale:** <Why the known intent and risk support this profile.>
 - **Reassessment triggers:** <Current-checkout discoveries that should change

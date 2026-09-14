@@ -16,8 +16,10 @@ asynchronous skill API; execution routes and outbound REST handling arrive later
 - Depend on `ai.loomspan:loomspan-spring-boot-starter:1.0.0-beta.4-SNAPSHOT`.
   Record framework commit `385729a254261de128df491505acd8898cc0a021` as the initial
   source baseline. Develop locally using the framework snapshot already installed
-  in the developer's local Maven repository. Record the actual framework revision
-  installed; reinstall and reverify after framework changes. Sidecar builds do
+  in the developer's local Maven repository. The developer installs after
+  framework changes so the artifact matches the local framework source checkout.
+  No separate artifact/source-revision verification is required for SC1; rerun
+  affected checks after framework changes. Sidecar builds do
   not rebuild the framework. No snapshot repository or framework-source build
   job in Sidecar CI is required.
 - Use the local-first release sequence: complete local Sidecar integration against
@@ -52,22 +54,22 @@ asynchronous skill API; execution routes and outbound REST handling arrive later
 
 ## Acceptance criteria
 
-- [ ] A clean Sidecar clone builds and passes `mvn verify` after installing the
-  recorded framework revision, using the wrapper and aligned platform. README
+- [x] Clean committed Sidecar source builds and passes `mvn verify` using the
+  developer-installed snapshot, wrapper and aligned platform. README
   commands establish the same result; no external model account is required.
-- [ ] The architecture check covers production and test classes, passes for the
+- [x] The architecture check covers production and test classes, passes for the
   supported API, and is proved to fail with a temporary forbidden dependency
   that is removed before completion. No forbidden integration survives.
-- [ ] A YAML skill under the default mounted directory registers with explicit
+- [x] A YAML skill under the default mounted directory registers with explicit
   model/connection settings. Both YAML suffixes and location overrides work;
   the separate route file is not loaded as a skill or parsed by Sidecar yet.
-- [ ] Health/readiness work on the separate management port; unrelated management
+- [x] Health/readiness work on the separate management port; unrelated management
   endpoints are not exposed. No execution API, temporary authentication path,
   production REST handler or Sidecar Java skill is introduced.
-- [ ] Configuration, environment-secret guidance and README match the implemented
+- [x] Configuration, environment-secret guidance and README match the implemented
   scaffold and preserve prefix ownership, startup loading and public API limits.
   Repository workflow and planning links remain usable from this checkout.
-- [ ] Push and pull-request CI is prepared to build/test Sidecar using the published
+- [x] Push and pull-request CI is prepared to build/test Sidecar using the published
   Maven dependency, without checking out or building framework source. Local SC1
   verification uses the installed snapshot. Record hosted CI execution as deferred
   until framework publication; final Sidecar verification must pass against the
@@ -121,3 +123,25 @@ requirements, not a request to reopen the product design.
 - Verification after cleanup: `./mvnw.cmd -B -ntp verify` passed against the
   installed beta.4 snapshot. This is cleanup verification, not completion of all
   SC1 acceptance criteria or hosted CI evidence.
+
+## SC1 closeout
+
+- SC1 is locally complete. The developer confirmed responsibility for installing
+  after framework changes so the installed snapshot matches the local framework
+  checkout. Separate artifact/source-revision verification is removed as an SC1
+  gate; SC5 release evidence requirements remain unchanged.
+- Verified Sidecar `e3c3f58` with Java 21.0.2 and Maven wrapper 3.9.11:
+  `.\mvnw.cmd -B -ntp clean verify` passed all 8 tests, including after removal
+  of temporary probes. A fresh `git archive HEAD` extraction also passed
+  `.\mvnw.cmd -B -ntp verify` (8 tests). Git clone was blocked by local ownership
+  checks; the clean-source build used the archive instead.
+- Temporary `DefaultMountProbeTest` passed with actual `C:/sidecar/skills/`
+  defaults, both YAML suffixes, explicit local model configuration, and a sibling
+  route-file decoy. Temporary `ForbiddenDependencyProbe` made the architecture
+  test fail on `ai.loomspan.autoconfigure.LoomspanProperties` as required.
+  All probe sources and mount files were removed before final verification.
+- Local ignored logs: `sc1-final-verify.log`, `sc1-clean-source-verify.log`,
+  `sc1-default-mount.log`, and `sc1-negative.log`. Hosted CI remains deferred
+  until framework publication and is not claimed by this closeout.
+- The earlier Guava/Error Prone pin rationale note remains a cleanup follow-up;
+  no dependency change was made during this verification.

@@ -1,0 +1,10 @@
+name: echoRest
+description: Echo a message through the application REST handler.
+rest: true
+input_schema:
+  type: object
+  properties:
+    message:
+      type: string
+  required: [message]
+rbac_roles: [REST_USER]

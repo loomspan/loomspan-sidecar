@@ -41,11 +41,15 @@
 
 - Initial framework source pin: `385729a254261de128df491505acd8898cc0a021`;
   Maven dependency: `ai.loomspan:loomspan-spring-boot-starter:1.0.0-beta.4-SNAPSHOT`.
-  Use the snapshot installed in the developer's local Maven repository and record
-  its actual source revision. Reinstall and retest after framework changes.
+  Use the snapshot installed in the developer's local Maven repository. The
+  developer runs a new framework install after framework changes, keeping that
+  artifact aligned with `C:/opendev/code/loomspan-framework` for source lookups.
+  Rely on this workflow; no separate artifact/source-revision verification is
+  required for SC1 or ordinary development. Retest affected Sidecar behavior
+  after framework changes. SC5 release evidence requirements still apply.
   Sidecar does not rebuild framework source in its normal build or CI; no
   snapshot repository is introduced.
-- Consult documentation from the same framework commit during development.
+- Consult documentation in the matching local framework checkout during development.
   The separately installed `0.1.0-SNAPSHOT` documentation skill is stale for
   beta 4. See the handoff's version-aligned source links.
 - Prove SC5 integration against the snapshot before final framework release

@@ -8,6 +8,19 @@ loomspan:
 
 loomspan-sidecar:
   rest-routes-location: "file:/sidecar/rest-routes.yaml"
+  auth:
+    jwt:
+      roles-claim: roles
+      role-prefix: ROLE_
+      clock-skew: 60s
+  executions:
+    max-input-size: 1MB
+    max-retained: 1000
+    completed-ttl: 15m
+    max-concurrent: 32
+    max-queued: 128
+    max-queued-input-size: 64MB
+    diagnostics: NEVER
 
 management:
   server:

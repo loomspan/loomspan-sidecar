@@ -8,7 +8,12 @@ Sidecar's final build/tests and final commit. The current ticket, SC1/SC5,
 AGENTS.md and handoff implement that sequence. References below to exact-pin CI
 describe the original review baseline and are superseded; no framework-source
 build job or pre-publication Sidecar CI evidence is now required. The reviewed
-framework contracts and recorded test results are unchanged.
+framework contracts and recorded test results are unchanged. The developer also
+confirmed responsibility for installing after framework changes, keeping the
+local source and installed library aligned. This supersedes the historical
+exact-pin installation prerequisite below; SC1 and ordinary development do not
+require separate artifact/source-revision verification. SC5 release evidence
+requirements remain in force.
 
 Reviewed 2026-09-13 against framework commit
 `385729a254261de128df491505acd8898cc0a021`, version `1.0.0-beta.4-SNAPSHOT`,

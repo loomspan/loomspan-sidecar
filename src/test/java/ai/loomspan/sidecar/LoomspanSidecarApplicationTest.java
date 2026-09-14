@@ -22,7 +22,10 @@ class LoomspanSidecarApplicationTest
         try (var context = new SpringApplicationBuilder(LoomspanSidecarApplication.class)
                 .web(WebApplicationType.NONE)
                 .run("--loomspan.skills.locations=" + missingPattern,
-                        "--loomspan.observability.enabled=false"))
+                        "--loomspan.observability.enabled=false",
+                        "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+                        "--loomspan-sidecar.auth.jwt.audience=sidecar",
+                        "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem"))
         {
             assertThat(context.getBean(SkillCatalog.class).skills()).isEmpty();
         }

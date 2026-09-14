@@ -1,0 +1,8 @@
+name: nestedRest
+description: Invoke the REST leaf through a deterministic local planner.
+model: fixture-model
+planning_mode: true
+concurrency: false
+max_steps: 2
+allowed_skills:
+  - name: echoRest
