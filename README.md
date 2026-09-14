@@ -3,8 +3,9 @@
 Loomspan Sidecar is a Java 21 / Spring Boot 4.1 application that loads mounted,
 model-backed Loomspan YAML skills and exposes an authenticated asynchronous
 execution API. SC2 and SC3 add verified JWT identity, owner-scoped polling,
-bounded in-memory workers and retention, and prompt shutdown gates. The generic
-outbound REST handler and container packaging remain SC4 and SC5 work.
+bounded in-memory workers and retention, prompt shutdown gates, and a generic
+bounded outbound REST handler for mounted REST skills. Container packaging remains
+SC5 work.
 
 ## Build locally
 
@@ -34,12 +35,13 @@ The default mount layout is:
 ```
 
 `loomspan.skills.locations` contains only the two skills patterns. The sibling
-route file is reserved by `loomspan-sidecar.rest-routes-location` for SC4 and is
-not parsed in this phase. Override skill locations at startup, for example:
+route file is loaded separately from `loomspan-sidecar.rest-routes-location` and
+is never parsed as a skill manifest. Override either location at startup, for example:
 
 ```powershell
 java -jar target/loomspan-sidecar-1.0.0-beta.4-SNAPSHOT.jar `
-  "--loomspan.skills.locations=file:C:/mounted/skills/**/*.yaml,file:C:/mounted/skills/**/*.yml"
+  "--loomspan.skills.locations=file:C:/mounted/skills/**/*.yaml,file:C:/mounted/skills/**/*.yml" `
+  "--loomspan-sidecar.rest-routes-location=file:C:/mounted/rest-routes.yaml"
 ```
 
 Each model-backed manifest names a model. Configure its connection and provider
@@ -58,9 +60,95 @@ loomspan:
       provider-model: ${MODEL_NAME}
 ```
 
-Keep credentials in environment variables. Skills are loaded only at startup;
-restart the process after changing mounted skill files. SC4 will apply the same
-startup-only rule when it adds route-file loading.
+Keep credentials in environment variables. Skills and REST routes are immutable
+startup snapshots; restart the process after changing either file.
+
+## REST skill routes
+
+Exactly one production handler is always present. Its required route document is
+the single source of REST targets and skill mappings. When no REST skills exist,
+mount an explicit empty document:
+
+```yaml
+targets: {}
+routes: {}
+```
+
+Each REST skill must have one exact, case-sensitive route and every route must name
+a registered REST skill and target. Invalid, unknown, duplicate, or incomplete
+configuration fails startup without contacting any target. A complete example is:
+
+```yaml
+targets:
+  expenses:
+    base-url: https://expenses.internal/api
+    auth:
+      mode: caller-passthrough
+    ssl-bundle: expenses-mtls
+    connect-timeout: 5s
+    read-timeout: 30s
+    max-response-size: 1MB
+  customers:
+    base-url: https://customers.internal/v1
+    auth:
+      mode: static
+      headers:
+        X-Service-Key: ${CUSTOMER_SERVICE_KEY}
+    connect-timeout: 5s
+    read-timeout: 30s
+    max-response-size: 1MB
+routes:
+  expenseLookup:
+    target: expenses
+    method: GET
+    path: /expenses/{category}
+  customerLookup:
+    target: customers
+    method: POST
+    path: /customers/{id}
+```
+
+All string fields and names support required Spring `${NAME}` placeholders.
+Unresolved placeholders fail startup with their file and field, while resolved
+secret values are omitted from diagnostics. Authentication modes are `none`,
+`static`, and `caller-passthrough`; configured headers are accepted only for
+`static`. Invocation input never becomes a header. Every request sends
+`Accept: application/json, text/*`.
+
+GET and POST are the only methods. `{name}` occupies a complete path segment and
+consumes the same-named input. GET encodes remaining non-null string, finite-number,
+and boolean values as query parameters. POST sends the remaining JSON-compatible
+object, preserving nulls and nested arrays/objects and sending `{}` when all fields
+were consumed. Resource, file, stream, non-string object key, nonfinite number, and
+other non-JSON values fail before I/O. Segment encoding and base-path confinement
+prevent input from replacing the configured authority or traversing above its base.
+
+Targets receive isolated Apache HTTP clients. Redirects and automatic retries are
+disabled. Connect/read timeouts and the byte response cap apply per target; equality
+with the cap succeeds and excess is stopped while streaming. Any bodyless 2xx returns
+`""`. A nonempty successful response must be `application/json`, a structured
+`+json` type, or `text/*`; its declared charset is honored and UTF-8 is used when
+none is declared. JSON is returned as unchanged text, not parsed. Non-2xx and
+transport/media/size failures become bounded, body-free skill diagnostics.
+
+Outbound TLS uses standard Boot SSL bundles, including client keys for mTLS; bundle
+configuration remains under `spring.ssl.bundle.*`, for example:
+
+```yaml
+spring:
+  ssl:
+    bundle:
+      jks:
+        expenses-mtls:
+          keystore:
+            location: file:/sidecar/tls/client.p12
+            password: ${CLIENT_STORE_PASSWORD}
+            type: PKCS12
+          truststore:
+            location: file:/sidecar/tls/trust.p12
+            password: ${TRUST_STORE_PASSWORD}
+            type: PKCS12
+```
 
 ## Management endpoints
 
@@ -98,8 +186,11 @@ refresh or exchange tokens. A backend using browser sessions must supply a
 backend-issued access token suitable for both Sidecar's and any callback target's
 audience checks; cookies and OIDC ID tokens are not assumed to be API credentials.
 Queue time consumes token lifetime. Once admitted, local work keeps the identity
-and roles already verified even if the token expires, while a future SC4 callback
-target will independently validate that same token.
+and roles already verified even if the token expires. A `caller-passthrough` target
+receives that original token unchanged and must independently verify its signature,
+issuer, suitable audience, lifetime, subject, and roles. Sidecar does not recheck at
+worker handoff and does not refresh, mint, or exchange the token, so size its lifetime
+for queueing and callback time or expect the callback to reject it as a skill failure.
 
 Standard Boot TLS configuration can require inbound mTLS, for example
 `server.ssl.client-auth=need`. This protects the transport; Sidecar does not map
@@ -174,10 +265,12 @@ selected events. Record count, TTL and queued-input bytes therefore do not bound
 total heap: running inputs, results, diagnostics, and uncooperative framework
 work may consume additional memory.
 
-Skills remain startup-only. Restart to activate manifest changes; doing so loses
-all queued, active and retained execution records. SC4 will add the production
-generic REST handler and route parsing. SC5 will add image and packaged resource
-lifecycle proof; neither is delivered by this API unit.
+Skills and REST routes remain startup-only. Restart to activate either change;
+doing so loses all queued, active and retained execution records. REST clients stay
+available for framework-owned admitted work until normal completion or the single
+`loomspan.shutdown.timeout` cutoff, then close without a second drain period. SC5
+will add the image and exhaustive packaged resource-lifecycle/release proof; this
+repository documentation does not claim that packaging or publication is complete.
 
 ## Dependency and release boundary
 

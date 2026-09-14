@@ -166,49 +166,49 @@ Do not defer security or transport correctness to a later hardening ticket.
 
 ## Acceptance criteria
 
-- [ ] Application starts with registered REST skills, one production handler
+- [x] Application starts with registered REST skills, one production handler
   and the completed public catalog without a dependency cycle. Every missing or
   mismatched mapping, unknown skill/target, route naming a non-REST skill, invalid
   method/path/target setting or missing SSL bundle fails before readiness. No
   remote target call is made during startup validation.
-- [ ] Default and overridden route-file locations load correctly; missing,
+- [x] Default and overridden route-file locations load correctly; missing,
   unreadable or malformed files, duplicate target/route keys and unknown fields
   fail with file/key diagnostics. Explicit empty maps work without REST skills.
   Shared-target and multiple-target routes work. Environment substitutions resolve
   before validation; unresolved required placeholders fail without secret leakage.
-- [ ] GET binds encoded path segments and remaining scalar query inputs; POST
+- [x] GET binds encoded path segments and remaining scalar query inputs; POST
   sends remaining JSON, preserving permitted nulls/nested values and `{}`. Missing
   or invalid path/query values and non-JSON transport values, including nested
   handles, fail before any outbound call.
-- [ ] Base-path preservation works with both trailing-slash forms, Unicode and
+- [x] Base-path preservation works with both trailing-slash forms, Unicode and
   reserved characters. Dot segments, encoded traversal and attempted authority
   replacement cannot escape the configured target/base path. Invalid inputs
   make no outbound call.
-- [ ] None/static/passthrough authentication behaves independently per target;
+- [x] None/static/passthrough authentication behaves independently per target;
   static headers and the agreed Accept header reach the stub. Inputs cannot
   supply headers. Passthrough sends the original JWT and fails without one.
-- [ ] Per-target connect/read timeouts and SSL settings take effect. A host
+- [x] Per-target connect/read timeouts and SSL settings take effect. A host
   requiring client authentication succeeds with the correct bundle and fails
   without it; target TLS settings remain isolated. Redirects are not followed
   and transient errors do not cause retries.
-- [ ] Streaming response-cap equality succeeds and excess fails without full
+- [x] Streaming response-cap equality succeeds and excess fails without full
   buffering, including error-response handling. Bodyless 2xx returns empty text;
   nonempty JSON/text returns decoded text according to documented charset rules;
   nonempty missing/unsupported content type fails.
-- [ ] Non-2xx, connection failure, timeout, response oversize and unsupported
+- [x] Non-2xx, connection failure, timeout, response oversize and unsupported
   content type produce visible `SKILL_FAILURE` outcomes with bounded diagnostics
   and no response-body leakage in the message. Existing failure polling and
   diagnostic selection remain intact.
-- [ ] End to end, JWT caller -> asynchronous Sidecar POST -> YAML planner -> REST
+- [x] End to end, JWT caller -> asynchronous Sidecar POST -> YAML planner -> REST
   leaf -> local host verifies the same JWT and restores identity/roles, including
   work that waited in the queue. Expiry before callback is rejected by the host
   and surfaces as a skill failure without Sidecar token refresh or local expiry
   recheck. This uses the production handler, not just a test handler.
-- [ ] Editing a skill and its route does not change a running instance; restart
+- [x] Editing a skill and its route does not change a running instance; restart
   activates both, while invalid edits prevent readiness. Client lifecycle tests
   show no early teardown during admitted work and bounded resource release after
   framework completion/cutoff; existing admission/dispatch gates still work.
-- [ ] Sidecar wrapper verification and public-surface architecture checks pass
+- [x] Sidecar wrapper verification and public-surface architecture checks pass
   with deterministic local fixtures. Documentation/examples match the implemented
   file/configuration and transport behavior, including restart and token-lifetime
   implications, without claiming SC5 packaging or publication.

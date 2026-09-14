@@ -18,6 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "loomspan.skills.locations=classpath:/console-empty/**/*.yaml",
         "loomspan.observability.enabled=true",
         "loomspan.observability.auth.api-key=0123456789abcdef0123456789abcdef",
+        "loomspan-sidecar.rest-routes-location=classpath:fixtures/rest-routes/empty.yaml",
         "loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
         "loomspan-sidecar.auth.jwt.audience=sidecar",
         "loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem"

@@ -7,29 +7,28 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.interfaces.RSAPublicKey;
+import java.time.Instant;
 
+import com.nimbusds.jose.crypto.RSASSAVerifier;
+import com.nimbusds.jwt.SignedJWT;
 import com.sun.net.httpserver.HttpServer;
 
-import ai.loomspan.api.RestSkillHandler;
-import ai.loomspan.api.SkillException;
 import ai.loomspan.sidecar.support.JwtTestTokens;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterAll;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Import;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import org.springframework.security.converter.RsaKeyConverters;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -47,10 +46,11 @@ import static org.assertj.core.api.Assertions.assertThat;
         "loomspan-sidecar.executions.max-queued=2",
         "loomspan-sidecar.executions.max-input-size=64B"
 })
-@Import(AuthenticatedExecutionApiIntegrationTest.HandlerConfiguration.class)
 class AuthenticatedExecutionApiIntegrationTest {
     private static final ConcurrentLinkedQueue<String> MODEL_RESPONSES = new ConcurrentLinkedQueue<>();
     private static final HttpServer MODEL_SERVER = modelServer();
+    private static final CallbackFixture CALLBACK = CallbackFixture.start();
+    private static final Path ROUTES = routeFile();
     @LocalServerPort int port;
     private final HttpClient client = HttpClient.newHttpClient();
     private final ObjectMapper mapper = new ObjectMapper();
@@ -64,11 +64,13 @@ class AuthenticatedExecutionApiIntegrationTest {
         properties.add("loomspan.connections.fixture.api-key", () -> "local-test-key");
         properties.add("loomspan.models.fixture-model.connection", () -> "fixture");
         properties.add("loomspan.models.fixture-model.provider-model", () -> "fixture-provider-model");
+        properties.add("loomspan-sidecar.rest-routes-location", () -> ROUTES.toUri().toString());
     }
 
     @AfterAll
     static void stopModelServer() {
         MODEL_SERVER.stop(0);
+        CALLBACK.server.stop(0);
     }
 
     @Test
@@ -149,7 +151,7 @@ class AuthenticatedExecutionApiIntegrationTest {
         JsonNode completed = poll(id, token);
         assertThat(completed.path("status").asText()).isEqualTo("COMPLETED");
         assertThat(completed.path("result").asText()).isEqualTo("REST: héllo\nworld");
-        assertThat(HandlerConfiguration.lastToken.get()).isEqualTo(token);
+        assertThat(CALLBACK.lastToken.get()).isEqualTo(token);
 
         var foreign = send("GET", "/v1/executions/" + id,
                 JwtTestTokens.token("someone-else", List.of("REST_USER")), null);
@@ -170,19 +172,20 @@ class AuthenticatedExecutionApiIntegrationTest {
         assertThat(polled.statusCode()).isEqualTo(200);
         assertThat(terminal.path("status").asText()).isEqualTo("FAILED");
         assertThat(terminal.path("failure").path("kind").asText()).isEqualTo("SKILL_FAILURE");
-        assertThat(terminal.path("failure").path("message").asText()).isEqualTo("fixture skill failure");
+        assertThat(terminal.path("failure").path("message").asText()).contains("HTTP status 503");
+        assertThat(terminal.path("failure").path("message").asText()).doesNotContain("fixture-secret");
         assertThat(terminal.toString()).doesNotContain("stackTrace", "java.lang");
     }
 
     @Test
     void acceptedWorkOutlivesTheHttpResponseAndWorkerContextDoesNotLeak() throws Exception {
-        HandlerConfiguration.blockEntered = new CountDownLatch(1);
-        HandlerConfiguration.blockRelease = new CountDownLatch(1);
-        HandlerConfiguration.seenTokens.clear();
+        CALLBACK.blockEntered = new CountDownLatch(1);
+        CALLBACK.blockRelease = new CountDownLatch(1);
+        CALLBACK.seenTokens.clear();
         String firstToken = JwtTestTokens.token("blocker", List.of("REST_USER"));
         var first = send("POST", "/v1/skills/echoRest/executions", firstToken,
                 "{\"message\":\"block\"}");
-        assertThat(HandlerConfiguration.blockEntered.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(CALLBACK.blockEntered.await(2, TimeUnit.SECONDS)).isTrue();
 
         String queuedToken = JwtTestTokens.token("https://issuer.test", "sidecar",
                 "queued-owner", List.of("REST_USER"), 1);
@@ -192,10 +195,13 @@ class AuthenticatedExecutionApiIntegrationTest {
         assertThat(mapper.readTree(send("GET", "/v1/executions/" + queuedId, queuedToken, null).body())
                 .path("status").asText()).isEqualTo("QUEUED");
         awaitUnauthorized(queuedId, queuedToken);
-        HandlerConfiguration.blockRelease.countDown();
+        CALLBACK.blockRelease.countDown();
         String renewedToken = JwtTestTokens.token("queued-owner", List.of("REST_USER"));
-        assertThat(poll(queuedId, renewedToken).path("result").asText()).isEqualTo("REST: queued");
-        assertThat(HandlerConfiguration.seenTokens).containsSubsequence(firstToken, queuedToken);
+        JsonNode expiredAtCallback = poll(queuedId, renewedToken);
+        assertThat(expiredAtCallback.path("status").asText()).isEqualTo("FAILED");
+        assertThat(expiredAtCallback.path("failure").path("kind").asText()).isEqualTo("SKILL_FAILURE");
+        assertThat(expiredAtCallback.path("failure").path("message").asText()).contains("HTTP status 401");
+        assertThat(CALLBACK.seenTokens).containsSubsequence(firstToken, queuedToken);
     }
 
     @Test
@@ -220,7 +226,10 @@ class AuthenticatedExecutionApiIntegrationTest {
         assertThat(accepted.statusCode()).isEqualTo(202);
         String id = mapper.readTree(accepted.body()).path("id").asText();
         assertThat(poll(id, token).path("result").asText()).isEqualTo("nested result");
-        assertThat(HandlerConfiguration.lastToken).hasValue(token);
+        assertThat(CALLBACK.lastToken).hasValue(token);
+        assertThat(CALLBACK.lastIssuer).hasValue("https://issuer.test");
+        assertThat(CALLBACK.lastSubject).hasValue("nested-owner");
+        assertThat(CALLBACK.lastRoles).contains("REST_USER");
     }
 
     private static String completion(String content) {
@@ -287,20 +296,76 @@ class AuthenticatedExecutionApiIntegrationTest {
         return client.send(request, HttpResponse.BodyHandlers.ofString());
     }
 
-    @TestConfiguration(proxyBeanMethods = false)
-    static class HandlerConfiguration {
-        static final AtomicReference<String> lastToken = new AtomicReference<>();
-        static final CopyOnWriteArrayList<String> seenTokens = new CopyOnWriteArrayList<>();
-        static volatile CountDownLatch blockEntered = new CountDownLatch(0);
-        static volatile CountDownLatch blockRelease = new CountDownLatch(0);
+    private static Path routeFile() {
+        try {
+            Path file = Files.createTempFile("sidecar-rest-routes-", ".yaml");
+            Files.writeString(file, """
+                    targets:
+                      callback:
+                        base-url: http://127.0.0.1:%d
+                        auth: {mode: caller-passthrough}
+                        connect-timeout: 1s
+                        read-timeout: 5s
+                        max-response-size: 16KB
+                    routes:
+                      echoRest: {target: callback, method: POST, path: /echo}
+                    """.formatted(CALLBACK.server.getAddress().getPort()));
+            file.toFile().deleteOnExit();
+            return file;
+        } catch (Exception failure) {
+            throw new ExceptionInInitializerError(failure);
+        }
+    }
 
-        @Bean
-        RestSkillHandler restSkillHandler() {
-            return invocation -> {
-                var authentication = SecurityContextHolder.getContext().getAuthentication();
-                lastToken.set(((JwtAuthenticationToken) authentication).getToken().getTokenValue());
-                seenTokens.add(lastToken.get());
-                if ("block".equals(invocation.input().get("message"))) {
+    static final class CallbackFixture {
+        final HttpServer server;
+        final java.util.concurrent.atomic.AtomicReference<String> lastToken = new java.util.concurrent.atomic.AtomicReference<>();
+        final java.util.concurrent.atomic.AtomicReference<String> lastIssuer = new java.util.concurrent.atomic.AtomicReference<>();
+        final java.util.concurrent.atomic.AtomicReference<String> lastSubject = new java.util.concurrent.atomic.AtomicReference<>();
+        final CopyOnWriteArrayList<String> seenTokens = new CopyOnWriteArrayList<>();
+        final CopyOnWriteArrayList<String> lastRoles = new CopyOnWriteArrayList<>();
+        volatile CountDownLatch blockEntered = new CountDownLatch(0);
+        volatile CountDownLatch blockRelease = new CountDownLatch(0);
+
+        private CallbackFixture(HttpServer server) { this.server = server; }
+
+        static CallbackFixture start() {
+            try {
+                HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+                CallbackFixture fixture = new CallbackFixture(server);
+                server.createContext("/echo", fixture::handle);
+                server.start();
+                return fixture;
+            } catch (Exception failure) {
+                throw new ExceptionInInitializerError(failure);
+            }
+        }
+
+        private void handle(com.sun.net.httpserver.HttpExchange exchange) throws java.io.IOException {
+            String authorization = exchange.getRequestHeaders().getFirst("Authorization");
+            String token = authorization != null && authorization.startsWith("Bearer ")
+                    ? authorization.substring(7) : "";
+            lastToken.set(token);
+            seenTokens.add(token);
+            try {
+                SignedJWT jwt = SignedJWT.parse(token);
+                var claims = jwt.getJWTClaimsSet();
+                if (!jwt.verify(new RSASSAVerifier(publicKey()))
+                        || !"https://issuer.test".equals(claims.getIssuer())
+                        || !claims.getAudience().contains("sidecar")
+                        || claims.getExpirationTime() == null
+                        || !claims.getExpirationTime().toInstant().isAfter(Instant.now())
+                        || claims.getSubject() == null || claims.getSubject().isBlank()) {
+                    respond(exchange, 401, "invalid token");
+                    return;
+                }
+                lastIssuer.set(claims.getIssuer());
+                lastSubject.set(claims.getSubject());
+                lastRoles.clear();
+                lastRoles.addAll(claims.getStringListClaim("roles"));
+                String body = new String(exchange.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                String message = new ObjectMapper().readTree(body).path("message").asText();
+                if ("block".equals(message)) {
                     blockEntered.countDown();
                     try {
                         if (!blockRelease.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("fixture timeout");
@@ -309,11 +374,28 @@ class AuthenticatedExecutionApiIntegrationTest {
                         throw new IllegalStateException("fixture interrupted", failure);
                     }
                 }
-                if ("fail".equals(invocation.input().get("message"))) {
-                    throw new SkillException("fixture skill failure");
+                if ("fail".equals(message)) {
+                    respond(exchange, 503, "fixture-secret");
+                    return;
                 }
-                return "REST: " + invocation.input().get("message");
-            };
+                respond(exchange, 200, "REST: " + message);
+            } catch (Exception failure) {
+                respond(exchange, 401, "invalid token");
+            }
+        }
+
+        private static RSAPublicKey publicKey() throws java.io.IOException {
+            try (var input = CallbackFixture.class.getClassLoader().getResourceAsStream("fixtures/jwt-public.pem")) {
+                return (RSAPublicKey) RsaKeyConverters.x509().convert(input);
+            }
+        }
+
+        private static void respond(com.sun.net.httpserver.HttpExchange exchange, int status, String value)
+                throws java.io.IOException {
+            byte[] body = value.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=UTF-8");
+            exchange.sendResponseHeaders(status, body.length);
+            try (var output = exchange.getResponseBody()) { output.write(body); }
         }
     }
 }

@@ -16,6 +16,7 @@
     <spring-boot.version>4.1.0</spring-boot.version>
     <loomspan.version>1.0.0-beta.4-SNAPSHOT</loomspan.version>
     <archunit.version>1.4.1</archunit.version>
+    <bouncycastle.version>1.81</bouncycastle.version>
   </properties>
 
   <dependencyManagement>
@@ -79,6 +80,18 @@
       <groupId>com.tngtech.archunit</groupId>
       <artifactId>archunit-junit5</artifactId>
       <version>${archunit.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.bouncycastle</groupId>
+      <artifactId>bcprov-jdk18on</artifactId>
+      <version>${bouncycastle.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.bouncycastle</groupId>
+      <artifactId>bcpkix-jdk18on</artifactId>
+      <version>${bouncycastle.version}</version>
       <scope>test</scope>
     </dependency>
   </dependencies>

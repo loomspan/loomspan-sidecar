@@ -80,6 +80,7 @@ class MountedSkillRegistrationIntegrationTest
     {
         var properties = new java.util.ArrayList<String>();
         properties.add("--loomspan.observability.enabled=false");
+        properties.add("--loomspan-sidecar.rest-routes-location=classpath:fixtures/rest-routes/empty.yaml");
         properties.add("--loomspan.skills.locations=" + String.join(",", locations));
         properties.add("--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test");
         properties.add("--loomspan-sidecar.auth.jwt.audience=sidecar");

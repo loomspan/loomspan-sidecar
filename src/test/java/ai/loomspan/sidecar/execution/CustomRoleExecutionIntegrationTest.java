@@ -11,7 +11,8 @@ import ai.loomspan.sidecar.support.JwtTestTokens;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.context.annotation.Import;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -27,11 +28,20 @@ import static org.assertj.core.api.Assertions.assertThat;
         "loomspan-sidecar.auth.jwt.roles-claim=groups",
         "loomspan-sidecar.auth.jwt.role-prefix=APP_"
 })
-@Import(AuthenticatedExecutionApiIntegrationTest.HandlerConfiguration.class)
 class CustomRoleExecutionIntegrationTest {
+    private static final com.sun.net.httpserver.HttpServer CALLBACK = callbackServer();
+    private static final java.nio.file.Path ROUTES = routeFile();
     @LocalServerPort int port;
     private final HttpClient client = HttpClient.newHttpClient();
     private final ObjectMapper mapper = new ObjectMapper();
+
+    @DynamicPropertySource
+    static void restProperties(DynamicPropertyRegistry properties) {
+        properties.add("loomspan-sidecar.rest-routes-location", () -> ROUTES.toUri().toString());
+    }
+
+    @org.junit.jupiter.api.AfterAll
+    static void stopCallback() { CALLBACK.stop(0); }
 
     @Test
     void usesCustomRoleClaimAndPrefixForValidationAndInvocation() throws Exception {
@@ -69,5 +79,40 @@ class CustomRoleExecutionIntegrationTest {
             Thread.sleep(10);
         }
         throw new AssertionError("Execution did not finish");
+    }
+
+    private static com.sun.net.httpserver.HttpServer callbackServer() {
+        try {
+            var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+            server.createContext("/echo", exchange -> {
+                String request = new String(exchange.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                String message = new ObjectMapper().readTree(request).path("message").asText();
+                byte[] response = ("REST: " + message).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "text/plain");
+                exchange.sendResponseHeaders(200, response.length);
+                try (var output = exchange.getResponseBody()) { output.write(response); }
+            });
+            server.start();
+            return server;
+        } catch (Exception failure) { throw new ExceptionInInitializerError(failure); }
+    }
+
+    private static java.nio.file.Path routeFile() {
+        try {
+            var file = java.nio.file.Files.createTempFile("sidecar-custom-role-routes-", ".yaml");
+            java.nio.file.Files.writeString(file, """
+                    targets:
+                      callback:
+                        base-url: http://127.0.0.1:%d
+                        auth: {mode: none}
+                        connect-timeout: 1s
+                        read-timeout: 2s
+                        max-response-size: 1KB
+                    routes:
+                      echoRest: {target: callback, method: POST, path: /echo}
+                    """.formatted(CALLBACK.getAddress().getPort()));
+            file.toFile().deleteOnExit();
+            return file;
+        } catch (Exception failure) { throw new ExceptionInInitializerError(failure); }
     }
 }
