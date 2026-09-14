@@ -27,7 +27,7 @@ missing framework implementation are superseded by the current alignment review.
 
 | Unit | Requirements | Dependency and complete outcome |
 | --- | --- | --- |
-| Scaffold | [SC1](phases/phase-sc1.md) | Buildable Boot application, public-surface guard, mounted YAML loading, management health and pinned-framework CI. |
+| Scaffold | [SC1](phases/phase-sc1.md) | Buildable Boot application, public-surface guard, mounted YAML loading, management health and CI prepared for the published Maven dependency. Local verification uses the installed snapshot. |
 | Authenticated execution API | [SC2](phases/phase-sc2.md) + [SC3](phases/phase-sc3.md) | After SC1; JWT verification, ownership, HTTP API, bounded queue/store, diagnostic selection and independent shutdown gates together. |
 | Generic REST handler | [SC4](phases/phase-sc4.md) | After authenticated API; route-file/startup validation, binding, auth, transport bounds, TLS and verified host callback together. |
 | Packaging and release | [SC5](phases/phase-sc5.md) | After handler; image/probes, packaged resource lifecycle, runnable quick start and release workflow; snapshot integration before framework release. |
@@ -44,10 +44,11 @@ requirements. Each unit includes its own correctness and documentation.
 - Platform from the pinned POM/BOM: Java 21, Boot 4.1.0, Spring Framework 7.0.8,
   Security 7.1.0 and Boot's Jackson 3 mapper (`tools.jackson`). Use the BOM,
   rather than independently selecting transitive platform versions.
-- Local checkout: `C:/opendev/code/loomspan-framework`. CI builds and installs
-  the exact pin before Sidecar; no snapshot repository. Verify the checkout
-  before installation. If production changes, reinstall, update the pin, and
-  rerun affected framework and Sidecar checks.
+- Local checkout: `C:/opendev/code/loomspan-framework`. Consume its already-installed
+  snapshot from local Maven and record the actual installed source revision.
+  Reinstall and rerun affected checks after framework changes. Sidecar builds
+  and CI do not rebuild framework source; no snapshot repository is introduced.
+  Hosted CI uses the published `1.0.0-beta.4` artifact after framework publication.
 - [Framework README](https://github.com/loomspan/loomspan-framework/blob/385729a254261de128df491505acd8898cc0a021/README.md),
   [Java API guidance](https://github.com/loomspan/loomspan-framework/blob/385729a254261de128df491505acd8898cc0a021/agent-skills/loomspan-docs/references/java-api/README.md),
   [skill authoring](https://github.com/loomspan/loomspan-framework/blob/385729a254261de128df491505acd8898cc0a021/agent-skills/loomspan-docs/references/skill-authoring/README.md),
@@ -58,12 +59,17 @@ requirements. Each unit includes its own correctness and documentation.
 
 SC5 must prove pre-dispatch checks, async JWT propagation through a YAML planner
 and REST callback, all diagnostic modes, and packaged shutdown/resource behavior.
-Record Sidecar/framework commits, exact suite command and immutable CI run URL
-in the framework readiness record. Any discovered framework defects are fixed
+Record the tested Sidecar source state (commit plus any uncommitted changes),
+installed framework revision, exact suite commands and retained local results
+in the framework readiness record. Pre-publication Sidecar CI is not required.
+Any discovered framework defects are fixed
 and reinstalled before repeating affected integration. Then final framework
 version/script/full-build/release-profile and nonpublishing workflow validation
-run on the final release commit. Framework publication precedes Sidecar's
-released-dependency verification and publication.
+run on the final framework release commit. After publishing framework beta.4 to
+Maven Central, switch Sidecar to that released dependency, run its final build/tests
+and hosted CI verification, then make the final Sidecar commit and eventual release.
+CI evidence must identify the tested revision; local-first development does not
+waive final release verification or any SC5 integration behavior.
 
 [Alignment review](beta4-framework-alignment.md) records current evidence and
 its limits. It is not packaged integration evidence or publication permission.

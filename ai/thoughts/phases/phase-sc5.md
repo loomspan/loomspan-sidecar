@@ -16,10 +16,12 @@ end to end, and released pinned to framework `v1.0.0-beta.4`.
 ## In scope
 
 - Prepare packaging and release checks against the locally installed framework
-  snapshot. Verify end-to-end integration before the framework tag, resolve
+  snapshot using local builds and retained local evidence. Pre-publication
+  Sidecar CI is not required. Verify end-to-end integration before the framework tag, resolve
   any framework gaps, then release the framework first. Switch Sidecar to
-  `1.0.0-beta.4`, verify against the published dependency, and only then tag
-  and publish Sidecar.
+  `1.0.0-beta.4`, run the final Sidecar build/tests and hosted CI against the
+  published dependency, and make the final Sidecar commit before tagging and
+  publishing Sidecar. CI consumes Maven artifacts without rebuilding framework source.
 - Container image (Spring Boot build-image or a Dockerfile; pick one and
   document) with `/sidecar` as the default configuration-files mount point
   (`skills/` and `rest-routes.yaml`) and all secrets via environment variables;

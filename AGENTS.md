@@ -1,5 +1,14 @@
 # Loomspan Sidecar repository guidance
 
+## Simplicity and technical debt
+
+- Choose the simplest solution that fully satisfies the current requirements.
+  Keep code, tests, documentation and process proportional to the work.
+- Add complexity or accept technical debt only when its concrete benefit
+  outweighs its expected maintenance and future change costs. Apply the
+  [design lens](ai/thoughts/design-lens.md#simplicity-and-technical-debt) during
+  planning, implementation and review.
+
 ## Framework boundary
 
 - Application and test code may depend on Loomspan Java types only from the
@@ -32,12 +41,15 @@
 
 - Initial framework source pin: `385729a254261de128df491505acd8898cc0a021`;
   Maven dependency: `ai.loomspan:loomspan-spring-boot-starter:1.0.0-beta.4-SNAPSHOT`.
-  Build/install that framework commit before Sidecar locally and in CI. Reinstall
-  and retest after framework changes; update the recorded pin deliberately.
-  No snapshot repository is introduced.
+  Use the snapshot installed in the developer's local Maven repository and record
+  its actual source revision. Reinstall and retest after framework changes.
+  Sidecar does not rebuild framework source in its normal build or CI; no
+  snapshot repository is introduced.
 - Consult documentation from the same framework commit during development.
   The separately installed `0.1.0-SNAPSHOT` documentation skill is stale for
   beta 4. See the handoff's version-aligned source links.
 - Prove SC5 integration against the snapshot before final framework release
-  checks. Release the framework first, then pin and verify Sidecar against the
-  published dependency before releasing Sidecar. Never overwrite a release.
+  checks using local integration evidence. Publish the framework to Maven Central
+  first, then switch Sidecar to `1.0.0-beta.4` for its final build/tests and final
+  commit. Hosted CI resolves that published artifact; its execution is deferred
+  until publication. Verify before releasing Sidecar. Never overwrite a release.

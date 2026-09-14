@@ -2,6 +2,14 @@
 
 ## Result and revisions
 
+Subsequent developer decision: use local-first development against the installed
+framework snapshot, then publish framework beta.4 to Maven Central before
+Sidecar's final build/tests and final commit. The current ticket, SC1/SC5,
+AGENTS.md and handoff implement that sequence. References below to exact-pin CI
+describe the original review baseline and are superseded; no framework-source
+build job or pre-publication Sidecar CI evidence is now required. The reviewed
+framework contracts and recorded test results are unchanged.
+
 Reviewed 2026-09-13 against framework commit
 `385729a254261de128df491505acd8898cc0a021`, version `1.0.0-beta.4-SNAPSHOT`,
 and Sidecar baseline `20d7f92`. All five phases remain viable with their

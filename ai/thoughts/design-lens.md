@@ -3,6 +3,25 @@
 Established by the beta 4 roadmap and the 2026-09-13 phase handoff.
 These cross-ticket decisions complement the authoritative SC phases.
 
+## Simplicity and technical debt
+
+- **Decision:** Choose the simplest solution that fully satisfies the current
+  requirements. Prefer existing capabilities and direct implementations. Add
+  abstractions, configuration, dependencies or workflow artifacts only for a
+  concrete need; speculative future needs are insufficient justification.
+  Keep code, tests, documentation and process proportional to the work.
+- **Why this matters:** Complexity consumes implementation, review and
+  maintenance effort. Minimize technical debt; accept it only when its concrete
+  benefit outweighs its expected maintenance and future change costs. For
+  deliberate debt, briefly record the tradeoff and any necessary follow-up in
+  the existing ticket or plan rather than creating another tracking artifact.
+- **Applies to:** Planning, implementation, testing, documentation and review.
+  Review should look for unnecessary work and opportunities to simplify as
+  well as correctness. Simplicity does not excuse unmet requirements or omitted
+  necessary verification.
+- **Exceptions:** More complex solutions are warranted when required for
+  correctness or another current requirement; explain the reason briefly.
+
 ## Framework remains the skill execution authority
 
 - **Decision:** Use the public catalog, validation, invocation, observer and named

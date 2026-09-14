@@ -1,0 +1,4 @@
+name: mountedYamlSkill
+description: Mounted YAML fixture.
+model: fixture-model
+planning_mode: false

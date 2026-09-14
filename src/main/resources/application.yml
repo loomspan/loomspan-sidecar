@@ -1,0 +1,22 @@
+loomspan:
+  skills:
+    locations:
+      - "file:/sidecar/skills/**/*.yaml"
+      - "file:/sidecar/skills/**/*.yml"
+  observability:
+    enabled: false
+
+loomspan-sidecar:
+  rest-routes-location: "file:/sidecar/rest-routes.yaml"
+
+management:
+  server:
+    port: 9091
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  endpoints:
+    web:
+      exposure:
+        include: health

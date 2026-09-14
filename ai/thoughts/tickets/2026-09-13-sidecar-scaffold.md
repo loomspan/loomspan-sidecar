@@ -15,9 +15,18 @@ asynchronous skill API; execution routes and outbound REST handling arrive later
   Boot's Jackson 3 (`tools.jackson`), not framework internal codec beans.
 - Depend on `ai.loomspan:loomspan-spring-boot-starter:1.0.0-beta.4-SNAPSHOT`.
   Record framework commit `385729a254261de128df491505acd8898cc0a021` as the initial
-  source pin. Local instructions and push/PR CI must build/install that exact
-  framework revision before building Sidecar. Use the local Maven repository,
-  with no snapshot repository. Reinstall and reverify after framework changes.
+  source baseline. Develop locally using the framework snapshot already installed
+  in the developer's local Maven repository. Record the actual framework revision
+  installed; reinstall and reverify after framework changes. Sidecar builds do
+  not rebuild the framework. No snapshot repository or framework-source build
+  job in Sidecar CI is required.
+- Use the local-first release sequence: complete local Sidecar integration against
+  the snapshot, complete framework release checks and publish framework
+  `1.0.0-beta.4` to Maven Central, then switch Sidecar to that released dependency
+  before its final build/tests and final commit. Prepare ordinary push/PR CI that
+  resolves the published Maven dependency. Successful hosted CI verification is
+  deferred until that dependency is published; it does not block local SC1
+  acceptance. Do not claim CI success before it runs.
 - Enforce the closed `ai.loomspan.api` boundary for Sidecar production and test
   code with ArchUnit. Forbid `ai.loomspan.internal..` and
   `ai.loomspan.autoconfigure..` dependencies. No internal replacement beans,
@@ -40,11 +49,6 @@ asynchronous skill API; execution routes and outbound REST handling arrive later
 - Preserve the committed repository workflow, guidance, phase authority and
   dated ticket conventions. Complete a README describing build, configuration,
   mounted-skill startup and current phase limits, without claiming later features.
-- Establish Maven/release checks for Sidecar's own version and recorded framework
-  dependency/source pin. Keep them proportional to this application; do not copy
-  the framework's multi-artifact version script without that need. Development
-  uses the snapshot; eventual publication requires the released framework after
-  SC5 integration and framework-first publication. No publication in this ticket.
 
 ## Acceptance criteria
 
@@ -63,12 +67,11 @@ asynchronous skill API; execution routes and outbound REST handling arrive later
 - [ ] Configuration, environment-secret guidance and README match the implemented
   scaffold and preserve prefix ownership, startup loading and public API limits.
   Repository workflow and planning links remain usable from this checkout.
-- [ ] Push and pull-request CI checks out the exact framework source pin, installs
-  its snapshot, then builds/tests Sidecar. Record actual CI evidence when run;
-  missing remote access is an evidence gap, never a claimed CI pass.
-- [ ] Version/dependency checks accept the intended development snapshot and
-  reject an inconsistent recorded dependency. Release-mode checks reject a
-  SNAPSHOT framework dependency. No tag, upload or publication is performed.
+- [ ] Push and pull-request CI is prepared to build/test Sidecar using the published
+  Maven dependency, without checking out or building framework source. Local SC1
+  verification uses the installed snapshot. Record hosted CI execution as deferred
+  until framework publication; final Sidecar verification must pass against the
+  published dependency before the final commit and release.
 
 ## Context
 
@@ -80,8 +83,11 @@ Framework source is locally available at `C:/opendev/code/loomspan-framework`.
 
 Subsequent delivery is SC2+SC3 (JWT, asynchronous API, ownership, queue/store and
 shutdown gate), SC4 (generic handler), then SC5 (packaging and real integration).
-SC5 must pass snapshot integration before the framework's final release checks;
-Sidecar then pins and verifies the published dependency before its own release.
+SC5 must pass local snapshot integration before the framework's final release
+checks; retain exact commands, results and tested source state as local evidence.
+Sidecar then switches to the published dependency for its final build/tests,
+hosted CI verification, final commit and eventual release. SC1 does not publish
+the framework or wait for its publication to finish local scaffold work.
 Internal framework gaps are corrected there, never bypassed in this application.
 
 Excluded: route parser/client behavior, HTTP execution/catalog endpoints, worker
@@ -101,3 +107,17 @@ requirements, not a request to reopen the product design.
 - **Reassessment triggers:** Reassess against the current checkout if scaffold
   implementation has already landed or the framework pin changes. These
   requirements remain binding under every profile.
+
+## Execution notes
+
+- 2026-09-13 simplicity review: removed the temporary controller prohibition;
+  retained the permanent public-API and no-Java-skills architecture rules.
+  Removed redundant default assertions, duplicate web-mode configuration and an
+  ineffective decoy fixture. The custom-location test proves registration from
+  an override, not replacement of files at the actual default mount.
+- Removed three redundant Victools version pins; the selected dependency tree
+  remains unchanged. The Guava and Error Prone pins remain pending justification
+  of their compatibility purpose; they change transitive version selection.
+- Verification after cleanup: `./mvnw.cmd -B -ntp verify` passed against the
+  installed beta.4 snapshot. This is cleanup verification, not completion of all
+  SC1 acceptance criteria or hosted CI evidence.
