@@ -8,9 +8,10 @@ import org.springframework.http.ProblemDetail;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 @RestControllerAdvice
-final class ApiExceptionHandler {
+final class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(ApiInputException.class)
     ProblemDetail badInput(ApiInputException failure) { return problem(HttpStatus.BAD_REQUEST, failure); }
 

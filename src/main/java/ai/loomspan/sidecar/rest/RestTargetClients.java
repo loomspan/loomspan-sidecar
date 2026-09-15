@@ -6,8 +6,6 @@ import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
 import org.apache.hc.client5.http.ssl.SSLConnectionSocketFactoryBuilder;
 import org.apache.hc.core5.http.io.SocketConfig;
-import org.apache.hc.core5.http.ClassicHttpResponse;
-import org.apache.hc.core5.http.io.EofSensorInputStream;
 import org.apache.hc.core5.http.io.entity.HttpEntityWrapper;
 import org.apache.hc.core5.util.Timeout;
 import org.springframework.beans.factory.ObjectProvider;
@@ -79,14 +77,29 @@ final class RestTargetClients implements AutoCloseable {
                 .setDefaultRequestConfig(requestConfig)
                 .disableRedirectHandling()
                 .disableAutomaticRetries()
-                .addResponseInterceptorLast((response, entity, context) -> {
-                    if (response instanceof ClassicHttpResponse classic && classic.getEntity() != null) {
-                        classic.setEntity(new HttpEntityWrapper(classic.getEntity()) {
+                .disableCookieManagement()
+                .addExecInterceptorFirst("sidecar-response-cleanup", (request, scope, chain) -> {
+                    var response = chain.proceed(request, scope);
+                    if (response.getEntity() != null) {
+                        response.setEntity(new HttpEntityWrapper(response.getEntity()) {
                             @Override public InputStream getContent() throws IOException {
-                                return new AbortableBoundedInputStream(super.getContent(), target.maxResponseSize() + 1);
+                                return new FilterInputStream(super.getContent()) {
+                                    @Override public void close() throws IOException {
+                                        scope.execRuntime.discardEndpoint();
+                                        super.close();
+                                    }
+                                };
+                            }
+                            @Override public void close() throws IOException {
+                                // Spring and Apache otherwise drain unread bodies for connection reuse.
+                                // At EOF Apache has already released the endpoint; on early failure
+                                // discard it before closing any stream, including decompression wrappers.
+                                scope.execRuntime.discardEndpoint();
+                                super.close();
                             }
                         });
                     }
+                    return response;
                 })
                 .build();
         var requestFactory = new HttpComponentsClientHttpRequestFactory(httpClient);
@@ -101,36 +114,4 @@ final class RestTargetClients implements AutoCloseable {
         }
     }
 
-    private static final class AbortableBoundedInputStream extends FilterInputStream {
-        private final long maximum;
-        private long count;
-
-        private AbortableBoundedInputStream(InputStream input, long maximum) {
-            super(input);
-            this.maximum = maximum;
-        }
-
-        @Override public int read() throws IOException {
-            requireRemaining();
-            int value = super.read();
-            if (value >= 0) count++;
-            return value;
-        }
-
-        @Override public int read(byte[] buffer, int offset, int length) throws IOException {
-            requireRemaining();
-            int read = super.read(buffer, offset, (int) Math.min(length, maximum - count));
-            if (read > 0) count += read;
-            return read;
-        }
-
-        @Override public void close() throws IOException {
-            if (in instanceof EofSensorInputStream sensor) sensor.abort();
-            else in.close();
-        }
-
-        private void requireRemaining() throws IOException {
-            if (count >= maximum) throw new IOException("REST response exceeded bounded transport stream");
-        }
-    }
 }

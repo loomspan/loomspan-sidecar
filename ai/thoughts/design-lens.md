@@ -1,7 +1,7 @@
 # Sidecar design lens
 
 Established by the beta 4 roadmap and the 2026-09-13 phase handoff.
-These cross-ticket decisions complement the authoritative SC phases.
+These standing constraints complement the [remaining-work handoff](beta4-handoff.md).
 
 ## Simplicity and technical debt
 

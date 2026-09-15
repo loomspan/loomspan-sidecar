@@ -27,8 +27,8 @@
 
 ## Plans, evidence, and workflow
 
-- [Delivery handoff](ai/thoughts/beta4-handoff.md) and the local SC phase files
-  own current Sidecar scope and sequencing. Keep one authoritative set here.
+- [Delivery handoff](ai/thoughts/beta4-handoff.md) is the sole tracker for
+  remaining Sidecar QA and release work. Keep it authoritative.
 - Use this repository's `ai/commands`, including Full/Fast/Direct eligibility
   and dated ticket filenames. Do not replace them with framework commands or
   copy completed framework reports as Sidecar implementation evidence.
@@ -45,14 +45,14 @@
   developer runs a new framework install after framework changes, keeping that
   artifact aligned with `C:/opendev/code/loomspan-framework` for source lookups.
   Rely on this workflow; no separate artifact/source-revision verification is
-  required for SC1 or ordinary development. Retest affected Sidecar behavior
-  after framework changes. SC5 release evidence requirements still apply.
+  required for ordinary development. Retest affected Sidecar behavior
+  after framework changes. The handoff's release evidence requirements still apply.
   Sidecar does not rebuild framework source in its normal build or CI; no
   snapshot repository is introduced.
 - Consult documentation in the matching local framework checkout during development.
   The separately installed `0.1.0-SNAPSHOT` documentation skill is stale for
-  beta 4. See the handoff's version-aligned source links.
-- Prove SC5 integration against the snapshot before final framework release
+  beta 4. See the handoff's development reference.
+- Prove Sidecar integration against the snapshot before final framework release
   checks using local integration evidence. Publish the framework to Maven Central
   first, then switch Sidecar to `1.0.0-beta.4` for its final build/tests and final
   commit. Hosted CI resolves that published artifact; its execution is deferred

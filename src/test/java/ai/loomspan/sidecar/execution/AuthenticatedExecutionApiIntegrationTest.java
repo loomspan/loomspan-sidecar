@@ -93,6 +93,22 @@ class AuthenticatedExecutionApiIntegrationTest {
     }
 
     @Test
+    void preservesMvcProblemStatusesWithoutWeakeningAuthentication() throws Exception {
+        String token = JwtTestTokens.token("reader", List.of());
+        var invalidId = send("GET", "/v1/executions/not-a-uuid", token, null);
+        var wrongMethod = send("DELETE", "/v1/skills", token, null);
+        assertThat(invalidId.statusCode()).isEqualTo(400);
+        assertThat(wrongMethod.statusCode()).isEqualTo(405);
+        for (var response : List.of(invalidId, wrongMethod)) {
+            assertThat(response.headers().firstValue("content-type").orElse("")).contains("application/problem+json");
+            assertThat(response.headers().firstValue("cache-control")).contains("no-store");
+            assertThat(mapper.readTree(response.body()).path("status").asInt()).isEqualTo(response.statusCode());
+        }
+        assertThat(send("GET", "/v1/executions/not-a-uuid", null, null).statusCode()).isEqualTo(401);
+        assertThat(send("GET", "/error", token, null).statusCode()).isEqualTo(403);
+    }
+
+    @Test
     void rejectsInvalidInputAndMissingRoleBeforeAdmission() throws Exception {
         var roleless = send("POST", "/v1/skills/echoRest/executions",
                 JwtTestTokens.token("reader", List.of()), "{\"message\":\"hello\"}");

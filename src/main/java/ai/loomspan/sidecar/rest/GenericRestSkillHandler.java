@@ -117,9 +117,9 @@ final class GenericRestSkillHandler implements RestSkillHandler, SmartLifecycle 
                     throw new SkillException("REST query input '" + safe(entry.getKey()) + "' must be a non-null scalar");
                 }
                 if (index > 0) value.append('&');
-                value.append(UriUtils.encodeQueryParam(entry.getKey(), StandardCharsets.UTF_8))
+                value.append(UriUtils.encodeQueryParam(entry.getKey(), StandardCharsets.UTF_8).replace("+", "%2B"))
                         .append('=')
-                        .append(UriUtils.encodeQueryParam(String.valueOf(entry.getValue()), StandardCharsets.UTF_8));
+                        .append(UriUtils.encodeQueryParam(String.valueOf(entry.getValue()), StandardCharsets.UTF_8).replace("+", "%2B"));
             }
         }
         return URI.create(value.toString());
@@ -168,7 +168,8 @@ final class GenericRestSkillHandler implements RestSkillHandler, SmartLifecycle 
 
     private static void preserveInterrupt(Throwable failure) {
         for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
-            if (cause instanceof InterruptedException || cause instanceof java.io.InterruptedIOException) {
+            if (cause instanceof InterruptedException || cause instanceof java.io.InterruptedIOException
+                    && !(cause instanceof java.net.SocketTimeoutException)) {
                 Thread.currentThread().interrupt();
                 return;
             }

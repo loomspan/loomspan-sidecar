@@ -2,7 +2,7 @@
 
 Loomspan Sidecar is a Java 21 / Spring Boot 4.1 application that loads mounted,
 model-backed Loomspan YAML skills and exposes an authenticated asynchronous
-execution API. SC2 and SC3 add verified JWT identity, owner-scoped polling,
+execution API. It provides verified JWT identity, owner-scoped polling,
 bounded in-memory workers and retention, prompt shutdown gates, and a generic
 bounded outbound REST handler for mounted REST skills. The supported container
 runs as a fixed non-root user and consumes environment configuration plus a
@@ -181,13 +181,16 @@ were consumed. Resource, file, stream, non-string object key, nonfinite number, 
 other non-JSON values fail before I/O. Segment encoding and base-path confinement
 prevent input from replacing the configured authority or traversing above its base.
 
-Targets receive isolated Apache HTTP clients. Redirects and automatic retries are
-disabled. Connect/read timeouts and the byte response cap apply per target; equality
+Targets receive isolated Apache HTTP clients. Redirects, automatic retries, and
+automatic cookie storage/replay are disabled; caller sessions are not shared across
+executions. Literal plus signs in GET query names and values are percent-encoded.
+Connect/read timeouts and the byte response cap apply per target; equality
 with the cap succeeds and excess is stopped while streaming. Any bodyless 2xx returns
 `""`. A nonempty successful response must be `application/json`, a structured
 `+json` type, or `text/*`; its declared charset is honored and UTF-8 is used when
 none is declared. JSON is returned as unchanged text, not parsed. Non-2xx and
-transport/media/size failures become bounded, body-free skill diagnostics.
+transport/media/size failures become bounded, body-free skill diagnostics. Early
+failures discard the connection before cleanup can drain the unread response.
 
 Outbound TLS uses standard Boot SSL bundles, including client keys for mTLS; bundle
 configuration remains under `spring.ssl.bundle.*`, for example:
@@ -290,6 +293,7 @@ input returns `400` (with validation issues when available); denied roles return
 `403`; unknown, expired or foreign records return `404`; raw bodies over the
 configured limit return `413`; capacity exhaustion returns `429`; and admission
 during shutdown returns `503`. Transport errors use `application/problem+json`.
+Malformed execution IDs return `400`; unsupported HTTP methods return `405`.
 All API responses carry `Cache-Control: no-store`. Closing a client connection
 does not cancel accepted work.
 
@@ -401,6 +405,5 @@ The current local stage remains on `1.0.0-beta.4-SNAPSHOT`. Do not change that
 pin, create either project tag, dispatch publication, or claim hosted CI until
 the framework release is separately authorized, published, and resolvable.
 
-See the [delivery handoff](ai/thoughts/beta4-handoff.md),
-[SC2 phase](ai/thoughts/phases/phase-sc2.md), and
-[SC3 phase](ai/thoughts/phases/phase-sc3.md).
+See the [delivery handoff](ai/thoughts/beta4-handoff.md) for remaining QA and
+release work.

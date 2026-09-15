@@ -58,8 +58,127 @@ class GenericRestSkillHandlerTest {
         assertThat(result).isEqualTo("ok");
         assertThat(captured.get().getRequestURI().getRawPath()).isEqualTo("/api/expenses/caf%C3%A9%2Fa%3Fb%23c%25+&");
         assertThat(captured.get().getRequestURI().getRawQuery())
-                .isEqualTo("count=2&enabled=true&filter=caf%C3%A9/a?b%23c%25+%26%3D");
+                .isEqualTo("count=2&enabled=true&filter=caf%C3%A9/a?b%23c%25%2B%26%3D");
         assertThat(captured.get().getRequestHeaders().getFirst("Accept")).isEqualTo("application/json, text/*");
+    }
+
+    @Test
+    void preservesPlusAndSpaceInDecodedQueryNamesAndValues() throws Exception {
+        var query = new java.util.concurrent.atomic.AtomicReference<String>();
+        var server = server(exchange -> {
+            query.set(java.net.URLDecoder.decode(exchange.getRequestURI().getRawQuery(), StandardCharsets.UTF_8));
+            respond(exchange, 200, "text/plain", "ok");
+        });
+        var handler = handler(routes(server, "lookup: {target: callback, method: GET, path: /lookup}",
+                "none", "", "1KB", "2s"));
+        handler.handle(new RestSkillInvocation("lookup", Map.of("a+b c", "+1 555+0100")));
+        assertThat(query).hasValue("a+b c=+1 555+0100");
+    }
+
+    @Test
+    void doesNotReplayTargetCookiesBetweenJwtCallers() throws Exception {
+        var requests = new CopyOnWriteArrayList<Map<String, String>>();
+        var server = server(exchange -> {
+            requests.add(Map.of("authorization", exchange.getRequestHeaders().getFirst("Authorization"),
+                    "cookie", java.util.Objects.toString(exchange.getRequestHeaders().getFirst("Cookie"), "")));
+            exchange.getResponseHeaders().set("Set-Cookie", "session=first-caller; Path=/");
+            respond(exchange, 200, "text/plain", "ok");
+        });
+        var handler = handler(routes(server, "lookup: {target: callback, method: GET, path: /lookup}",
+                "caller-passthrough", "", "1KB", "2s"));
+        for (String caller : List.of("first-caller", "second-caller")) {
+            var jwt = Jwt.withTokenValue(caller).header("alg", "none").subject(caller).build();
+            SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(jwt));
+            handler.handle(new RestSkillInvocation("lookup", Map.of()));
+        }
+        assertThat(requests).containsExactly(
+                Map.of("authorization", "Bearer first-caller", "cookie", ""),
+                Map.of("authorization", "Bearer second-caller", "cookie", ""));
+    }
+
+    @Test
+    void appliesEachConnectTimeoutAtTheSocketBoundaryWithoutRetrying() throws Exception {
+        var server = server(exchange -> respond(exchange, 200, "text/plain", "unexpected"));
+        for (int timeout : List.of(175, 500)) {
+            Path file = routes(server, "lookup: {target: callback, method: GET, path: /lookup}",
+                    "none", "", "1KB", "5s");
+            Files.writeString(file, Files.readString(file).replace("connect-timeout: 500ms",
+                    "connect-timeout: " + timeout + "ms"));
+            var handler = handler(file);
+            // Make the OS connect boundary fail deterministically, without a remote blackhole
+            // or platform-dependent loopback backlog saturation.
+            try (var sockets = org.mockito.Mockito.mockConstruction(java.net.Socket.class, (socket, context) -> {
+                org.mockito.Mockito.doThrow(new java.net.SocketTimeoutException("fixture connect timeout"))
+                        .when(socket).connect(org.mockito.ArgumentMatchers.any(java.net.SocketAddress.class),
+                                org.mockito.ArgumentMatchers.anyInt());
+            })) {
+                var failure = org.assertj.core.api.Assertions.catchThrowable(() -> handler.handle(new RestSkillInvocation("lookup", Map.of())));
+                assertThat(failure).isInstanceOf(SkillException.class).hasMessageContaining("transport error");
+                assertThat(Thread.currentThread().isInterrupted()).isFalse();
+                assertThat(sockets.constructed()).hasSize(1);
+                org.mockito.Mockito.verify(sockets.constructed().getFirst()).connect(
+                        org.mockito.ArgumentMatchers.any(java.net.SocketAddress.class), org.mockito.ArgumentMatchers.eq(timeout));
+            }
+        }
+    }
+
+    @Test
+    void acceptsExactChunkedLimitAndRejectsMissingContentType() throws Exception {
+        var server = server(exchange -> {
+            if (exchange.getRequestURI().getPath().endsWith("missing")) {
+                respond(exchange, 200, null, "body");
+            } else {
+                exchange.getResponseHeaders().set("Content-Type", "text/plain");
+                exchange.sendResponseHeaders(200, 0);
+                try (var output = exchange.getResponseBody()) {
+                    output.write("12".getBytes(StandardCharsets.UTF_8));
+                    output.flush();
+                    output.write("345".getBytes(StandardCharsets.UTF_8));
+                }
+            }
+        });
+        var handler = handler(routes(server, """
+                exact: {target: callback, method: GET, path: /exact}
+                missing: {target: callback, method: GET, path: /missing}
+                """, "none", "", "5B", "5s"));
+        assertThat(handler.handle(new RestSkillInvocation("exact", Map.of()))).isEqualTo("12345");
+        assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("missing", Map.of())))
+                .isInstanceOf(SkillException.class).hasMessageContaining("unsupported response Content-Type");
+    }
+
+    @Test
+    void abortsOversizeAndErrorStreamsWithoutWaitingForTheirRemainder() throws Exception {
+        for (int status : List.of(200, 503)) {
+            var entered = new java.util.concurrent.CountDownLatch(1);
+            var release = new java.util.concurrent.CountDownLatch(1);
+            var server = server(exchange -> {
+                exchange.getResponseHeaders().set("Content-Type", "text/plain");
+                exchange.sendResponseHeaders(status, 0);
+                try (var output = exchange.getResponseBody()) {
+                    output.write("SECRET".getBytes(StandardCharsets.UTF_8));
+                    output.flush();
+                    entered.countDown();
+                    release.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            var handler = handler(routes(server, "lookup: {target: callback, method: GET, path: /lookup}",
+                    "none", "", "5B", "5s"));
+            var worker = java.util.concurrent.Executors.newSingleThreadExecutor();
+            try {
+                var outcome = worker.submit(() -> org.assertj.core.api.Assertions.catchThrowable(
+                        () -> handler.handle(new RestSkillInvocation("lookup", Map.of()))));
+                assertThat(entered.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                assertThat(outcome.get(2, java.util.concurrent.TimeUnit.SECONDS))
+                        .isInstanceOf(SkillException.class)
+                        .hasMessageContaining(status == 200 ? "byte limit" : "HTTP status 503")
+                        .hasMessageNotContaining("SECRET");
+            } finally {
+                release.countDown();
+                worker.shutdownNow();
+            }
+        }
     }
 
     @Test
