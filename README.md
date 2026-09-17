@@ -82,6 +82,18 @@ python scripts/verify-image.py --image loomspan-sidecar:sc5-local --verify-kuber
   --api-port 18080 --host-port 18081 --management-port 19091
 ```
 
+Verify SIGTERM during active nested work and at the framework deadline with:
+
+```powershell
+python scripts/verify-shutdown.py --image loomspan-sidecar:sc5-local
+```
+
+This uses isolated Compose projects and ports `28080`, `28081`, and `29091`
+(overridable with the same port flags). A verification-only callback gate holds
+an admitted execution across SIGTERM. One case releases it and checks that the
+remaining callback and final model response finish; the other holds it past a
+three-second framework budget and checks bounded exit without a forced kill.
+
 ## Mounted configuration
 
 The default mount layout is:
@@ -383,6 +395,12 @@ from actual model concurrency and diagnostic retention.
 ## Dependency and release boundary
 
 Production and test code may use Loomspan Java types only from `ai.loomspan.api`.
+
+The Guava dependency override selects `33.4.0-jre` for Sidecar's Java 21 runtime.
+Without it, the framework's Google GenAI / Google Auth dependency chain selects
+`33.4.0-android`. The override changes the runtime flavor at the same version.
+Error Prone annotations use the transitive dependency version; Sidecar does not
+require a separate annotation-version override.
 
 Push and pull-request CI is prepared to override the dependency with published
 `1.0.0-beta.4`. Hosted verification is deferred until that artifact exists on

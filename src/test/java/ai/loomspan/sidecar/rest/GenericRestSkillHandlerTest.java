@@ -43,6 +43,64 @@ class GenericRestSkillHandlerTest {
     }
 
     @Test
+    void rejectsNullPathAndNonScalarQueryValuesBeforeSending() throws Exception {
+        var requests = new AtomicInteger();
+        var server = server(exchange -> { requests.incrementAndGet(); respond(exchange, 200, "text/plain", "ok"); });
+        var handler = handler(routes(server, "lookup: {target: callback, method: GET, path: '/things/{id}'}",
+                "none", "", "1KB", "2s"));
+        for (var input : List.of(Map.<String, Object>of(), linked("id", null))) {
+            assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("lookup", input, "test-generation")))
+                    .isInstanceOf(SkillException.class).hasMessageContaining("path input 'id'", "non-null scalar");
+        }
+        for (Object query : java.util.Arrays.asList(null, List.of("one", "two"), List.of(), Map.of("key", "value"))) {
+            assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("lookup", linked("id", 1, "q", query), "test-generation")))
+                    .isInstanceOf(SkillException.class).hasMessageContaining("query input 'q'", "non-null scalar");
+        }
+        assertThat(requests).hasValue(0);
+        // Omitted query values are absent, rather than required or encoded as null.
+        assertThat(handler.handle(new RestSkillInvocation("lookup", Map.of("id", 1), "test-generation"))).isEqualTo("ok");
+        assertThat(requests).hasValue(1);
+    }
+
+    @Test
+    void rejectsNestedResourcesFilesAndStreamsBeforeSending() throws Exception {
+        var requests = new AtomicInteger();
+        var server = server(exchange -> { requests.incrementAndGet(); respond(exchange, 200, "text/plain", "ok"); });
+        var handler = handler(routes(server, "post: {target: callback, method: POST, path: /things}",
+                "none", "", "1KB", "2s"));
+        try (var stream = new java.io.ByteArrayInputStream(new byte[] {1})) {
+            for (Object value : List.of(new org.springframework.core.io.ByteArrayResource(new byte[] {1}),
+                    temporaryDirectory.resolve("file").toFile(), temporaryDirectory.resolve("file"), stream)) {
+                assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("post",
+                        Map.of("nested", List.of(Map.of("value", value))), "test-generation")))
+                        .isInstanceOf(SkillException.class).hasMessageContaining("non-JSON", "input.nested[0].value");
+            }
+        }
+        assertThat(requests).hasValue(0);
+    }
+
+    @Test
+    void preservesBasePrefixesAndSendsEmptyObjectWhenPathConsumesAllPostInput() throws Exception {
+        var paths = new CopyOnWriteArrayList<String>();
+        var bodies = new CopyOnWriteArrayList<String>();
+        var server = server(exchange -> {
+            paths.add(exchange.getRequestURI().toString());
+            bodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            assertThat(exchange.getRequestHeaders().getFirst("Content-Type")).contains("application/json");
+            respond(exchange, 200, "text/plain", "ok");
+        });
+        for (String prefix : List.of("/api", "/api/")) {
+            var file = routes(server, "post: {target: callback, method: POST, path: '/things/{id}'}",
+                    "none", "", "1KB", "2s");
+            Files.writeString(file, Files.readString(file).replace("/api/", prefix));
+            assertThat(handler(file).handle(new RestSkillInvocation("post", Map.of("id", "a/b"), "test-generation")))
+                    .isEqualTo("ok");
+        }
+        assertThat(paths).containsExactly("/api/things/a%2Fb", "/api/things/a%2Fb");
+        assertThat(bodies).containsExactly("{}", "{}");
+    }
+
+    @Test
     void bindsGetPathSegmentsAndRemainingScalarQueryValues() throws Exception {
         var captured = new java.util.concurrent.atomic.AtomicReference<HttpExchange>();
         HttpServer server = server(exchange -> {

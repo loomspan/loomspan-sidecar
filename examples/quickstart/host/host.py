@@ -135,4 +135,5 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(404, {"error": "not found"})
 
 
-ThreadingHTTPServer(("0.0.0.0", 8081), Handler).serve_forever()
+if __name__ == "__main__":
+    ThreadingHTTPServer(("0.0.0.0", 8081), Handler).serve_forever()

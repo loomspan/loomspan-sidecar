@@ -5,7 +5,8 @@ import ai.loomspan.sidecar.execution.ExecutionCoordinator;
 import ai.loomspan.sidecar.execution.ExecutionStatus;
 import ai.loomspan.sidecar.security.ExecutionOwner;
 import com.sun.net.httpserver.HttpServer;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
@@ -30,8 +31,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 class RestHandlerLifecycleIntegrationTest {
     @TempDir Path temporaryDirectory;
 
-    @Test
-    void sidecarWorkersClientsAndObserversSurviveNormalClose() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void sidecarWorkersClientsAndObserversSurviveNormalClose(boolean managementAndAsync) throws Exception {
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -63,11 +65,18 @@ class RestHandlerLifecycleIntegrationTest {
                 routes:
                   echoRest: {target: callback, method: POST, path: /echo}
                 """.formatted(server.getAddress().getPort()));
-        var context = new SpringApplicationBuilder(LoomspanSidecarApplication.class)
-                .web(WebApplicationType.NONE).run(
+        var management = new java.util.concurrent.atomic.AtomicReference<org.springframework.context.ConfigurableApplicationContext>();
+        var context = application(managementAndAsync).listeners(event -> {
+            if (event instanceof org.springframework.boot.web.server.context.WebServerInitializedEvent initialized
+                    && initialized.getApplicationContext().getParent() != null) {
+                management.set((org.springframework.context.ConfigurableApplicationContext) initialized.getApplicationContext());
+            }
+        }).run(
+                        "--server.port=0", "--management.server.port=0",
                         "--loomspan.skills.locations=" + skill.toUri(),
                         "--loomspan.observability.enabled=false",
                         "--loomspan.shutdown.timeout=3s",
+                        "--loomspan-sidecar.executions.max-concurrent=1",
                         "--loomspan-sidecar.executions.diagnostics=ALWAYS",
                         "--loomspan-sidecar.rest-routes-location=" + routes.toUri(),
                         "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
@@ -80,6 +89,16 @@ class RestHandlerLifecycleIntegrationTest {
             ExecutionOwner owner = ExecutionOwner.from(authentication);
             var id = coordinator.admit("echoRest", Map.of("message", "x"), 10, owner, authentication);
             assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
+            java.util.UUID queued = null;
+            if (managementAndAsync) {
+                assertThat(management.get()).isNotNull();
+                management.get().close();
+                assertThat(clients.isClosed()).isFalse();
+                // Boot can propagate the child's readiness change; Sidecar admission
+                // and its outbound clients must remain owned by the parent context.
+                queued = coordinator.admit("echoRest", Map.of("message", "queued"), 10, owner, authentication);
+                assertThat(coordinator.find(queued, owner)).isPresent();
+            }
             var closing = executor.submit(context::close);
             Thread.sleep(100);
             assertThat(closing.isDone()).isFalse();
@@ -91,14 +110,17 @@ class RestHandlerLifecycleIntegrationTest {
             assertThat(completed.status()).isEqualTo(ExecutionStatus.COMPLETED);
             assertThat(completed.result()).isEqualTo("completed-during-close");
             assertThat(completed.events()).isNotEmpty();
+            if (queued != null) assertThat(coordinator.find(queued, owner)).isEmpty();
         } finally {
+            release.countDown();
             if (context.isActive()) context.close();
             server.stop(0);
         }
     }
 
-    @Test
-    void frameworkCutoffBoundsBlockedWorkWithoutEarlyOrSecondSidecarTeardown() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void frameworkCutoffBoundsBlockedWorkWithoutEarlyOrSecondSidecarTeardown(boolean managementAndAsync) throws Exception {
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch neverRelease = new CountDownLatch(1);
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -125,8 +147,8 @@ class RestHandlerLifecycleIntegrationTest {
                 routes:
                   cutoffRest: {target: callback, method: GET, path: /echo}
                 """.formatted(server.getAddress().getPort()));
-        var context = new SpringApplicationBuilder(LoomspanSidecarApplication.class)
-                .web(WebApplicationType.NONE).run(
+        var context = application(managementAndAsync).run(
+                        "--server.port=0", "--management.server.port=0",
                         "--loomspan.skills.locations=" + skill.toUri(),
                         "--loomspan.observability.enabled=false",
                         "--loomspan.shutdown.timeout=200ms",
@@ -158,6 +180,31 @@ class RestHandlerLifecycleIntegrationTest {
                 .issuer("https://issuer.test").subject("lifecycle-owner")
                 .issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(300)).build();
         return new JwtAuthenticationToken(jwt, List.of(new SimpleGrantedAuthority("ROLE_USER")));
+    }
+
+    private SpringApplicationBuilder application(boolean managementAndAsync) {
+        var builder = new SpringApplicationBuilder(LoomspanSidecarApplication.class)
+                .web(managementAndAsync ? WebApplicationType.SERVLET : WebApplicationType.NONE);
+        if (managementAndAsync) builder.sources(AsyncEvents.class);
+        return builder;
+    }
+
+    @org.springframework.boot.test.context.TestConfiguration(proxyBeanMethods = false)
+    static class AsyncEvents {
+        @org.springframework.context.annotation.Bean(destroyMethod = "shutdownNow")
+        java.util.concurrent.ExecutorService applicationEventsExecutor() {
+            return Executors.newVirtualThreadPerTaskExecutor();
+        }
+
+        @org.springframework.context.annotation.Bean(name = "applicationEventMulticaster")
+        org.springframework.context.event.SimpleApplicationEventMulticaster applicationEventMulticaster(
+                org.springframework.beans.factory.BeanFactory beanFactory,
+                @org.springframework.beans.factory.annotation.Qualifier("applicationEventsExecutor")
+                java.util.concurrent.ExecutorService applicationEventsExecutor) {
+            var multicaster = new org.springframework.context.event.SimpleApplicationEventMulticaster(beanFactory);
+            multicaster.setTaskExecutor(applicationEventsExecutor);
+            return multicaster;
+        }
     }
 
 }
