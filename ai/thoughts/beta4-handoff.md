@@ -1,6 +1,6 @@
 # Beta 4 remaining work and release handoff
 
-Updated 2026-09-14. This is the sole tracker for remaining Sidecar beta 4 work.
+Updated 2026-09-16. This is the sole tracker for remaining Sidecar beta 4 work.
 The scaffold, authenticated execution API, generic REST handler, and local
 packaging are implemented. The completion-audit corrections are verified.
 Completed tickets, phases, and the old framework alignment report have been
@@ -22,11 +22,6 @@ application, and image checks do not establish the untested subcases below.
   events. Current diagnostic matrix tests use synthetic events/test handoffs.
   The developer excluded this test expansion from the completed audit fixes;
   it is not claimed as passed and should arise through framework QA usage.
-- [ ] **Input and retention boundaries:** unknown-length/chunked raw request caps;
-  multibyte UTF-8 serialization through HTTP into queued-byte accounting; direct
-  assertions that completed tasks release input/security references. Fixed-length
-  cap equality/excess, numeric queue accounting, and discarded-task cleanup have
-  coverage, but do not prove these exact cases.
 - [ ] **JWT startup wiring:** property-bound discovery/JWKS application startup
   and invalid key-policy configurations. Direct decoder tests and public-key /
   custom-role application contexts already exist.
@@ -81,6 +76,67 @@ framework revision, exact commands/results, image digest, and hosted workflow
 URLs. Neither publication has been authorized or performed by this handoff.
 
 ## Current verification baseline
+
+### Input and retention boundaries — 2026-09-16
+
+The Request 3 evidence gap is closed by tests for real HTTP chunked requests
+at 64 bytes and above the cap (202/413), multibyte UTF-8 HTTP input admitted
+at the 32-byte serialized queue cap and rejected above it (202/429), and direct
+checks that completed success and pre-handoff failure tasks clear input and
+authentication references while retained results, failure details, and selected
+diagnostics remain available. No production behavior or framework contract changed.
+
+`.\mvnw.cmd -B -ntp "-Dtest=AuthenticatedExecutionApiIntegrationTest,ExecutionCoordinatorTest,ExecutionDiagnosticsTest" test`
+passed: 28 tests, zero failures, errors, or skips. `.\mvnw.cmd -B -ntp verify`
+passed: 69 tests, zero failures, errors, or skips; executable JAR packaging
+passed (`input-retention-verify.log`). The public API architecture test passed.
+Testing used Sidecar base `a62d516cde559fa6da38d1d33eb04a094e4f47b9`
+plus uncommitted Request 3 tests in `AuthenticatedExecutionApiIntegrationTest`,
+`ExecutionCoordinatorTest`, and `ExecutionDiagnosticsTest`, and the pre-existing
+uncommitted REST fixture changes listed in the snapshot alignment baseline.
+The developer-installed beta 4 snapshot was used; the matching local framework
+checkout was `d7d0ef03aefe44c613ff1d8591bce2a30318a6bf`. This is local
+snapshot evidence only; release verification remains open. No scoped gap remains.
+
+### Snapshot API alignment — 2026-09-16
+
+Recheck after the framework fix: `.\mvnw.cmd -B -ntp verify` **PASS** against
+the developer-installed snapshot aligned with framework
+`58336b92fb63ee02836749b07b3b986e32ed5b72`. All 67 tests passed with zero
+failures, errors, or skips; executable JAR packaging passed
+(`snapshot-recheck-verify.log`). Sidecar remained at base
+`a62d516cde559fa6da38d1d33eb04a094e4f47b9` plus the four fixture changes
+listed below and accompanying ticket/handoff documentation. The original
+classpath fixtures in `AuthenticatedExecutionApiIntegrationTest` and
+`CustomRoleExecutionIntegrationTest` passed unchanged, resolving the startup
+regression. No additional code changes were needed for this recheck.
+
+Initial check, before the framework fix:
+
+Sidecar base `a62d516cde559fa6da38d1d33eb04a094e4f47b9` plus uncommitted
+fixture changes in `GenericRestSkillHandlerTest`, `RestRouteRestartIntegrationTest`,
+`RestRouteStartupIntegrationTest`, and `RestTransportTlsIntegrationTest` was
+checked against the developer-installed snapshot aligned with framework
+`33dcb6dcbc13659bd34d37844ac1ff138311b9bd`.
+
+- `.\mvnw.cmd -B -ntp '-DskipTests' compile`: PASS; production needed no edits
+  (`snapshot-compile.log`).
+- `.\mvnw.cmd -B -ntp test-compile`: initially FAIL with 32 compilation errors
+  (`snapshot-test-compile.log`). Updated 31 `RestSkillInvocation` constructions
+  to supply generation IDs and one `SkillCatalog` stub to expose its generation.
+  The same command then passed (`snapshot-test-compile-fixed.log`).
+- `.\mvnw.cmd -B -ntp verify`: compilation PASS; 67 tests, 57 passed and 10
+  startup errors from the framework classpath discovery regression
+  (`snapshot-verify.log`). All four changed test classes and both public-surface
+  architecture checks passed. Packaging was not reached.
+
+The successful recheck is local snapshot evidence, not release verification. No image
+or hosted CI run was performed; no new image digest or workflow URL exists.
+The fixture diff was self-reviewed; no independent review ran. Logs are ignored
+local artifacts. The completed alignment ticket has been retired; its verification
+evidence is retained here.
+
+### Prior passing baseline — 2026-09-14
 
 Local checks on 2026-09-14 used Sidecar base
 `96c04bde7966d74ad2b0bfff413373eef2978bd6` plus the uncommitted audit fixes in

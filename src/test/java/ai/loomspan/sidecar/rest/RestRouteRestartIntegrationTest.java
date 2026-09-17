@@ -34,20 +34,20 @@ class RestRouteRestartIntegrationTest {
         try {
             try (var context = application(properties)) {
                 var handler = context.getBean(RestSkillHandler.class);
-                assertThat(handler.handle(new RestSkillInvocation("echoRest", Map.of("message", "x"))))
+                assertThat(handler.handle(new RestSkillInvocation("echoRest", Map.of("message", "x"), context.getBean(SkillCatalog.class).generationId())))
                         .isEqualTo("first");
                 assertThat(context.getBean(SkillCatalog.class).skill("echoRest").orElseThrow().description())
                         .isEqualTo("Restart REST skill.");
                 writeSkill(skill, "Updated restart REST skill.");
                 writeRoutes(routes, second.getAddress().getPort(), "echoRest");
-                assertThat(handler.handle(new RestSkillInvocation("echoRest", Map.of("message", "x"))))
+                assertThat(handler.handle(new RestSkillInvocation("echoRest", Map.of("message", "x"), context.getBean(SkillCatalog.class).generationId())))
                         .isEqualTo("first");
                 assertThat(context.getBean(SkillCatalog.class).skill("echoRest").orElseThrow().description())
                         .isEqualTo("Restart REST skill.");
             }
             try (var context = application(properties)) {
                 assertThat(context.getBean(RestSkillHandler.class)
-                        .handle(new RestSkillInvocation("echoRest", Map.of("message", "x"))))
+                        .handle(new RestSkillInvocation("echoRest", Map.of("message", "x"), context.getBean(SkillCatalog.class).generationId())))
                         .isEqualTo("second");
                 assertThat(context.getBean(SkillCatalog.class).skill("echoRest").orElseThrow().description())
                         .isEqualTo("Updated restart REST skill.");

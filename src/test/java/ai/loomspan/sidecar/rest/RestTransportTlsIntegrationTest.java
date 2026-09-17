@@ -111,10 +111,10 @@ class RestTransportTlsIntegrationTest {
             var loader = new RestRouteLoader(properties, new MockEnvironment(), new DefaultResourceLoader(), provider);
             targetClients = new RestTargetClients(loader, provider);
             var handler = new GenericRestSkillHandler(loader, targetClients);
-            assertThat(handler.handle(new RestSkillInvocation("correct", Map.of()))).isEqualTo("mutual-tls");
-            assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("wrong", Map.of())))
+            assertThat(handler.handle(new RestSkillInvocation("correct", Map.of(), "test-generation"))).isEqualTo("mutual-tls");
+            assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("wrong", Map.of(), "test-generation")))
                     .isInstanceOf(SkillException.class).hasMessageContaining("transport error");
-            assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("absent", Map.of())))
+            assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("absent", Map.of(), "test-generation")))
                     .isInstanceOf(SkillException.class).hasMessageContaining("transport error");
         } finally {
             if (targetClients != null) targetClients.close();

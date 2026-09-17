@@ -50,8 +50,9 @@ class ExecutionDiagnosticsTest {
         });
         var properties = new SidecarExecutionProperties();
         properties.setDiagnostics(SidecarExecutionProperties.Diagnostics.ALWAYS);
+        var task = new AtomicReference<ExecutionCoordinator.ExecutionTask>();
         var coordinator = new ExecutionCoordinator(TestSkillInvocationHandoff.from(template), properties,
-                mock(ApplicationContext.class));
+                mock(ApplicationContext.class), Clock.systemUTC(), task::set);
         var authentication = authentication();
         var owner = ExecutionOwner.from(authentication);
         try {
@@ -61,6 +62,9 @@ class ExecutionDiagnosticsTest {
             assertThat(snapshot.events()).containsExactly(first, second);
             assertThat(snapshot.events().get(0).details().get("payload")).isEqualTo(firstDetail);
             assertThat(snapshot.events().get(1).details().get("payload")).isEqualTo(secondDetail);
+            assertThat(coordinator.retainedCount()).isEqualTo(1);
+            assertThat(task.get()).isNotNull();
+            assertThat(task.get().referencesCleared()).isTrue();
         } finally {
             coordinator.destroy();
         }

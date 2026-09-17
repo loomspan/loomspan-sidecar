@@ -446,7 +446,9 @@ class ExecutionCoordinatorTest {
         SkillInvocationHandoff handoff = mock(SkillInvocationHandoff.class);
         when(handoff.handoff(anyString(), anyMap()))
                 .thenThrow(new SkillException("Framework execution admission is closed."));
-        var coordinator = new ExecutionCoordinator(handoff, properties(), context);
+        var task = new AtomicReference<ExecutionCoordinator.ExecutionTask>();
+        var coordinator = new ExecutionCoordinator(handoff, properties(), context,
+                Clock.systemUTC(), task::set);
         var authentication = authentication("token", "owner");
         var owner = ExecutionOwner.from(authentication);
         try {
@@ -456,6 +458,10 @@ class ExecutionCoordinatorTest {
 
             assertThat(terminal.status()).isEqualTo(ExecutionStatus.FAILED);
             assertThat(terminal.failure()).isNotNull();
+            assertThat(coordinator.find(id, owner)).isPresent();
+            assertThat(task.get()).isNotNull();
+            for (int count = 0; count < 100 && !task.get().referencesCleared(); count++) Thread.sleep(5);
+            assertThat(task.get().referencesCleared()).isTrue();
             coordinator.onApplicationEvent(new ContextClosedEvent(context));
             assertThat(coordinator.queuedCount()).isZero();
             assertThat(coordinator.queuedBytes()).isZero();

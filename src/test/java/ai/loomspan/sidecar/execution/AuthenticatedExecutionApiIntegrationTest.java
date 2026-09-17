@@ -5,6 +5,8 @@ import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -48,7 +50,8 @@ import static org.assertj.core.api.Assertions.assertThat;
         "loomspan-sidecar.auth.jwt.clock-skew=0s",
         "loomspan-sidecar.executions.max-concurrent=1",
         "loomspan-sidecar.executions.max-queued=2",
-        "loomspan-sidecar.executions.max-input-size=64B"
+        "loomspan-sidecar.executions.max-input-size=64B",
+        "loomspan-sidecar.executions.max-queued-input-size=32B"
 })
 class AuthenticatedExecutionApiIntegrationTest {
     private static final SidecarApplicationFixture FIXTURE = new SidecarApplicationFixture();
@@ -157,6 +160,59 @@ class AuthenticatedExecutionApiIntegrationTest {
         assertThat(coordinator.retainedCount()).isEqualTo(retainedAfterAccepted);
         assertThat(coordinator.queuedCount()).isZero();
         assertThat(coordinator.queuedBytes()).isZero();
+    }
+
+    @Test
+    void chunkedRequestsEnforceTheRawUtf8CapWithoutContentLength() throws Exception {
+        String token = JwtTestTokens.token("chunked-owner", List.of("REST_USER"));
+        String exact = "{\"message\":\"" + "é".repeat(25) + "\"}";
+        assertThat(exact.getBytes(StandardCharsets.UTF_8)).hasSize(64);
+        var accepted = sendChunked(token, exact);
+        assertThat(accepted.statusCode()).isEqualTo(202);
+        poll(mapper.readTree(accepted.body()).path("id").asText(), token);
+
+        int retained = coordinator.retainedCount();
+        var oversized = sendChunked(token, "{\"message\":\"" + "é".repeat(26) + "\"}");
+        assertThat(oversized.statusCode()).isEqualTo(413);
+        assertThat(oversized.headers().firstValue("content-type").orElse(""))
+                .contains("application/problem+json");
+        assertThat(coordinator.retainedCount()).isEqualTo(retained);
+    }
+
+    @Test
+    void httpUtf8SerializationUsesBytesForQueuedCapacity() throws Exception {
+        CALLBACK.blockEntered = new CountDownLatch(1);
+        CALLBACK.blockRelease = new CountDownLatch(1);
+        String token = JwtTestTokens.token("utf8-owner", List.of("REST_USER"));
+        try {
+            var active = send("POST", "/v1/skills/echoRest/executions", token, "{\"message\":\"block\"}");
+            assertThat(active.statusCode()).isEqualTo(202);
+            assertThat(CALLBACK.blockEntered.await(2, TimeUnit.SECONDS)).isTrue();
+
+            String exact = "{\"message\":\"" + "é".repeat(9) + "\"}";
+            assertThat(exact.length()).isLessThan(32);
+            assertThat(exact.getBytes(StandardCharsets.UTF_8)).hasSize(32);
+            String padded = "{  \"message\" : \"" + "é".repeat(9) + "\"  }";
+            assertThat(padded.getBytes(StandardCharsets.UTF_8).length).isGreaterThan(32);
+            var queued = send("POST", "/v1/skills/echoRest/executions", token, padded);
+            assertThat(queued.statusCode()).isEqualTo(202);
+            assertThat(coordinator.queuedCount()).isEqualTo(1);
+            assertThat(coordinator.queuedBytes()).isEqualTo(32);
+
+            int retained = coordinator.retainedCount();
+            var excess = send("POST", "/v1/skills/echoRest/executions", token,
+                    "{\"message\":\"" + "é".repeat(10) + "\"}");
+            assertThat(excess.statusCode()).isEqualTo(429);
+            assertThat(coordinator.retainedCount()).isEqualTo(retained);
+            assertThat(coordinator.queuedBytes()).isEqualTo(32);
+
+            CALLBACK.blockRelease.countDown();
+            assertThat(poll(mapper.readTree(queued.body()).path("id").asText(), token)
+                    .path("result").asText()).isEqualTo("REST: " + "é".repeat(9));
+            poll(mapper.readTree(active.body()).path("id").asText(), token);
+        } finally {
+            CALLBACK.blockRelease.countDown();
+        }
     }
 
     @Test
@@ -314,6 +370,19 @@ class AuthenticatedExecutionApiIntegrationTest {
                 .header("Authorization", "Bearer " + token)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofByteArray(body)).build();
+        return client.send(request, HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> sendChunked(String token, String body) throws Exception {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        var publisher = HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(bytes));
+        assertThat(publisher.contentLength()).isEqualTo(-1);
+        var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port
+                + "/v1/skills/echoRest/executions"))
+                .timeout(Duration.ofSeconds(5))
+                .header("Authorization", "Bearer " + token)
+                .header("Content-Type", "application/json")
+                .POST(publisher).build();
         return client.send(request, HttpResponse.BodyHandlers.ofString());
     }
 

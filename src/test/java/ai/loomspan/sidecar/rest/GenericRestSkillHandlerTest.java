@@ -54,7 +54,7 @@ class GenericRestSkillHandlerTest {
                 """, "none", "", "1KB", "2s"));
         String result = handler.handle(new RestSkillInvocation("lookup", linked(
                 "category", "café/a?b#c%+&", "enabled", true, "count", 2,
-                "filter", "café/a?b#c%+&=")));
+                "filter", "café/a?b#c%+&="), "test-generation"));
         assertThat(result).isEqualTo("ok");
         assertThat(captured.get().getRequestURI().getRawPath()).isEqualTo("/api/expenses/caf%C3%A9%2Fa%3Fb%23c%25+&");
         assertThat(captured.get().getRequestURI().getRawQuery())
@@ -71,7 +71,7 @@ class GenericRestSkillHandlerTest {
         });
         var handler = handler(routes(server, "lookup: {target: callback, method: GET, path: /lookup}",
                 "none", "", "1KB", "2s"));
-        handler.handle(new RestSkillInvocation("lookup", Map.of("a+b c", "+1 555+0100")));
+        handler.handle(new RestSkillInvocation("lookup", Map.of("a+b c", "+1 555+0100"), "test-generation"));
         assertThat(query).hasValue("a+b c=+1 555+0100");
     }
 
@@ -89,7 +89,7 @@ class GenericRestSkillHandlerTest {
         for (String caller : List.of("first-caller", "second-caller")) {
             var jwt = Jwt.withTokenValue(caller).header("alg", "none").subject(caller).build();
             SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(jwt));
-            handler.handle(new RestSkillInvocation("lookup", Map.of()));
+            handler.handle(new RestSkillInvocation("lookup", Map.of(), "test-generation"));
         }
         assertThat(requests).containsExactly(
                 Map.of("authorization", "Bearer first-caller", "cookie", ""),
@@ -112,7 +112,7 @@ class GenericRestSkillHandlerTest {
                         .when(socket).connect(org.mockito.ArgumentMatchers.any(java.net.SocketAddress.class),
                                 org.mockito.ArgumentMatchers.anyInt());
             })) {
-                var failure = org.assertj.core.api.Assertions.catchThrowable(() -> handler.handle(new RestSkillInvocation("lookup", Map.of())));
+                var failure = org.assertj.core.api.Assertions.catchThrowable(() -> handler.handle(new RestSkillInvocation("lookup", Map.of(), "test-generation")));
                 assertThat(failure).isInstanceOf(SkillException.class).hasMessageContaining("transport error");
                 assertThat(Thread.currentThread().isInterrupted()).isFalse();
                 assertThat(sockets.constructed()).hasSize(1);
@@ -141,8 +141,8 @@ class GenericRestSkillHandlerTest {
                 exact: {target: callback, method: GET, path: /exact}
                 missing: {target: callback, method: GET, path: /missing}
                 """, "none", "", "5B", "5s"));
-        assertThat(handler.handle(new RestSkillInvocation("exact", Map.of()))).isEqualTo("12345");
-        assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("missing", Map.of())))
+        assertThat(handler.handle(new RestSkillInvocation("exact", Map.of(), "test-generation"))).isEqualTo("12345");
+        assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("missing", Map.of(), "test-generation")))
                 .isInstanceOf(SkillException.class).hasMessageContaining("unsupported response Content-Type");
     }
 
@@ -168,7 +168,7 @@ class GenericRestSkillHandlerTest {
             var worker = java.util.concurrent.Executors.newSingleThreadExecutor();
             try {
                 var outcome = worker.submit(() -> org.assertj.core.api.Assertions.catchThrowable(
-                        () -> handler.handle(new RestSkillInvocation("lookup", Map.of()))));
+                        () -> handler.handle(new RestSkillInvocation("lookup", Map.of(), "test-generation"))));
                 assertThat(entered.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
                 assertThat(outcome.get(2, java.util.concurrent.TimeUnit.SECONDS))
                         .isInstanceOf(SkillException.class)
@@ -194,7 +194,7 @@ class GenericRestSkillHandlerTest {
                 write: {target: callback, method: POST, path: '/customers/{id}'}
                 """, "static", "headers: {Authorization: 'Service secret'}", "1KB", "2s"));
         assertThat(staticHandler.handle(new RestSkillInvocation("write", linked(
-                "id", 7, "nullable", null, "nested", Map.of("items", List.of(true, 3))))))
+                "id", 7, "nullable", null, "nested", Map.of("items", List.of(true, 3))), "test-generation")))
                 .isEqualTo("{\"ok\":true}");
         assertThat(bodies.getFirst()).isEqualTo("{\"nullable\":null,\"nested\":{\"items\":[true,3]}}");
         assertThat(auth.getFirst()).isEqualTo("Service secret");
@@ -202,14 +202,14 @@ class GenericRestSkillHandlerTest {
         var passthrough = handler(routes(server, """
                 write: {target: callback, method: POST, path: /passthrough}
                 """, "caller-passthrough", "", "1KB", "2s"));
-        assertThatThrownBy(() -> passthrough.handle(new RestSkillInvocation("write", Map.of())))
+        assertThatThrownBy(() -> passthrough.handle(new RestSkillInvocation("write", Map.of(), "test-generation")))
                 .isInstanceOf(SkillException.class).hasMessageContaining("requires JWT");
         Jwt jwt = Jwt.withTokenValue("original-token").header("alg", "none")
                 .claim("sub", "caller").issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(60)).build();
         var context = SecurityContextHolder.createEmptyContext();
         context.setAuthentication(new JwtAuthenticationToken(jwt));
         SecurityContextHolder.setContext(context);
-        passthrough.handle(new RestSkillInvocation("write", Map.of()));
+        passthrough.handle(new RestSkillInvocation("write", Map.of(), "test-generation"));
         assertThat(auth.getLast()).isEqualTo("Bearer original-token");
     }
 
@@ -223,12 +223,12 @@ class GenericRestSkillHandlerTest {
                 """, "none", "", "1KB", "2s"));
         for (Object value : List.of(".", "..", "../child", "%2e%2e", "%252e%252e",
                 "%2f", "%255c", List.of("x"), Map.of("x", 1))) {
-            assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("lookup", Map.of("id", value))))
+            assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("lookup", Map.of("id", value), "test-generation")))
                     .isInstanceOf(SkillException.class);
         }
-        assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("lookup", Map.of())))
+        assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("lookup", Map.of(), "test-generation")))
                 .isInstanceOf(SkillException.class);
-        assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("post", Map.of("bad", new Object()))))
+        assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("post", Map.of("bad", new Object()), "test-generation")))
                 .isInstanceOf(SkillException.class).hasMessageContaining("non-JSON");
         assertThat(requests).hasValue(0);
     }
@@ -279,25 +279,25 @@ class GenericRestSkillHandlerTest {
                 slow: {target: callback, method: GET, path: /slow}
                 """;
         var handler = handler(routes(sourceServer, routes, "none", "", "5B", "100ms"));
-        assertThat(handler.handle(new RestSkillInvocation("exact", Map.of()))).isEqualTo("12345");
-        assertThat(handler.handle(new RestSkillInvocation("empty", Map.of()))).isEmpty();
-        assertThat(handler.handle(new RestSkillInvocation("problem", Map.of()))).isEqualTo("{}");
-        assertThat(handler.handle(new RestSkillInvocation("latin", Map.of()))).isEqualTo("café");
-        assertThat(handler.handle(new RestSkillInvocation("emptyUnsupported", Map.of()))).isEmpty();
-        assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("malformed", Map.of())))
+        assertThat(handler.handle(new RestSkillInvocation("exact", Map.of(), "test-generation"))).isEqualTo("12345");
+        assertThat(handler.handle(new RestSkillInvocation("empty", Map.of(), "test-generation"))).isEmpty();
+        assertThat(handler.handle(new RestSkillInvocation("problem", Map.of(), "test-generation"))).isEqualTo("{}");
+        assertThat(handler.handle(new RestSkillInvocation("latin", Map.of(), "test-generation"))).isEqualTo("café");
+        assertThat(handler.handle(new RestSkillInvocation("emptyUnsupported", Map.of(), "test-generation"))).isEmpty();
+        assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("malformed", Map.of(), "test-generation")))
                 .isInstanceOf(SkillException.class).hasMessageContaining("invalid for its charset");
-        assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("over", Map.of())))
+        assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("over", Map.of(), "test-generation")))
                 .isInstanceOf(SkillException.class).hasMessageContaining("byte limit");
-        assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("binary", Map.of())))
+        assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("binary", Map.of(), "test-generation")))
                 .isInstanceOf(SkillException.class).hasMessageContaining("unsupported").hasMessageNotContaining("SECRET");
-        assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("nonApplicationJson", Map.of())))
+        assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("nonApplicationJson", Map.of(), "test-generation")))
                 .isInstanceOf(SkillException.class).hasMessageContaining("unsupported");
-        assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("error", Map.of())))
+        assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("error", Map.of(), "test-generation")))
                 .isInstanceOf(SkillException.class).hasMessageContaining("503").hasMessageNotContaining("SECRET");
-        assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("redirect", Map.of())))
+        assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("redirect", Map.of(), "test-generation")))
                 .isInstanceOf(SkillException.class).hasMessageContaining("302");
         assertThat(destination).hasValue(0);
-        assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("slow", Map.of())))
+        assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("slow", Map.of(), "test-generation")))
                 .isInstanceOf(SkillException.class).hasMessageContaining("transport error");
         assertThat(source).hasValue(12);
     }

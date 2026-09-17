@@ -91,6 +91,7 @@ class RestRouteStartupIntegrationTest {
 
     private static SkillCatalog catalog(java.util.List<SkillDescriptor> descriptors) {
         return new SkillCatalog() {
+            @Override public String generationId() { return "test-generation"; }
             @Override public java.util.List<SkillDescriptor> skills() { return descriptors; }
             @Override public java.util.Optional<SkillDescriptor> skill(String name) {
                 return descriptors.stream().filter(item -> item.name().equals(name)).findFirst();
