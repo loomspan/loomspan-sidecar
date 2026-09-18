@@ -146,9 +146,14 @@ available locations. The internal runtime service validates an exact candidate
 through the public framework preparation API, checks REST routes and clients,
 then releases validation-only resources. Ordinary Publish requires that exact
 successful result and serializes fresh preparation, staging, durable commit,
-framework publication, and outcome recording. Phase 3 must supply real server-session
-privacy, draft and lease lifecycle enforcement, and integrated concurrency
-verification. No end-to-end management workflow is provided by this model alone.
+framework publication, and outcome recording. The management editing API now
+stores one private draft per authenticated server session. It copies the complete
+runtime-published snapshot, even while SQLite points at a pending selection.
+Only the session holding the instance lease and its selected browser tab may
+replace content. Successful framework publication clears prior drafts and grants,
+including when later status bookkeeping fails. Rejected publication preserves
+old-base editing state. PR 1.3.3 will expose validation, Publish, and history;
+this API does not validate or activate a save.
 
 The current database pointer records **intended production**, not the framework
 generation that handled an execution or the source for an export. A publication
@@ -273,9 +278,9 @@ loomspan:
 
 Keep credentials in environment variables. Model connection and URL allowlist
 changes require restart; a complete snapshot publication changes skills and
-REST routes without restart. Phase 3 adds real session and lease authorization
-to the serialized admission boundary, invalidating prior-base drafts only after
-framework publication succeeds. Phase 5 import and rollback must reuse this
+REST routes without restart. Successful framework publication invalidates
+prior-base drafts and leases under the runtime transition gate. PR 1.3.3 adds
+Publish admission checks. Phase 5 import and rollback must reuse this
 publication path and assign fresh local IDs with source provenance.
 
 ## REST skill routes
@@ -430,8 +435,8 @@ The browser management surface is on the application port (`/management/**` and
 `/api/management/**`); port 9091 remains the health-only Actuator port. Local
 accounts use server-side form-login sessions and CSRF protection. Their roles
 are `viewer`, `editor`, and `admin`, with each higher role including lower-role
-permissions. This release exposes account and session APIs; configuration
-reading, editing and publication arrive in PR 1.3.2/1.3.3. A management session
+permissions. This release exposes account, session and private draft/lease APIs;
+validation, publication and history arrive in PR 1.3.3. A management session
 cannot call `/v1/**`; an execution JWT or observability API key cannot log in to
 management. Sessions are local to one process and do not survive restart.
 
@@ -486,7 +491,8 @@ JSON clients obtain a CSRF token from a session page or the authenticated
 requests. The login page and all other forms include a hidden CSRF value. The
 session endpoint returns `id`, normalized `email`, `role`, effective
 `permissions`, and `csrfToken`. `POST /api/management/session/activity` records
-an intentional user action and extends the default 30-minute idle deadline;
+an intentional user action and extends the default 30-minute idle deadline only
+when at least 30 seconds have passed since the previous accepted report;
 polling the session endpoint does not. `POST /api/management/logout` ends the
 session. `POST /api/management/password/change` takes `currentPassword` and
 `newPassword`. Anonymous `POST /api/management/setup` takes `credential` and
@@ -501,6 +507,47 @@ Secure by default; use HTTPS in deployment. Set
 `LOOMSPAN_SIDECAR_SECURE_COOKIE=false` only for a local HTTP test. Browser and
 management API responses use `Cache-Control: no-store` and
 `Referrer-Policy: no-referrer`.
+
+### Private editing API
+
+All routes below require a management login, and unsafe methods require
+`X-CSRF-TOKEN`. Editors and admins may mutate drafts or leases; only admins may
+take over. Viewers may inspect lease status and their own session draft, if any.
+The server derives account and session identity from authentication, never from
+request JSON. A browser tab creates a UUID `tabId` and keeps it only for that tab.
+
+| Method and path | Request | Result |
+| --- | --- | --- |
+| `GET /api/management/editing` | None | `held`, `mine`, `expiresAt`; no foreign draft or grant details. |
+| `GET /api/management/editing/draft` | None | This session's draft or 404. |
+| `POST /api/management/editing/lease` | `{"tabId":"<uuid>"}` | Acquires the sole lease and creates or resumes this session's draft. |
+| `POST /api/management/editing/lease/takeover` | `{"tabId":"<uuid>"}` | Admin only; revokes the old grant and starts the admin's fresh draft from runtime production. |
+| `POST /api/management/editing/lease/activity` | `{"tabId":"<uuid>","grantId":"<uuid>"}` | Reports meaningful activity; renews login and lease at most once per 30 seconds. |
+| `POST /api/management/editing/lease/release` | `{"tabId":"<uuid>","grantId":"<uuid>"}` | Releases ownership while retaining the eligible private draft. |
+| `PUT /api/management/editing/draft` | `tabId`, `grantId`, `expectedCandidateId`, complete `skillDocuments` and `restRoutesYaml` | Replaces exact authored content, rotates candidate ID, and clears validation. |
+| `DELETE /api/management/editing/draft` | Current `tabId`/`grantId` when holding the lease; otherwise an empty body | Discards this session's draft and lease. |
+
+Lease acquisition and activity responses include `grantId`, `expiresAt` and the
+owning session's `draft`. A draft includes `draftId`, `candidateId`,
+`baseSnapshotId`, `configuration` (`skillDocuments` with `sourceName`/`yaml`, and
+`restRoutesYaml`), and its current `validation` or null. A second tab may read
+its session draft but cannot write with another tab's grant. Acquisition while
+held, stale grant/tab/candidate/base, and unavailable editing return 409 without
+mutating content. Malformed input returns 400; missing login returns 401 and
+insufficient role or CSRF returns 403. Private responses are not cached.
+
+`loomspan-sidecar.management.edit-lease-timeout` is positive and defaults to
+`15m`; the login idle timeout defaults to `30m`. Lease expiry or release keeps
+the private draft while its session and runtime base are valid. Reacquisition
+issues a fresh grant. Logout, login expiry, account version changes, session
+destruction, successful publication and restart clear affected editing state.
+Configuration fault state permits status, private inspection, release and
+discard, while blocking acquisition, save and activity renewal. The browser
+work in Phase 4 must send reports only for typing, paste, clicks, scrolling or
+explicit Continue editing, no more than once per 30 seconds. Mouse movement,
+automatic validation/status polling and an open idle tab must not report
+activity. Phase 4 also owns the two-minute expiry warning; server deadlines
+remain authoritative.
 
 ## Execution API
 
@@ -597,6 +644,7 @@ above that budget plus cleanup margin (the Kubernetes example uses 45 seconds).
 | `loomspan-sidecar.storage.database-path` | `/sidecar/data/sidecar.db`; writable persistent local database path and parent directory required at startup. |
 | `loomspan-sidecar.snapshots.max-retained` | `10`; positive count of stored snapshots, including pending and failed history; protected snapshots may exceed it. |
 | `loomspan-sidecar.management.session-idle-timeout` | `30m`; positive idle deadline extended only by intentional session activity. |
+| `loomspan-sidecar.management.edit-lease-timeout` | `15m`; positive editing lease deadline extended only by accepted activity reports. |
 | `loomspan-sidecar.management.mail-from` | Required nonblank sender address for email-dependent management actions. |
 | `loomspan-sidecar.management.external-base-url` | Required trusted HTTPS console URL for email links; loopback HTTP is allowed in development. |
 | `loomspan-sidecar.auth.jwt.issuer-uri` | Required nonblank issuer; also used with an explicit local key or JWKS URL. |

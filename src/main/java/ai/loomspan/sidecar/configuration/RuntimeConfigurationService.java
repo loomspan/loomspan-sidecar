@@ -3,6 +3,7 @@ package ai.loomspan.sidecar.configuration;
 import ai.loomspan.api.PreparedSkillUpdate;
 import ai.loomspan.api.SkillReloader;
 import ai.loomspan.sidecar.execution.ExecutionCoordinator;
+import ai.loomspan.sidecar.management.ManagementEditingState;
 import ai.loomspan.sidecar.rest.GenerationRestResources;
 import ai.loomspan.sidecar.rest.RestRouteCatalogValidator;
 import ai.loomspan.sidecar.storage.ConfigurationDraft;
@@ -20,6 +21,7 @@ import org.springframework.stereotype.Component;
 import java.util.HashSet;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 
@@ -31,6 +33,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     public record Inspection(UUID publishedId, UUID intendedId, SnapshotStatus intendedStatus, String mutationFault) {}
     interface Hooks {
         default void beforeStartupActivation() {}
+        default void beforePreparation() {}
         default void beforeCommit() {}
         default void beforeFrameworkPublish() {}
         default void beforeRevert() {}
@@ -42,8 +45,10 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     private final GenerationRestResources resources;
     private final RestRouteCatalogValidator routes;
     private final ExecutionCoordinator executions;
+    private final ManagementEditingState editing;
     private final ReentrantLock publication = new ReentrantLock(true);
-    private volatile UUID publishedId;
+    private final ReentrantLock transition = new ReentrantLock(true);
+    private volatile ConfigurationSnapshot published;
     private volatile UUID intendedId;
     private volatile SnapshotStatus intendedStatus;
     private volatile String mutationFault;
@@ -51,12 +56,14 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     private volatile Hooks hooks = new Hooks() {};
 
     public RuntimeConfigurationService(ConfigurationSnapshotStore store, SkillReloader reloader,
-            GenerationRestResources resources, RestRouteCatalogValidator routes, ExecutionCoordinator executions) {
+            GenerationRestResources resources, RestRouteCatalogValidator routes, ExecutionCoordinator executions,
+            ManagementEditingState editing) {
         this.store = store;
         this.reloader = reloader;
         this.resources = resources;
         this.routes = routes;
         this.executions = executions;
+        this.editing = editing;
     }
 
     void hooks(Hooks hooks) { this.hooks = java.util.Objects.requireNonNull(hooks); }
@@ -82,7 +89,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                 resources.stage(generation, staged, selected.localId());
                 phase = "framework publication";
                 reloader.publish(prepared);
-                publishedId = selected.localId();
+                published = selected;
                 phase = "status recording";
                 store.updateStatus(selected.localId(), SnapshotStatus.PUBLISHED);
                 intendedStatus = SnapshotStatus.PUBLISHED;
@@ -90,7 +97,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                 prune();
                 executions.openAfterActivation();
             } catch (RuntimeException failure) {
-                if (publishedId == null && generation != null) resources.discard(generation);
+                if (published == null && generation != null) resources.discard(generation);
                 ConfigurationValidationIssue issue = switch (phase) {
                     case "skill preparation" -> skillValidationIssue(failure, selected.configuration());
                     case "REST staging" -> validationIssue(failure);
@@ -136,10 +143,11 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
             ConfigurationValidationResult validation = draft.validationFor(candidate);
             if (validation == null || !validation.successful())
                 throw new IllegalStateException("Exact draft candidate requires successful validation");
-            UUID predecessor = publishedId;
+            UUID predecessor = published == null ? null : published.localId();
             if (predecessor == null || !predecessor.equals(candidate.baseSnapshotId()))
                 throw new IllegalStateException("Draft is based on a stale runtime snapshot");
 
+            hooks.beforePreparation();
             PreparedSkillUpdate prepared = prepare(candidate.configuration());
             GenerationRestResources.Resources staged = stage(prepared, candidate.configuration());
             String generation = prepared.generationId();
@@ -160,7 +168,14 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
             try {
                 resources.bind(generation, submitted.localId());
                 hooks.beforeFrameworkPublish();
-                reloader.publish(prepared);
+                transition.lock();
+                try {
+                    reloader.publish(prepared);
+                    published = submitted;
+                    synchronized (editing) { editing.clearAll(); }
+                } finally {
+                    transition.unlock();
+                }
             } catch (RuntimeException failure) {
                 resources.discard(generation);
                 try {
@@ -181,7 +196,6 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                         : mutationFault);
             }
 
-            publishedId = submitted.localId();
             try {
                 hooks.beforeStatus();
                 store.updateStatus(submitted.localId(), SnapshotStatus.PUBLISHED);
@@ -202,12 +216,12 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     public Inspection inspect() {
         try {
             ConfigurationSnapshot intended = store.current();
-            return new Inspection(publishedId, intended.localId(), intended.status(), mutationFault);
+            return new Inspection(published == null ? null : published.localId(), intended.localId(), intended.status(), mutationFault);
         } catch (RuntimeException failure) {
             if (intendedId == null) throw failure;
             mutationFault = mutationFault == null ? "Configuration selection could not be inspected" : mutationFault;
             LOG.error("Configuration mutation fault: intended selection could not be inspected");
-            return new Inspection(publishedId, intendedId, intendedStatus, mutationFault);
+            return new Inspection(published == null ? null : published.localId(), intendedId, intendedStatus, mutationFault);
         }
     }
 
@@ -236,8 +250,20 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
 
     private void prune() {
         HashSet<UUID> protectedIds = new HashSet<>(resources.protectedIds());
-        if (publishedId != null) protectedIds.add(publishedId);
+        if (published != null) protectedIds.add(published.localId());
         store.prune(protectedIds);
+    }
+
+    /** Editing operations and the actual framework switch share only this short gate. */
+    public <T> T withEditingState(boolean mutation, Function<ConfigurationSnapshot, T> operation) {
+        transition.lock();
+        try {
+            if (mutation) requireHealthy();
+            if (published == null) throw new IllegalStateException("Runtime configuration is unavailable");
+            return operation.apply(published);
+        } finally {
+            transition.unlock();
+        }
     }
 
     private void requireHealthy() {

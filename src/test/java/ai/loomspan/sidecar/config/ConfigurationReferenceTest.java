@@ -37,7 +37,7 @@ class ConfigurationReferenceTest {
         assertThat(defaults).contains("classpath:/sidecar-empty-skills/*.yaml", "url-variables: []", "port: 9091");
         assertThat(defaults).contains("database-path: /sidecar/data/sidecar.db");
         assertThat(defaults).contains("max-retained: 10");
-        assertThat(defaults).contains("session-idle-timeout: 30m", "mail-from:", "external-base-url:",
+        assertThat(defaults).contains("session-idle-timeout: 30m", "edit-lease-timeout: 15m", "mail-from:", "external-base-url:",
                 "mail.smtp.connectiontimeout: 5000", "mail.smtp.timeout: 5000", "mail.smtp.writetimeout: 5000");
         assertThat(defaults).contains("http-only: true", "same-site: lax",
                 "secure: ${LOOMSPAN_SIDECAR_SECURE_COOKIE:true}");
@@ -68,6 +68,8 @@ class ConfigurationReferenceTest {
                 .contains("`" + new SidecarSnapshotProperties().getMaxRetained() + "`", "positive", "snapshot");
         assertThat(rows.get("loomspan-sidecar.management.session-idle-timeout"))
                 .contains("`30m`", "positive", "activity");
+        assertThat(rows.get("loomspan-sidecar.management.edit-lease-timeout"))
+                .contains("`15m`", "positive", "activity");
         assertThat(rows.get("loomspan-sidecar.management.mail-from")).contains("sender", "email");
         assertThat(rows.get("loomspan-sidecar.management.external-base-url")).contains("HTTPS", "link");
         assertThat(rows.get("loomspan-sidecar.auth.jwt.issuer-uri")).contains("nonblank", "explicit local key or JWKS");

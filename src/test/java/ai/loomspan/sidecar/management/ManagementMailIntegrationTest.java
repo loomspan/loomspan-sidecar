@@ -42,7 +42,7 @@ class ManagementMailIntegrationTest {
         var tx = new TransactionTemplate(new DataSourceTransactionManager(source));
         try (var failed = new LocalSmtp(true)) {
             var first = new ManagementIdentityService(accounts, tx, mail(settings, failed.port()),
-                    Clock.systemUTC(), () -> credential);
+                    Clock.systemUTC(), () -> credential, new ManagementEditingState());
             assertThatThrownBy(() -> first.setup(credential, "admin@example.test"))
                     .isInstanceOf(ManagementMailService.Unavailable.class);
         }
@@ -50,7 +50,7 @@ class ManagementMailIntegrationTest {
         assertThat(accounts.byEmail("admin@example.test").active()).isFalse();
         try (var recovered = new LocalSmtp()) {
             var retry = new ManagementIdentityService(accounts, tx, mail(settings, recovered.port()),
-                    Clock.systemUTC(), () -> credential);
+                    Clock.systemUTC(), () -> credential, new ManagementEditingState());
             assertThatThrownBy(() -> retry.setup(credential, "other@example.test"))
                     .isInstanceOf(ManagementIdentityService.Rejected.class);
             retry.setup(credential, "admin@example.test");
@@ -84,7 +84,8 @@ class ManagementMailIntegrationTest {
             StorageConfiguration.migrate(source);
             var accounts = new ManagementAccountRepository(new JdbcTemplate(source));
             var identity = new ManagementIdentityService(accounts,
-                    new TransactionTemplate(new DataSourceTransactionManager(source)), mail, Clock.systemUTC(), () -> setup);
+                    new TransactionTemplate(new DataSourceTransactionManager(source)), mail, Clock.systemUTC(), () -> setup,
+                    new ManagementEditingState());
             identity.setup(setup, "admin@example.test");
             assertThat(smtp.messages()).hasSize(1);
             assertThat(smtp.messages().getFirst()).contains("From: operator@example.test", "To: admin@example.test",

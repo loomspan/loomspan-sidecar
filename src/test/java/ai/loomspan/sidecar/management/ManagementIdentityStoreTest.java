@@ -56,7 +56,8 @@ class ManagementIdentityStoreTest {
         when(mail.configured()).thenReturn(true);
         var clock = new MutableClock();
         var service = new ManagementIdentityService(accounts,
-                new TransactionTemplate(new DataSourceTransactionManager(source)), mail, clock, () -> credential);
+                new TransactionTemplate(new DataSourceTransactionManager(source)), mail, clock, () -> credential,
+                new ManagementEditingState());
         return new Fixture(source, jdbc, service, accounts, mail, clock, credential);
     }
 
@@ -76,7 +77,8 @@ class ManagementIdentityStoreTest {
         byte[] key = new byte[32]; new SecureRandom().nextBytes(key);
         String credential = Base64.getUrlEncoder().withoutPadding().encodeToString(key);
         var service = new ManagementIdentityService(accounts,
-                new TransactionTemplate(new DataSourceTransactionManager(source)), mail, clock, () -> credential);
+                new TransactionTemplate(new DataSourceTransactionManager(source)), mail, clock, () -> credential,
+                new ManagementEditingState());
         assertThatThrownBy(() -> service.setup("bad", "admin@example.test"))
                 .isInstanceOf(ManagementIdentityService.Rejected.class);
         service.setup(credential, " Admin@Example.Test ");
@@ -131,7 +133,7 @@ class ManagementIdentityStoreTest {
         var secondAccounts = new ManagementAccountRepository(new JdbcTemplate(secondSource));
         var second = new ManagementIdentityService(secondAccounts,
                 new TransactionTemplate(new DataSourceTransactionManager(secondSource)), f.mail, f.clock,
-                () -> f.credential);
+                () -> f.credential, new ManagementEditingState());
         var barrier = new CountDownLatch(1);
         var pool = Executors.newFixedThreadPool(2);
         try {

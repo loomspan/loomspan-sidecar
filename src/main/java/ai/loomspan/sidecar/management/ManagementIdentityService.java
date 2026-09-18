@@ -30,17 +30,19 @@ public class ManagementIdentityService {
     private final ManagementMailService mail;
     private final Clock clock;
     private final Supplier<String> setupCredential;
+    private final ManagementEditingState editing;
     private final SecureRandom random = new SecureRandom();
     private final Pbkdf2PasswordEncoder encoder = new Pbkdf2PasswordEncoder("", 16, 310_000,
             Pbkdf2PasswordEncoder.SecretKeyFactoryAlgorithm.PBKDF2WithHmacSHA256);
 
     public ManagementIdentityService(ManagementAccountRepository accounts, TransactionTemplate tx,
-            ManagementMailService mail, Clock clock, Supplier<String> setupCredential) {
+            ManagementMailService mail, Clock clock, Supplier<String> setupCredential, ManagementEditingState editing) {
         this.accounts = accounts;
         this.tx = tx;
         this.mail = mail;
         this.clock = clock;
         this.setupCredential = setupCredential;
+        this.editing = editing;
     }
 
     @Configuration(proxyBeanMethods = false)
@@ -126,36 +128,46 @@ public class ManagementIdentityService {
     public void redeem(String purpose, String token, String password) {
         ManagementPolicy.password(password);
         String digest = digest(token);
-        tx.executeWithoutResult(status -> {
-            var entry = accounts.token(digest);
-            if (entry == null || !entry.purpose().equals(purpose) || entry.consumedAt() != null
-                    || entry.expiresAt() <= clock.millis()) throw new Rejected();
-            Account account = accounts.byId(entry.accountId());
-            if (account == null || !account.enabled() || ("set".equals(purpose) && account.passwordHash() != null)
-                    || ("reset".equals(purpose) && account.passwordHash() == null)) throw new Rejected();
-            if (!accounts.consume(digest, clock.millis())) throw new Rejected();
-            accounts.password(account.id(), "{pbkdf2@SpringSecurity_v5_8}" + encoder.encode(password));
-            accounts.consumeTokens(account.id(), clock.millis());
-            if ("set".equals(purpose)) accounts.activateBootstrap(account.id());
-        });
+        synchronized (editing) {
+            long changed = tx.execute(status -> {
+                var entry = accounts.token(digest);
+                if (entry == null || !entry.purpose().equals(purpose) || entry.consumedAt() != null
+                        || entry.expiresAt() <= clock.millis()) throw new Rejected();
+                Account account = accounts.byId(entry.accountId());
+                if (account == null || !account.enabled() || ("set".equals(purpose) && account.passwordHash() != null)
+                        || ("reset".equals(purpose) && account.passwordHash() == null)) throw new Rejected();
+                if (!accounts.consume(digest, clock.millis())) throw new Rejected();
+                accounts.password(account.id(), "{pbkdf2@SpringSecurity_v5_8}" + encoder.encode(password));
+                accounts.consumeTokens(account.id(), clock.millis());
+                if ("set".equals(purpose)) accounts.activateBootstrap(account.id());
+                return account.id();
+            });
+            editing.clearAccount(changed);
+        }
     }
 
     public void change(long id, String current, String replacement) {
         ManagementPolicy.password(replacement);
-        tx.executeWithoutResult(status -> {
-            Account account = accounts.byId(id);
-            if (account == null || !account.active() || !matches(current, account.passwordHash())) throw new Rejected();
-            accounts.password(id, "{pbkdf2@SpringSecurity_v5_8}" + encoder.encode(replacement));
-            accounts.consumeTokens(id, clock.millis());
-        });
+        synchronized (editing) {
+            tx.executeWithoutResult(status -> {
+                Account account = accounts.byId(id);
+                if (account == null || !account.active() || !matches(current, account.passwordHash())) throw new Rejected();
+                accounts.password(id, "{pbkdf2@SpringSecurity_v5_8}" + encoder.encode(replacement));
+                accounts.consumeTokens(id, clock.millis());
+            });
+            editing.clearAccount(id);
+        }
     }
 
     public void alter(long id, String role, boolean enabled) {
         validRole(role);
-        tx.executeWithoutResult(status -> {
-            if (accounts.byId(id) == null || !accounts.alter(id, role, enabled)) throw new Rejected();
-            if (!enabled) accounts.consumeTokens(id, clock.millis());
-        });
+        synchronized (editing) {
+            tx.executeWithoutResult(status -> {
+                if (accounts.byId(id) == null || !accounts.alter(id, role, enabled)) throw new Rejected();
+                if (!enabled) accounts.consumeTokens(id, clock.millis());
+            });
+            editing.clearAccount(id);
+        }
     }
 
     public boolean matches(String raw, String stored) {

@@ -30,6 +30,7 @@ class SidecarDefaultsTest {
                         assertThat(environment.getProperty("loomspan-sidecar.auth.jwt.clock-skew")).isEqualTo("60s");
                         assertThat(environment.getProperty("loomspan-sidecar.executions.max-input-size")).isEqualTo("1MB");
                         assertThat(environment.getProperty("loomspan-sidecar.snapshots.max-retained", Integer.class)).isEqualTo(10);
+                        assertThat(environment.getProperty("loomspan-sidecar.management.edit-lease-timeout")).isEqualTo("15m");
                         assertThat(environment.getProperty("loomspan-sidecar.executions.max-retained", Integer.class)).isEqualTo(1000);
                         assertThat(environment.getProperty("loomspan-sidecar.executions.completed-ttl")).isEqualTo("15m");
                         assertThat(environment.getProperty("loomspan-sidecar.executions.max-concurrent", Integer.class)).isEqualTo(32);
@@ -42,6 +43,16 @@ class SidecarDefaultsTest {
                         assertThat(environment.getProperty("management.endpoints.web.exposure.include"))
                                         .isEqualTo("health");
                 }
+        }
+
+        @Test
+        void editingLeaseTimeoutMustBePositive() {
+                var properties = new SidecarManagementProperties();
+                assertThat(properties.getEditLeaseTimeout()).isEqualTo(java.time.Duration.ofMinutes(15));
+                assertThatThrownBy(() -> properties.setEditLeaseTimeout(java.time.Duration.ZERO))
+                        .isInstanceOf(IllegalArgumentException.class);
+                assertThatThrownBy(() -> properties.setEditLeaseTimeout(java.time.Duration.ofSeconds(-1)))
+                        .isInstanceOf(IllegalArgumentException.class);
         }
 
         @Test

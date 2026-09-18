@@ -12,6 +12,7 @@ loomspan-sidecar:
     max-retained: 10
   management:
     session-idle-timeout: 30m
+    edit-lease-timeout: 15m
     mail-from: ${LOOMSPAN_SIDECAR_MAIL_FROM:}
     external-base-url: ${LOOMSPAN_SIDECAR_EXTERNAL_BASE_URL:}
   url-variables: []

@@ -53,6 +53,10 @@ public class ManagementSecurityConfiguration {
                                 "/api/management/setup", "/api/management/password/forgot",
                                 "/api/management/password/set", "/api/management/password/reset").permitAll()
                         .requestMatchers("/api/management/accounts", "/api/management/accounts/**").hasAuthority("MGT_ADMIN")
+                        .requestMatchers("/api/management/editing/lease/takeover").hasAuthority("MGT_ADMIN")
+                        .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/management/editing", "/api/management/editing/draft").authenticated()
+                        .requestMatchers("/api/management/editing/lease", "/api/management/editing/lease/**",
+                                "/api/management/editing/draft").hasAuthority("MGT_EDITOR")
                         .anyRequest().authenticated())
                 .formLogin(login -> login.loginPage("/management/login").loginProcessingUrl("/management/login")
                         .usernameParameter("email").passwordParameter("password")

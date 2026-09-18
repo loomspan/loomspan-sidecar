@@ -59,7 +59,7 @@ public class ManagementController {
     @PostMapping("/session/activity")
     public ResponseEntity<Void> activity(Authentication authentication, HttpServletRequest request) {
         principal(authentication);
-        sessions.mark(request);
+        sessions.report(request);
         return ResponseEntity.noContent().build();
     }
     @PostMapping("/logout")

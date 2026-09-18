@@ -15,6 +15,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @Component
 public class ManagementSessionGuard extends OncePerRequestFilter {
     static final String ACTIVITY = "management.activity";
+    static final String REPORT = "management.activity.report";
     private final ManagementIdentityService identity;
     private final SidecarManagementProperties settings;
     private final Clock clock;
@@ -36,8 +37,39 @@ public class ManagementSessionGuard extends OncePerRequestFilter {
         }
         chain.doFilter(request, response);
     }
-    public void mark(HttpServletRequest request) {
+    public synchronized void mark(HttpServletRequest request) {
         HttpSession session = request.getSession(false);
-        if (session != null) session.setAttribute(ACTIVITY, clock.millis());
+        if (session != null) {
+            session.setAttribute(ACTIVITY, clock.millis());
+            session.setAttribute(REPORT, clock.millis());
+        }
+    }
+    public synchronized long lastReportAt(HttpServletRequest request) {
+        HttpSession session = request.getSession(false);
+        Long last = session == null ? null : (Long) session.getAttribute(REPORT);
+        return last == null ? clock.millis() : last;
+    }
+    public synchronized boolean report(HttpServletRequest request) {
+        HttpSession session = request.getSession(false);
+        if (session == null) throw expired();
+        try {
+            long now = clock.millis();
+            Long activity = (Long) session.getAttribute(ACTIVITY);
+            if (activity == null || now - activity >= settings.getSessionIdleTimeout().toMillis()) {
+                session.invalidate();
+                throw expired();
+            }
+            Long last = (Long) session.getAttribute(REPORT);
+            if (last == null || now - last < 30_000L) return false;
+            session.setAttribute(ACTIVITY, now);
+            session.setAttribute(REPORT, now);
+            return true;
+        } catch (IllegalStateException invalidated) {
+            throw expired();
+        }
+    }
+    private static org.springframework.web.server.ResponseStatusException expired() {
+        return new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.UNAUTHORIZED,
+                "Management session expired");
     }
 }

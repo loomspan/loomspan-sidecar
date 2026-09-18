@@ -180,7 +180,8 @@ class RuntimeConfigurationIntegrationTest {
         org.mockito.Mockito.when(resources.prepare(org.mockito.ArgumentMatchers.anyString()))
                 .thenThrow(new IllegalStateException("sensitive SSL configuration detail"));
         var service = new RuntimeConfigurationService(store, reloader, resources,
-                new ai.loomspan.sidecar.rest.RestRouteCatalogValidator(), executions);
+                new ai.loomspan.sidecar.rest.RestRouteCatalogValidator(), executions,
+                new ai.loomspan.sidecar.management.ManagementEditingState());
         var base = new ConfigurationSnapshot(java.util.UUID.randomUUID(), null, 1,
                 new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES), SnapshotStatus.PUBLISHED);
 
@@ -206,6 +207,165 @@ class RuntimeConfigurationIntegrationTest {
     }
 
     @Test
+    void editingCaptureUsesRuntimeSnapshotWhileIntendedPointerIsPending() throws Exception {
+        Path path = directory.resolve("pending-editing.db");
+        Path skill = directory.resolve("runtimeA.yaml");
+        java.nio.file.Files.writeString(skill, restDocument("runtimeA").yaml());
+        ai.loomspan.sidecar.support.SidecarApplicationFixture.seedDatabase(path, List.of(skill), routes("runtimeA"));
+        try (var context = start(path);
+                var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var service = context.getBean(RuntimeConfigurationService.class);
+            var store = context.getBean(ConfigurationSnapshotStore.class);
+            var a = store.current();
+            var candidate = validDraft(service, a, "pendingRest");
+            var entered = new CountDownLatch(1);
+            var release = new CountDownLatch(1);
+            service.hooks(new RuntimeConfigurationService.Hooks() {
+                @Override public void beforeFrameworkPublish() {
+                    entered.countDown();
+                    try { if (!release.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("test timeout"); }
+                    catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new IllegalStateException(failure); }
+                }
+            });
+            var publishing = workers.submit(() -> service.publish(candidate));
+            assertThat(entered.await(3, TimeUnit.SECONDS)).isTrue();
+            assertThat(store.current().localId()).isNotEqualTo(a.localId());
+            var captured = service.withEditingState(false, snapshot -> snapshot);
+            assertThat(captured.localId()).isEqualTo(a.localId());
+            assertThat(captured.configuration()).isEqualTo(a.configuration());
+            assertThat(captured.configuration().skillDocuments().getFirst().yaml()).contains("runtimeA");
+            assertThat(captured.configuration().restRoutesYaml()).contains("runtimeA");
+            release.countDown();
+            var b = publishing.get(5, TimeUnit.SECONDS);
+            java.util.UUID runtimeId = service.withEditingState(false, snapshot -> snapshot.localId());
+            assertThat(runtimeId).isEqualTo(b.localId());
+        }
+    }
+
+    @Test
+    void editingRemainsAvailableDuringPreparationAndSuccessInvalidatesEvenOnStatusFault() throws Exception {
+        try (var context = start(directory.resolve("transition-editing.db"));
+                var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var service = context.getBean(RuntimeConfigurationService.class);
+            var store = context.getBean(ConfigurationSnapshotStore.class);
+            var editing = context.getBean(ai.loomspan.sidecar.management.ManagementEditingState.class);
+            var a = store.current();
+            var draft = validDraft(service, a, "preparedRest");
+            var entered = new CountDownLatch(1);
+            var release = new CountDownLatch(1);
+            service.hooks(new RuntimeConfigurationService.Hooks() {
+                @Override public void beforePreparation() {
+                    entered.countDown();
+                    try { if (!release.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("test timeout"); }
+                    catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new IllegalStateException(failure); }
+                }
+                @Override public void beforeStatus() { throw new IllegalStateException("injected status failure"); }
+            });
+            var publishing = workers.submit(() -> {
+                try { service.publish(draft); return false; }
+                catch (IllegalStateException expected) { return true; }
+            });
+            assertThat(entered.await(3, TimeUnit.SECONDS)).isTrue();
+            service.withEditingState(true, base -> {
+                assertThat(base.localId()).isEqualTo(a.localId());
+                synchronized (editing) {
+                    editing.drafts.put("session", new ai.loomspan.sidecar.management.ManagementEditingState.Entry(
+                            1, new ConfigurationDraft(base)));
+                    editing.lease = new ai.loomspan.sidecar.management.ManagementEditingState.Lease(
+                            "session", java.util.UUID.randomUUID().toString(), System.currentTimeMillis() + 900_000);
+                }
+                return null;
+            });
+            release.countDown();
+            assertThat(publishing.get(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(service.inspect().publishedId()).isNotEqualTo(a.localId());
+            synchronized (editing) {
+                assertThat(editing.drafts).isEmpty();
+                assertThat(editing.lease).isNull();
+            }
+            assertThatThrownBy(() -> service.withEditingState(true, base -> base)).isInstanceOf(IllegalStateException.class);
+            java.util.UUID runtimeId = service.withEditingState(false, base -> base.localId());
+            assertThat(runtimeId).isEqualTo(service.inspect().publishedId());
+            var editor = editor(context, "fault-editor@example.test");
+            var editingService = context.getBean(ai.loomspan.sidecar.management.ManagementEditingService.class);
+            var faultSession = session("fault-editor-session");
+            assertThatThrownBy(() -> editingService.acquire(faultSession, editor,
+                    java.util.UUID.randomUUID().toString(), false))
+                    .isInstanceOf(ai.loomspan.sidecar.management.ManagementEditingService.Conflict.class);
+            assertThat(editingService.read(faultSession, editor)).isNull();
+            editingService.discard(faultSession, editor, null, null);
+        }
+    }
+
+    @Test
+    void restartDropsAllEphemeralEditingState() {
+        Path path = directory.resolve("restart-editing.db");
+        try (var context = start(path)) {
+            var state = context.getBean(ai.loomspan.sidecar.management.ManagementEditingState.class);
+            var base = context.getBean(RuntimeConfigurationService.class).withEditingState(false, snapshot -> snapshot);
+            synchronized (state) {
+                state.drafts.put("old-session", new ai.loomspan.sidecar.management.ManagementEditingState.Entry(
+                        1, new ConfigurationDraft(base)));
+                state.lease = new ai.loomspan.sidecar.management.ManagementEditingState.Lease(
+                        "old-session", java.util.UUID.randomUUID().toString(), System.currentTimeMillis() + 900_000);
+            }
+        }
+        try (var restarted = start(path)) {
+            var state = restarted.getBean(ai.loomspan.sidecar.management.ManagementEditingState.class);
+            synchronized (state) {
+                assertThat(state.drafts).isEmpty();
+                assertThat(state.lease).isNull();
+            }
+        }
+    }
+
+    @Test
+    void acceptedPublicationSurvivesLeaseLossAndRejectsOldEditingCapabilities() throws Exception {
+        try (var context = start(directory.resolve("accepted-lease-loss.db"));
+                var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var service = context.getBean(RuntimeConfigurationService.class);
+            var store = context.getBean(ConfigurationSnapshotStore.class);
+            var editing = context.getBean(ai.loomspan.sidecar.management.ManagementEditingService.class);
+            var editor = editor(context, "accepted@example.test");
+            var a = store.current();
+            String tab = java.util.UUID.randomUUID().toString();
+            var session = session("accepted-session");
+            var grant = editing.acquire(session, editor, tab, false);
+            editing.save(session, editor, tab, grant.grantId(), grant.draft().candidateId(),
+                    new ManagedConfiguration(List.of(restDocument("acceptedRest")), routes("acceptedRest")));
+            var state = context.getBean(ai.loomspan.sidecar.management.ManagementEditingState.class);
+            var frozen = state.drafts.get("accepted-session").draft;
+            assertThat(service.validate(frozen).successful()).isTrue();
+            var entered = new CountDownLatch(1);
+            var release = new CountDownLatch(1);
+            service.hooks(new RuntimeConfigurationService.Hooks() {
+                @Override public void beforeFrameworkPublish() {
+                    entered.countDown();
+                    try { if (!release.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("test timeout"); }
+                    catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new IllegalStateException(failure); }
+                }
+            });
+            var publishing = workers.submit(() -> service.publish(frozen));
+            assertThat(entered.await(3, TimeUnit.SECONDS)).isTrue();
+            editing.release(session, editor, tab, grant.grantId());
+            assertThat(editing.read(session, editor).draftId()).isEqualTo(grant.draft().draftId());
+            release.countDown();
+            var b = publishing.get(5, TimeUnit.SECONDS);
+            assertThat(b.localId()).isNotEqualTo(a.localId());
+            assertThatThrownBy(() -> editing.save(session, editor, tab, grant.grantId(),
+                    grant.draft().candidateId(), a.configuration()))
+                    .isInstanceOf(ai.loomspan.sidecar.management.ManagementEditingService.Conflict.class);
+            assertThatThrownBy(() -> editing.activity(session, editor, tab, grant.grantId(), 0))
+                    .isInstanceOf(ai.loomspan.sidecar.management.ManagementEditingService.Conflict.class);
+            assertThat(editing.status(session, editor).held()).isFalse();
+            assertThat(editing.read(session, editor)).isNull();
+            var next = editing.acquire(session, editor, tab, false);
+            assertThat(next.grantId()).isNotEqualTo(grant.grantId());
+            assertThat(next.draft().baseSnapshotId()).isEqualTo(b.localId());
+        }
+    }
+
+    @Test
     void publicationFaultsKeepRuntimePointerAndMutationGateTruthful() {
         for (String fault : List.of("commit", "publish", "revert", "status")) {
             Path path = directory.resolve(fault + ".db");
@@ -215,6 +375,13 @@ class RuntimeConfigurationIntegrationTest {
                 var reloader = context.getBean(SkillReloader.class);
                 var a = store.current();
                 var draft = validDraft(service, a, "echoRest");
+                var editing = context.getBean(ai.loomspan.sidecar.management.ManagementEditingState.class);
+                synchronized (editing) {
+                    editing.drafts.put("fault-session", new ai.loomspan.sidecar.management.ManagementEditingState.Entry(
+                            1, new ConfigurationDraft(a)));
+                    editing.lease = new ai.loomspan.sidecar.management.ManagementEditingState.Lease(
+                            "fault-session", java.util.UUID.randomUUID().toString(), System.currentTimeMillis() + 900_000);
+                }
                 if (fault.equals("commit")) {
                     new org.springframework.jdbc.core.JdbcTemplate(context.getBean(javax.sql.DataSource.class)).execute(
                             "CREATE TRIGGER fail_switch BEFORE UPDATE ON configuration_store_state "
@@ -229,6 +396,15 @@ class RuntimeConfigurationIntegrationTest {
                 });
                 assertThatThrownBy(() -> service.publish(draft)).isInstanceOf(IllegalStateException.class);
                 var inspection = service.inspect();
+                synchronized (editing) {
+                    if (fault.equals("status")) {
+                        assertThat(editing.drafts).isEmpty();
+                        assertThat(editing.lease).isNull();
+                    } else {
+                        assertThat(editing.drafts).containsKey("fault-session");
+                        assertThat(editing.lease).isNotNull();
+                    }
+                }
                 if (fault.equals("commit") || fault.equals("publish")) {
                     assertThat(inspection.publishedId()).isEqualTo(a.localId());
                     assertThat(inspection.intendedId()).isEqualTo(a.localId());
@@ -380,6 +556,22 @@ class RuntimeConfigurationIntegrationTest {
         var ids = new org.springframework.jdbc.core.JdbcTemplate(source).queryForList(
                 "SELECT local_id FROM configuration_snapshot ORDER BY submission_sequence DESC", String.class);
         return ids.stream().map(java.util.UUID::fromString).filter(id -> !id.equals(a)).findFirst().orElseThrow();
+    }
+
+    private ai.loomspan.sidecar.management.ManagementUserDetailsService.Principal editor(
+            org.springframework.context.ConfigurableApplicationContext context, String email) {
+        var jdbc = new org.springframework.jdbc.core.JdbcTemplate(context.getBean(javax.sql.DataSource.class));
+        jdbc.update("INSERT INTO management_account(email,role,enabled,password_hash,created_at) VALUES (?,?,1,?,?)",
+                email, "editor", "fixture-hash", System.currentTimeMillis());
+        return (ai.loomspan.sidecar.management.ManagementUserDetailsService.Principal)
+                context.getBean(ai.loomspan.sidecar.management.ManagementUserDetailsService.class)
+                        .loadUserByUsername(email);
+    }
+
+    private jakarta.servlet.http.HttpSession session(String id) {
+        var session = org.mockito.Mockito.mock(jakarta.servlet.http.HttpSession.class);
+        org.mockito.Mockito.when(session.getId()).thenReturn(id);
+        return session;
     }
 
     private org.springframework.context.ConfigurableApplicationContext start(Path path) {

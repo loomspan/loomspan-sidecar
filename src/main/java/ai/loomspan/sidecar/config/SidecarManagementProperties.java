@@ -7,6 +7,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "loomspan-sidecar.management")
 public class SidecarManagementProperties {
     private Duration sessionIdleTimeout = Duration.ofMinutes(30);
+    private Duration editLeaseTimeout = Duration.ofMinutes(15);
     private String mailFrom;
     private String externalBaseUrl;
 
@@ -14,6 +15,11 @@ public class SidecarManagementProperties {
     public void setSessionIdleTimeout(Duration value) {
         if (value == null || value.isNegative() || value.isZero()) throw new IllegalArgumentException("Invalid management idle timeout");
         sessionIdleTimeout = value;
+    }
+    public Duration getEditLeaseTimeout() { return editLeaseTimeout; }
+    public void setEditLeaseTimeout(Duration value) {
+        if (value == null || value.isNegative() || value.isZero()) throw new IllegalArgumentException("Invalid editing lease timeout");
+        editLeaseTimeout = value;
     }
     public String getMailFrom() { return mailFrom; }
     public void setMailFrom(String value) { mailFrom = value; }
