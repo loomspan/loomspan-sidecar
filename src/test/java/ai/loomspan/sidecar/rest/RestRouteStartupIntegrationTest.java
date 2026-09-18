@@ -46,18 +46,19 @@ class RestRouteStartupIntegrationTest {
                     method: POST
                     path: /echo
                 """);
+        ai.loomspan.sidecar.support.SidecarApplicationFixture.seedDatabase(temporaryDirectory.resolve("sidecar.db"),
+                java.util.List.of(skill), Files.readString(routes));
 
         try (var context = new SpringApplicationBuilder(LoomspanSidecarApplication.class)
                 .web(WebApplicationType.NONE)
-                .run("--loomspan.skills.locations=" + skill.toUri(),
+                .run(
                         "--loomspan-sidecar.storage.database-path=" + temporaryDirectory.resolve("sidecar.db"),
                         "--loomspan.observability.enabled=false",
-                        "--loomspan-sidecar.rest-routes-location=" + routes.toUri(),
                         "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
                         "--loomspan-sidecar.auth.jwt.audience=sidecar",
                         "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem")) {
             assertThat(context.getBeansOfType(RestSkillHandler.class)).hasSize(1);
-            assertThat(context.getBean(SkillCatalog.class).skills())
+            assertThat(context.getBean(ai.loomspan.api.SkillReloader.class).snapshot().skills())
                     .anySatisfy(skillDescriptor -> {
                         assertThat(skillDescriptor.name()).isEqualTo("echoRest");
                         assertThat(skillDescriptor.kind()).isEqualTo(SkillKind.REST);
@@ -75,19 +76,18 @@ class RestRouteStartupIntegrationTest {
                   yamlSkill: {target: callback, method: GET, path: /call}
                 """);
         var properties = new ai.loomspan.sidecar.config.RestRoutesProperties();
-        properties.setRestRoutesLocation(routes.toUri().toString());
         var factory = new org.springframework.beans.factory.support.DefaultListableBeanFactory();
         var loader = new RestRouteLoader(properties, new org.springframework.mock.env.MockEnvironment(),
-                new org.springframework.core.io.DefaultResourceLoader(),
                 factory.getBeanProvider(org.springframework.boot.ssl.SslBundles.class));
+        var parsed = loader.parse(Files.readString(routes), "catalog-routes.yaml");
         var nonRestCatalog = catalog(java.util.List.of(
                 new SkillDescriptor("yamlSkill", "YAML", SkillKind.YAML, "{}")));
-        assertThatThrownBy(() -> new RestRouteCatalogValidator(loader, nonRestCatalog)
-                .afterSingletonsInstantiated()).hasMessageContaining("non-REST skill", "yamlSkill");
+        assertThatThrownBy(() -> new RestRouteCatalogValidator().validate(parsed, nonRestCatalog))
+                .hasMessageContaining("non-REST skill", "yamlSkill");
 
         var unknownCatalog = catalog(java.util.List.of());
-        assertThatThrownBy(() -> new RestRouteCatalogValidator(loader, unknownCatalog)
-                .afterSingletonsInstantiated()).hasMessageContaining("unknown skill", "yamlSkill");
+        assertThatThrownBy(() -> new RestRouteCatalogValidator().validate(parsed, unknownCatalog))
+                .hasMessageContaining("unknown skill", "yamlSkill");
     }
 
     private static SkillCatalog catalog(java.util.List<SkillDescriptor> descriptors) {

@@ -8,7 +8,7 @@ import ai.loomspan.api.SkillExecutionEvent;
 
 public record ExecutionSnapshot(UUID id, String skillName, ExecutionStatus status,
         Instant createdAt, Instant completedAt, String result, ExecutionFailure failure,
-        List<SkillExecutionEvent> events) {
+        List<SkillExecutionEvent> events, UUID configurationSnapshotId) {
     public ExecutionSnapshot {
         events = events == null ? null : List.copyOf(events);
     }

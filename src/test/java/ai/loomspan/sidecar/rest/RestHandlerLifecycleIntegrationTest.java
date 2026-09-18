@@ -65,6 +65,8 @@ class RestHandlerLifecycleIntegrationTest {
                 routes:
                   echoRest: {target: callback, method: POST, path: /echo}
                 """.formatted(server.getAddress().getPort()));
+        ai.loomspan.sidecar.support.SidecarApplicationFixture.seedDatabase(temporaryDirectory.resolve("sidecar.db"),
+                List.of(skill), Files.readString(routes));
         var management = new java.util.concurrent.atomic.AtomicReference<org.springframework.context.ConfigurableApplicationContext>();
         var context = application(managementAndAsync).listeners(event -> {
             if (event instanceof org.springframework.boot.web.server.context.WebServerInitializedEvent initialized
@@ -73,18 +75,17 @@ class RestHandlerLifecycleIntegrationTest {
             }
         }).run(
                         "--server.port=0", "--management.server.port=0",
-                        "--loomspan.skills.locations=" + skill.toUri(),
                         "--loomspan-sidecar.storage.database-path=" + temporaryDirectory.resolve("sidecar.db"),
                         "--loomspan.observability.enabled=false",
                         "--loomspan.shutdown.timeout=3s",
                         "--loomspan-sidecar.executions.max-concurrent=1",
                         "--loomspan-sidecar.executions.diagnostics=ALWAYS",
-                        "--loomspan-sidecar.rest-routes-location=" + routes.toUri(),
                         "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
                         "--loomspan-sidecar.auth.jwt.audience=sidecar",
                         "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem");
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            RestTargetClients clients = context.getBean(RestTargetClients.class);
+            RestTargetClients clients = context.getBean(GenerationRestResources.class)
+                    .require(context.getBean(ai.loomspan.api.SkillReloader.class).snapshot().generationId()).clients();
             ExecutionCoordinator coordinator = context.getBean(ExecutionCoordinator.class);
             JwtAuthenticationToken authentication = authentication();
             ExecutionOwner owner = ExecutionOwner.from(authentication);
@@ -148,18 +149,19 @@ class RestHandlerLifecycleIntegrationTest {
                 routes:
                   cutoffRest: {target: callback, method: GET, path: /echo}
                 """.formatted(server.getAddress().getPort()));
+        ai.loomspan.sidecar.support.SidecarApplicationFixture.seedDatabase(temporaryDirectory.resolve("sidecar.db"),
+                List.of(skill), Files.readString(routes));
         var context = application(managementAndAsync).run(
                         "--server.port=0", "--management.server.port=0",
-                        "--loomspan.skills.locations=" + skill.toUri(),
                         "--loomspan-sidecar.storage.database-path=" + temporaryDirectory.resolve("sidecar.db"),
                         "--loomspan.observability.enabled=false",
                         "--loomspan.shutdown.timeout=200ms",
                         "--spring.lifecycle.timeout-per-shutdown-phase=50ms",
-                        "--loomspan-sidecar.rest-routes-location=" + routes.toUri(),
                         "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
                         "--loomspan-sidecar.auth.jwt.audience=sidecar",
                         "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem");
-        RestTargetClients clients = context.getBean(RestTargetClients.class);
+        RestTargetClients clients = context.getBean(GenerationRestResources.class)
+                .require(context.getBean(ai.loomspan.api.SkillReloader.class).snapshot().generationId()).clients();
         try {
             ExecutionCoordinator coordinator = context.getBean(ExecutionCoordinator.class);
             JwtAuthenticationToken authentication = authentication();

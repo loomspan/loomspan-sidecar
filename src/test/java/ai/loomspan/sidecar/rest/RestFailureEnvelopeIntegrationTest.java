@@ -72,11 +72,12 @@ class RestFailureEnvelopeIntegrationTest {
             }
             Path file = directory.resolve("routes.yaml");
             Files.writeString(file, routes);
+            ai.loomspan.sidecar.support.SidecarApplicationFixture.seedDatabase(directory.resolve("sidecar.db"),
+                    List.of(directory.resolve("timeout.yml"), directory.resolve("oversize.yml"),
+                            directory.resolve("media.yml")), routes.toString());
             try (var context = new SpringApplicationBuilder(LoomspanSidecarApplication.class).run(
                     "--server.port=0", "--management.server.port=0", "--loomspan.observability.enabled=false",
-                    "--loomspan.skills.locations=" + directory.toUri() + "*.yml",
                     "--loomspan-sidecar.storage.database-path=" + directory.resolve("sidecar.db"),
-                    "--loomspan-sidecar.rest-routes-location=" + file.toUri(),
                     "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
                     "--loomspan-sidecar.auth.jwt.audience=sidecar",
                     "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem");

@@ -20,7 +20,36 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** Reusable loopback model, route, and independently verifying callback fixture. */
 public final class SidecarApplicationFixture implements AutoCloseable {
+    /** Seed one complete authored selection before a Spring context starts. */
+    public static synchronized Path seedDatabase(Path database, java.util.List<Path> skillFiles, String routesYaml) {
+        if (Files.exists(database)) return database;
+        var source = ai.loomspan.sidecar.storage.StorageConfiguration.dataSource(database);
+        ai.loomspan.sidecar.storage.StorageConfiguration.migrate(source);
+        var repository = new ai.loomspan.sidecar.storage.ConfigurationSnapshotRepository(
+                new org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate(source));
+        var store = new ai.loomspan.sidecar.storage.ConfigurationSnapshotStore(repository,
+                new org.springframework.transaction.support.TransactionTemplate(
+                        new org.springframework.jdbc.datasource.DataSourceTransactionManager(source)));
+        var initial = store.initialize();
+        try {
+            var documents = new java.util.ArrayList<ai.loomspan.api.SkillDocument>();
+            for (Path file : skillFiles) {
+                documents.add(new ai.loomspan.api.SkillDocument(file.getFileName().toString(), Files.readString(file)));
+            }
+            store.submit(new ai.loomspan.sidecar.storage.ManagedConfiguration(documents, routesYaml),
+                    null, initial.localId());
+        } catch (java.io.IOException failure) { throw new IllegalStateException(failure); }
+        return database;
+    }
+
+    public static Path resourceFile(String resource) {
+        try { return Path.of(java.util.Objects.requireNonNull(
+                SidecarApplicationFixture.class.getClassLoader().getResource(resource)).toURI()); }
+        catch (java.net.URISyntaxException failure) { throw new IllegalStateException(failure); }
+    }
     private final ConcurrentLinkedQueue<String> modelResponses = new ConcurrentLinkedQueue<>();
+    private volatile CountDownLatch modelBlockEntered = new CountDownLatch(0);
+    private volatile CountDownLatch modelBlockRelease = new CountDownLatch(0);
     private final HttpServer modelServer;
     private final CallbackFixture callback;
     private final Path routes;
@@ -31,6 +60,17 @@ public final class SidecarApplicationFixture implements AutoCloseable {
             modelServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             modelServer.createContext("/v1/chat/completions", exchange -> {
                 String response = modelResponses.poll();
+                if ("BLOCK".equals(response)) {
+                    modelBlockEntered.countDown();
+                    try {
+                        if (!modelBlockRelease.await(10, TimeUnit.SECONDS))
+                            throw new IllegalStateException("model fixture timeout");
+                    } catch (InterruptedException failure) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException(failure);
+                    }
+                    response = modelResponses.poll();
+                }
                 if (response == null) response = "{}";
                 byte[] body = response.getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", "application/json");
@@ -57,8 +97,18 @@ public final class SidecarApplicationFixture implements AutoCloseable {
     }
 
     public int modelPort() { return modelServer.getAddress().getPort(); }
+    public int callbackPort() { return callback.server.getAddress().getPort(); }
     public Path routes() { return routes; }
     public ConcurrentLinkedQueue<String> modelResponses() { return modelResponses; }
+    public void blockNextModelResponse() {
+        modelBlockEntered = new CountDownLatch(1);
+        modelBlockRelease = new CountDownLatch(1);
+        modelResponses.add("BLOCK");
+    }
+    public boolean awaitModelBlock(long timeout, TimeUnit unit) throws InterruptedException {
+        return modelBlockEntered.await(timeout, unit);
+    }
+    public void releaseModelBlock() { modelBlockRelease.countDown(); }
     public CallbackFixture callback() { return callback; }
 
     public static String completion(String content) {
@@ -123,7 +173,7 @@ public final class SidecarApplicationFixture implements AutoCloseable {
                 String message = new ObjectMapper().readTree(body).path("message").asText();
                 if ("block".equals(message)) {
                     blockEntered.countDown();
-                    if (!blockRelease.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("fixture timeout");
+                    if (!blockRelease.await(20, TimeUnit.SECONDS)) throw new IllegalStateException("fixture timeout");
                 }
                 if ("fail".equals(message)) {
                     respond(exchange, 503, "fixture-secret");

@@ -22,12 +22,9 @@ class SidecarDefaultsTest {
                         context.refresh();
                         var environment = context.getEnvironment();
                         assertThat(environment.getProperty("loomspan.skills.locations[0]"))
-                                        .isEqualTo("file:/sidecar/skills/**/*.yaml");
-                        assertThat(environment.getProperty("loomspan.skills.locations[1]"))
-                                        .isEqualTo("file:/sidecar/skills/**/*.yml");
+                                        .isEqualTo("classpath:/sidecar-empty-skills/*.yaml");
                         assertThat(environment.getProperty("loomspan.observability.enabled", Boolean.class)).isFalse();
-                        assertThat(environment.getProperty("loomspan-sidecar.rest-routes-location"))
-                                        .isEqualTo("file:/sidecar/rest-routes.yaml");
+                        assertThat(environment.getProperty("loomspan-sidecar.url-variables[0]")).isNull();
                         assertThat(environment.getProperty("loomspan-sidecar.auth.jwt.roles-claim")).isEqualTo("roles");
                         assertThat(environment.getProperty("loomspan-sidecar.auth.jwt.role-prefix")).isEqualTo("ROLE_");
                         assertThat(environment.getProperty("loomspan-sidecar.auth.jwt.clock-skew")).isEqualTo("60s");

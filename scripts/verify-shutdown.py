@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Verify nested work across real container SIGTERM, including deadline cutoff."""
+"""Verify nested work across SIGTERM using a stopped, prepopulated test database."""
 
 import argparse
 import importlib.util
 import json
 import os
 import pathlib
+import shutil
 import tempfile
 import time
 
@@ -37,18 +38,21 @@ def verify(args, cutoff):
     management_url = f"http://127.0.0.1:{args.management_port}"
     with tempfile.TemporaryDirectory(prefix="loomspan-shutdown-") as directory:
         root = pathlib.Path(directory)
-        routes = root / "rest-routes.yaml"
-        # Keep the socket timeout beyond the framework cutoff so it cannot
-        # masquerade as the framework's shutdown deadline.
-        routes.write_text((ROOT / "examples/quickstart/sidecar/rest-routes.yaml").read_text()
-                          .replace("read-timeout: 10s", "read-timeout: 30s"))
+        data = root / "data"
+        data.mkdir()
+        if not args.validate_only:
+            source = pathlib.Path(args.database_dir)
+            assert (source / "sidecar.db").is_file(), "stopped test database is missing sidecar.db"
+            for suffix in ("", "-wal", "-shm"):
+                part = source / ("sidecar.db" + suffix)
+                if part.exists(): shutil.copy2(part, data / part.name)
         override = root / "override.json"
         override.write_text(json.dumps({"services": {
             "host": {"entrypoint": ["python", "/host/verification.py"], "volumes": [
                 {"type": "bind", "source": str(ROOT / "scripts/fixtures/shutdown-host.py"),
                  "target": "/host/verification.py", "read_only": True}]},
             "sidecar": {"environment": {"LOOMSPAN_SHUTDOWN_TIMEOUT": "3s"}, "volumes": [
-                {"type": "bind", "source": str(routes), "target": "/sidecar/rest-routes.yaml", "read_only": True}]}
+                {"type": "bind", "source": str(data), "target": "/sidecar/data"}]}
         }}))
         compose = ["docker", "compose", "-p", project, "-f", str(ROOT / "examples/quickstart/compose.yaml"),
                    "-f", str(override)]
@@ -100,6 +104,7 @@ def main():
     parser.add_argument("--image", required=True)
     parser.add_argument("--validate-only", action="store_true",
                         help="Validate Compose configuration without starting containers")
+    parser.add_argument("--database-dir", help="Directory containing a stopped test database with quickstartPlanner")
     parser.add_argument("--api-port", type=int, default=28080)
     parser.add_argument("--host-port", type=int, default=28081)
     parser.add_argument("--management-port", type=int, default=29091)
@@ -107,6 +112,8 @@ def main():
     ports = (args.api_port, args.host_port, args.management_port)
     if any(port < 1 or port > 65535 for port in ports) or len(set(ports)) != 3:
         parser.error("host ports must be distinct values from 1 through 65535")
+    if not args.validate_only and not args.database_dir:
+        parser.error("--database-dir is required for active shutdown verification")
     for cutoff in (False, True):
         verify(args, cutoff)
 

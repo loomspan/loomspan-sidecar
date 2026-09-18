@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Nonpublishing Docker/Compose verification for the Sidecar image and examples."""
+"""Docker/Compose smoke verification for database-first Sidecar startup."""
 
 import argparse
 import json
@@ -7,7 +7,6 @@ import os
 import pathlib
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -69,7 +68,7 @@ def wait_for(url, expected=200, seconds=60):
 def verify_kubernetes():
     text = (ROOT / "examples/kubernetes/deployment.yaml").read_text()
     required = ["name: application", "name: loomspan-sidecar", "readOnly: true",
-                "/sidecar/skills/", "/sidecar/rest-routes.yaml", "subPath: rest-routes.yaml",
+                "/sidecar/keys", "mountPath: /sidecar/data",
                 "secretKeyRef:", "port: management", "containerPort: 9091",
                 "startupProbe:", "readinessProbe:", "livenessProbe:"]
     for value in required:
@@ -111,63 +110,16 @@ def main():
         liveness = wait_for(management_url + "/actuator/health/liveness")
         assert '"status":"UP"' in liveness
         token = json.loads(wait_for(host_url + "/token"))["access_token"]
-        status, blocked = request(api_url + "/v1/skills/identityLeaf/executions",
-                                  "POST", token, {"message": "block"})
-        assert status == 202, blocked
-        blocked_id = json.loads(blocked)["id"]
-        time.sleep(.25)
+        assert request(api_url + "/v1/skills")[0] == 401
+        status, skills = request(api_url + "/v1/skills", token=token)
+        assert status == 200 and json.loads(skills) == []
+        assert request(api_url + "/v1/skills/unknown/executions", "POST", token, {})[0] == 404
         assert '"status":"UP"' in request(management_url + "/actuator/health/liveness")[1]
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline:
-            blocked_result = json.loads(request(f"{api_url}/v1/executions/{blocked_id}", token=token)[1])
-            if blocked_result.get("status") == "COMPLETED": break
-            time.sleep(.25)
-        assert blocked_result.get("status") == "COMPLETED", blocked_result
-
-        status, accepted = request(api_url + "/v1/skills/quickstartPlanner/executions",
-                                   "POST", token, {"message": "hello"})
-        assert status == 202, accepted
-        execution_id = json.loads(accepted)["id"]
-        deadline = time.monotonic() + 45
-        result = None
-        while time.monotonic() < deadline:
-            status, body = request(f"{api_url}/v1/executions/{execution_id}", token=token)
-            result = json.loads(body)
-            if result.get("status") in ("COMPLETED", "FAILED"): break
-            time.sleep(.25)
-        assert result and result.get("status") == "COMPLETED", result
-        assert result.get("result") == "quickstart complete", result
-        assert "events" in result and result["events"], result
-        foreign = json.loads(request(host_url + "/token?subject=other-user")[1])["access_token"]
-        assert request(f"{api_url}/v1/executions/{execution_id}", token=foreign)[0] == 404
-        verified = json.loads(request(host_url + "/status")[1])["verified"]
-        assert {entry["path"] for entry in verified} >= {"/callbacks/identity", "/callbacks/detail"}
-        assert all(entry["subject"] == "quickstart-user" and "QUICKSTART_USER" in entry["roles"] for entry in verified)
 
         started = time.monotonic()
         run("docker", "compose", "-p", project, "-f", str(compose), "stop", "-t", "15", "sidecar", env=environment)
         assert time.monotonic() - started < 20
 
-        with tempfile.TemporaryDirectory(prefix="loomspan-invalid-") as directory:
-            root = pathlib.Path(directory)
-            (root / "skills").mkdir()
-            (root / "skills" / "leaf.yaml").write_text((ROOT / "examples/quickstart/sidecar/skills/identity-leaf.yaml").read_text())
-            (root / "rest-routes.yaml").write_text("targets: {}\nroutes:\n  identityLeaf: {target: missing, method: GET, path: /}\n")
-            (root / "public.pem").write_text((ROOT / "examples/quickstart/sidecar/keys/public.pem").read_text())
-            name = project + "-invalid"
-            try:
-                run("docker", "run", "--name", name, "-v", f"{root.resolve()}:/config:ro",
-                    args.image,
-                    "--loomspan.skills.locations=file:/config/skills/*.yaml",
-                    "--loomspan-sidecar.rest-routes-location=file:/config/rest-routes.yaml",
-                    "--loomspan-sidecar.auth.jwt.issuer-uri=https://invalid.example",
-                    "--loomspan-sidecar.auth.jwt.audience=sidecar",
-                    "--loomspan-sidecar.auth.jwt.public-key-location=file:/config/public.pem",
-                    check=False, timeout=30)
-                state = json.loads(run("docker", "inspect", name, capture=True).stdout)[0]["State"]
-                assert state["Status"] == "exited" and state["ExitCode"] != 0
-            finally:
-                require_cleanup("docker", "rm", "--force", name)
     finally:
         require_cleanup("docker", "compose", "-p", project, "-f", str(compose), "down", "--volumes",
                         "--remove-orphans", env=environment)

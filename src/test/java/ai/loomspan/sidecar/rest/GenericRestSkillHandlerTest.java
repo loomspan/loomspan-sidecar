@@ -32,13 +32,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class GenericRestSkillHandlerTest {
     @TempDir Path temporaryDirectory;
-    private final List<GenericRestSkillHandler> handlers = new CopyOnWriteArrayList<>();
+    private final List<GenerationRestResources> registries = new CopyOnWriteArrayList<>();
     private final List<HttpServer> servers = new CopyOnWriteArrayList<>();
 
     @AfterEach
     void closeResources() {
         SecurityContextHolder.clearContext();
-        handlers.forEach(GenericRestSkillHandler::stop);
+        registries.forEach(GenerationRestResources::stop);
         servers.forEach(server -> server.stop(0));
     }
 
@@ -362,14 +362,15 @@ class GenericRestSkillHandlerTest {
 
     private GenericRestSkillHandler handler(Path routes) {
         RestRoutesProperties properties = new RestRoutesProperties();
-        properties.setRestRoutesLocation(routes.toUri().toString());
         var beanFactory = new DefaultListableBeanFactory();
-        var loader = new RestRouteLoader(properties, new MockEnvironment(), new DefaultResourceLoader(),
-                beanFactory.getBeanProvider(SslBundles.class));
-        var clients = new RestTargetClients(loader, beanFactory.getBeanProvider(SslBundles.class));
-        var handler = new GenericRestSkillHandler(loader, clients);
-        handlers.add(handler);
-        return handler;
+        var provider = beanFactory.getBeanProvider(SslBundles.class);
+        var loader = new RestRouteLoader(properties, new MockEnvironment(), provider);
+        var registry = new GenerationRestResources(loader, provider);
+        try {
+            registry.stage("test-generation", registry.prepare(Files.readString(routes)), java.util.UUID.randomUUID());
+        } catch (java.io.IOException failure) { throw new IllegalStateException(failure); }
+        registries.add(registry);
+        return new GenericRestSkillHandler(registry);
     }
 
     private Path routes(HttpServer server, String routes, String mode, String authExtra,

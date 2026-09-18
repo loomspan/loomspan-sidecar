@@ -18,6 +18,6 @@ final class ExecutionRecord {
         this.owner = owner;
         this.createdAt = createdAt;
         this.snapshot = new ExecutionSnapshot(id, skillName, ExecutionStatus.QUEUED,
-                createdAt, null, null, null, null);
+                createdAt, null, null, null, null, null);
     }
 }

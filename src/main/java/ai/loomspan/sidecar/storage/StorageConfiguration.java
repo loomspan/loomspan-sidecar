@@ -19,7 +19,6 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.Set;
 
 @Configuration
 public class StorageConfiguration
@@ -55,7 +54,6 @@ public class StorageConfiguration
         var store = new ConfigurationSnapshotStore(repository, new TransactionTemplate(transactionManager),
                 properties.getMaxRetained());
         store.initialize();
-        store.prune(Set.of());
         return store;
     }
 

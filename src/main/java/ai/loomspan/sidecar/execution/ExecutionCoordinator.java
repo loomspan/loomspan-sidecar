@@ -23,6 +23,7 @@ import ai.loomspan.api.SkillExecutionEvent;
 import ai.loomspan.api.SkillExecutionView;
 import ai.loomspan.api.SkillInvocationHandoff;
 import ai.loomspan.sidecar.config.SidecarExecutionProperties;
+import ai.loomspan.sidecar.rest.GenerationRestResources;
 import ai.loomspan.sidecar.security.ExecutionOwner;
 import jakarta.annotation.PreDestroy;
 import org.springframework.boot.availability.AvailabilityChangeEvent;
@@ -37,6 +38,7 @@ import org.springframework.stereotype.Component;
 
 @Component("sidecarExecutionCoordinator")
 public class ExecutionCoordinator implements ApplicationListener<ContextClosedEvent> {
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(ExecutionCoordinator.class);
     private final SkillInvocationHandoff skillInvocationHandoff;
     private final SidecarExecutionProperties properties;
     private final ApplicationContext owningContext;
@@ -46,14 +48,20 @@ public class ExecutionCoordinator implements ApplicationListener<ContextClosedEv
     private final ThreadPoolExecutor executor;
     private final ScheduledExecutorService expirationSweeper;
     private final Consumer<ExecutionTask> beforeDispatchHandoff;
-    private boolean open = true;
+    private final java.util.function.Function<String, UUID> snapshotForGeneration;
+    private volatile Consumer<AdmittedSkillInvocation> afterHandoff = admitted -> { };
+    private boolean open;
     private int queuedCount;
     private long queuedBytes;
 
     @Autowired
     public ExecutionCoordinator(SkillInvocationHandoff skillInvocationHandoff, SidecarExecutionProperties properties,
-            ApplicationContext owningContext) {
-        this(skillInvocationHandoff, properties, owningContext, Clock.systemUTC());
+            ApplicationContext owningContext, GenerationRestResources resources) {
+        this(skillInvocationHandoff, properties, owningContext, Clock.systemUTC(), task -> { }, resources::snapshotId);
+    }
+
+    ExecutionCoordinator(SkillInvocationHandoff handoff, SidecarExecutionProperties properties, ApplicationContext context) {
+        this(handoff, properties, context, Clock.systemUTC());
     }
 
     ExecutionCoordinator(SkillInvocationHandoff skillInvocationHandoff, SidecarExecutionProperties properties,
@@ -63,12 +71,21 @@ public class ExecutionCoordinator implements ApplicationListener<ContextClosedEv
 
     ExecutionCoordinator(SkillInvocationHandoff skillInvocationHandoff, SidecarExecutionProperties properties,
             ApplicationContext owningContext, Clock clock, Consumer<ExecutionTask> beforeDispatchHandoff) {
+        this(skillInvocationHandoff, properties, owningContext, clock, beforeDispatchHandoff,
+                generation -> UUID.nameUUIDFromBytes(generation.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        openAfterActivation(); // Unit-test constructor represents an already activated framework.
+    }
+
+    ExecutionCoordinator(SkillInvocationHandoff skillInvocationHandoff, SidecarExecutionProperties properties,
+            ApplicationContext owningContext, Clock clock, Consumer<ExecutionTask> beforeDispatchHandoff,
+            java.util.function.Function<String, UUID> snapshotForGeneration) {
         properties.validate();
         this.skillInvocationHandoff = skillInvocationHandoff;
         this.properties = properties;
         this.owningContext = owningContext;
         this.clock = clock;
         this.beforeDispatchHandoff = beforeDispatchHandoff;
+        this.snapshotForGeneration = snapshotForGeneration;
         BlockingQueue<Runnable> queue = new AdmissionQueue();
         this.executor = new ThreadPoolExecutor(properties.getMaxConcurrent(), properties.getMaxConcurrent(),
                 0L, TimeUnit.MILLISECONDS, queue,
@@ -79,6 +96,17 @@ public class ExecutionCoordinator implements ApplicationListener<ContextClosedEv
         long sweepMillis = Math.max(1L, Math.min(60_000L, properties.getCompletedTtl().toMillis()));
         expirationSweeper.scheduleWithFixedDelay(this::expireSafely, sweepMillis, sweepMillis,
                 TimeUnit.MILLISECONDS);
+    }
+
+    /** Open only after the selected database snapshot is active and bookkeeping has succeeded. */
+    public void openAfterActivation() {
+        gate.lock();
+        try { if (!executor.isShutdown()) open = true; }
+        finally { gate.unlock(); }
+    }
+
+    void afterHandoff(Consumer<AdmittedSkillInvocation> hook) {
+        afterHandoff = Objects.requireNonNull(hook);
     }
 
     public UUID admit(String skillName, Map<String, Object> input, long inputBytes,
@@ -152,8 +180,18 @@ public class ExecutionCoordinator implements ApplicationListener<ContextClosedEv
             } finally {
                 SecurityContextHolder.setContext(previousContext);
             }
+            UUID configurationSnapshotId;
+            try {
+                afterHandoff.accept(admitted);
+                configurationSnapshotId = snapshotForGeneration.apply(admitted.generationId());
+                if (configurationSnapshotId == null) throw new IllegalStateException("Execution generation mapping is missing");
+            } catch (RuntimeException failure) {
+                admitted.release();
+                LOG.error("Execution {} has no durable configuration mapping for captured generation", task.record.id);
+                throw new IllegalStateException("Execution generation mapping is missing");
+            }
             task.record.snapshot = new ExecutionSnapshot(task.record.id, task.record.skillName,
-                    ExecutionStatus.RUNNING, task.record.createdAt, null, null, null, null);
+                    ExecutionStatus.RUNNING, task.record.createdAt, null, null, null, null, configurationSnapshotId);
             task.clear();
             return admitted;
         } finally {
@@ -174,7 +212,8 @@ public class ExecutionCoordinator implements ApplicationListener<ContextClosedEv
             task.record.snapshot = new ExecutionSnapshot(task.record.id, task.record.skillName,
                     failed ? ExecutionStatus.FAILED : ExecutionStatus.COMPLETED,
                     task.record.createdAt, clock.instant(), failed ? null : result,
-                    failed ? ExecutionFailureClassifier.classify(failure) : null, selected);
+                    failed ? ExecutionFailureClassifier.classify(failure) : null, selected,
+                    task.record.snapshot.configurationSnapshotId());
         } finally {
             gate.unlock();
         }

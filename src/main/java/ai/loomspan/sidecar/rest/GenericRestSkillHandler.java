@@ -3,7 +3,6 @@ package ai.loomspan.sidecar.rest;
 import ai.loomspan.api.RestSkillHandler;
 import ai.loomspan.api.RestSkillInvocation;
 import ai.loomspan.api.SkillException;
-import org.springframework.context.SmartLifecycle;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -20,21 +19,19 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 @Component
-final class GenericRestSkillHandler implements RestSkillHandler, SmartLifecycle {
-    private final RestRouteConfiguration configuration;
-    private final RestTargetClients clients;
-    private final AtomicBoolean running = new AtomicBoolean(true);
+final class GenericRestSkillHandler implements RestSkillHandler {
+    private final GenerationRestResources generations;
 
-    GenericRestSkillHandler(RestRouteLoader loader, RestTargetClients clients) {
-        this.configuration = loader.configuration();
-        this.clients = clients;
+    GenericRestSkillHandler(GenerationRestResources generations) {
+        this.generations = generations;
     }
 
     @Override
     public String handle(RestSkillInvocation invocation) {
+        var resources = generations.require(invocation.generationId());
+        RestRouteConfiguration configuration = resources.routes();
         RestRouteConfiguration.Route route = configuration.routes().get(invocation.skillName());
         if (route == null) throw new SkillException("No REST route is configured for skill '" + safe(invocation.skillName()) + "'");
         RestRouteConfiguration.Target target = configuration.targets().get(route.target());
@@ -42,7 +39,7 @@ final class GenericRestSkillHandler implements RestSkillHandler, SmartLifecycle 
         validateJsonMap(remaining, "input");
         URI uri = bindUri(target, route, remaining);
         try {
-            RestClient.RequestBodySpec request = clients.get(target.name()).restClient()
+            RestClient.RequestBodySpec request = resources.clients().get(target.name()).restClient()
                     .method(route.method() == RestRouteConfiguration.Method.GET
                             ? org.springframework.http.HttpMethod.GET : org.springframework.http.HttpMethod.POST)
                     .uri(uri)
@@ -72,16 +69,6 @@ final class GenericRestSkillHandler implements RestSkillHandler, SmartLifecycle 
             preserveInterrupt(failure);
             throw new SkillException(BoundedRestResponse.message(target.name(), "transport error", null), failure);
         }
-    }
-
-    @Override public void start() { running.set(true); }
-    @Override public boolean isRunning() { return running.get(); }
-    @Override public int getPhase() { return 0; }
-    @Override public boolean isAutoStartup() { return true; }
-
-    @Override
-    public void stop() {
-        if (running.compareAndSet(true, false)) clients.close();
     }
 
     private static URI bindUri(RestRouteConfiguration.Target target, RestRouteConfiguration.Route route,

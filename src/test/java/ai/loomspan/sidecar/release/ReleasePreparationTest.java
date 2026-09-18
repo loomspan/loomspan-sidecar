@@ -29,7 +29,7 @@ class ReleasePreparationTest {
         assertThat(script).contains("SNAPSHOT", "1.0.0-beta.5", ".sha256", "zipfile.ZipFile");
         assertThat(imageVerifier).contains("DEFAULT_COMMAND_TIMEOUT_SECONDS", "CLEANUP_TIMEOUT_SECONDS",
                 "timeout=DEFAULT_COMMAND_TIMEOUT_SECONDS", "except subprocess.TimeoutExpired",
-                "if result.returncode", "require_cleanup(\"docker\", \"rm\"",
+                "if result.returncode", "database-first Sidecar startup",
                 "require_cleanup(\"docker\", \"compose\"");
 
         assertThat(run("1.0.0-beta.5", "1.0.0-beta.5", "v1.0.0-beta.5")).isZero();

@@ -186,7 +186,7 @@ class ConfigurationSnapshotStoreTest
     }
 
     @Test
-    void startupPrunesOnlyAfterSelectedLoad()
+    void storeInitializationDefersPruningUntilRuntimeProtectionExists()
     {
         Path path = directory.resolve("startup-prune.db");
         var fixture = open(path);
@@ -200,12 +200,12 @@ class ConfigurationSnapshotStoreTest
         var manager = new DataSourceTransactionManager(fixture.source);
         var startup = configuration.configurationSnapshotStore(repository, manager, properties);
         assertThat(startup.current()).isEqualTo(c);
-        assertThat(startup.findByLocalId(a.localId())).isNull();
+        assertThat(startup.findByLocalId(a.localId())).isEqualTo(a);
         new JdbcTemplate(fixture.source).update("DELETE FROM configuration_snapshot_status WHERE snapshot_sequence = ?",
                 c.submissionSequence());
         assertThatThrownBy(() -> configuration.configurationSnapshotStore(repository, manager, properties))
                 .isInstanceOf(IllegalStateException.class);
-        assertThat(count(fixture.source, "configuration_snapshot")).isEqualTo(2);
+        assertThat(count(fixture.source, "configuration_snapshot")).isEqualTo(3);
     }
 
     @Test

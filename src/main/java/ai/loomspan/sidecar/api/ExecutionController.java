@@ -6,7 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
-import ai.loomspan.api.SkillCatalog;
+import ai.loomspan.api.SkillReloader;
 import ai.loomspan.api.SkillTemplate;
 import ai.loomspan.sidecar.execution.ExecutionCoordinator;
 import ai.loomspan.sidecar.execution.ExecutionFailure;
@@ -25,14 +25,14 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 @RestController
 @RequestMapping("/v1")
 final class ExecutionController {
-    private final SkillCatalog catalog;
+    private final SkillReloader reloader;
     private final SkillTemplate template;
     private final LimitedJsonObjectReader reader;
     private final ExecutionCoordinator coordinator;
 
-    ExecutionController(SkillCatalog catalog, SkillTemplate template, LimitedJsonObjectReader reader,
+    ExecutionController(SkillReloader reloader, SkillTemplate template, LimitedJsonObjectReader reader,
             ExecutionCoordinator coordinator) {
-        this.catalog = catalog;
+        this.reloader = reloader;
         this.template = template;
         this.reader = reader;
         this.coordinator = coordinator;
@@ -41,7 +41,7 @@ final class ExecutionController {
     @PostMapping("/skills/{name}/executions")
     ResponseEntity<Map<String, UUID>> execute(@PathVariable("name") String name, HttpServletRequest request,
             JwtAuthenticationToken authentication) throws IOException {
-        if (catalog.skill(name).isEmpty()) throw new ResourceNotFoundException("Unknown skill '" + name + "'");
+        if (reloader.snapshot().skill(name).isEmpty()) throw new ResourceNotFoundException("Unknown skill '" + name + "'");
         Map<String, Object> input = reader.read(request);
         template.validate(name, input);
         UUID id = coordinator.admit(name, input, reader.measure(input),
@@ -63,6 +63,7 @@ final class ExecutionController {
         response.put("completedAt", snapshot.completedAt());
         response.put("result", snapshot.result());
         response.put("failure", failure(snapshot.failure()));
+        response.put("configurationSnapshotId", snapshot.configurationSnapshotId());
         if (snapshot.events() != null) response.put("events", snapshot.events());
         return response;
     }

@@ -33,13 +33,14 @@ class ConfigurationReferenceTest {
         String compose = Files.readString(Path.of("examples/quickstart/compose.yaml"));
         String kubernetes = Files.readString(Path.of("examples/kubernetes/deployment.yaml"));
         String dockerfile = Files.readString(Path.of("Dockerfile"));
-        assertThat(defaults).contains("file:/sidecar/skills/**/*.yaml", "file:/sidecar/rest-routes.yaml", "port: 9091");
+        assertThat(defaults).contains("classpath:/sidecar-empty-skills/*.yaml", "url-variables: []", "port: 9091");
         assertThat(defaults).contains("database-path: /sidecar/data/sidecar.db");
         assertThat(defaults).contains("max-retained: 10");
-        assertThat(compose).contains("./sidecar:/sidecar:ro", "LOOMSPAN_SIDECAR_AUTH_JWT_AUDIENCE",
+        assertThat(compose).contains("./sidecar/keys:/sidecar/keys:ro", "LOOMSPAN_SIDECAR_AUTH_JWT_AUDIENCE",
                 "${QUICKSTART_HOST_PORT:-8081}:8081", "${SIDECAR_API_PORT:-8080}:8080",
                 "${SIDECAR_MANAGEMENT_PORT:-9091}:9091", "sidecar-data:/sidecar/data");
-        assertThat(kubernetes).contains("/sidecar/skills/", "/sidecar/rest-routes.yaml", "readOnly: true", "secretKeyRef:");
+        assertThat(kubernetes).contains("/sidecar/keys", "readOnly: true", "secretKeyRef:")
+                .doesNotContain("/sidecar/skills/", "/sidecar/rest-routes.yaml");
         assertThat(kubernetes).contains("mountPath: /sidecar/data", "claimName: loomspan-sidecar-data", "fsGroup: 10001");
         assertThat(dockerfile).contains("mkdir -p /sidecar/data", "chown loomspan:loomspan /sidecar/data");
     }
@@ -54,8 +55,8 @@ class ConfigurationReferenceTest {
         });
         var execution = new SidecarExecutionProperties();
         var jwt = new SidecarJwtProperties();
-        assertThat(rows.get("loomspan-sidecar.rest-routes-location"))
-                .contains(new RestRoutesProperties().getRestRoutesLocation(), "readable", "startup");
+        assertThat(rows.get("loomspan-sidecar.url-variables"))
+                .contains("Empty", "environment", "restart");
         assertThat(rows.get("loomspan-sidecar.storage.database-path"))
                 .contains(new SidecarStorageProperties().getDatabasePath(), "writable", "persistent", "startup");
         assertThat(rows.get("loomspan-sidecar.snapshots.max-retained"))

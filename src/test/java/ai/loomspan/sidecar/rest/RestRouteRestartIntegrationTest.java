@@ -2,7 +2,12 @@ package ai.loomspan.sidecar.rest;
 
 import ai.loomspan.api.RestSkillHandler;
 import ai.loomspan.api.RestSkillInvocation;
-import ai.loomspan.api.SkillCatalog;
+import ai.loomspan.api.SkillReloader;
+import ai.loomspan.api.SkillDocument;
+import ai.loomspan.sidecar.configuration.RuntimeConfigurationService;
+import ai.loomspan.sidecar.storage.ConfigurationDraft;
+import ai.loomspan.sidecar.storage.ConfigurationSnapshotStore;
+import ai.loomspan.sidecar.storage.ManagedConfiguration;
 import ai.loomspan.sidecar.LoomspanSidecarApplication;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
@@ -15,6 +20,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -23,38 +29,44 @@ class RestRouteRestartIntegrationTest {
     @TempDir Path temporaryDirectory;
 
     @Test
-    void keepsRouteAndCatalogSnapshotsUntilRestart() throws Exception {
+    void publishesRouteAndCatalogTogetherAndRestartsFromSelectedSnapshot() throws Exception {
         HttpServer first = server("first");
         HttpServer second = server("second");
         Path skill = temporaryDirectory.resolve("echo-rest.yml");
         writeSkill(skill, "Restart REST skill.");
         Path routes = temporaryDirectory.resolve("routes.yaml");
         writeRoutes(routes, first.getAddress().getPort(), "echoRest");
-        String[] properties = properties(skill, routes);
+        ai.loomspan.sidecar.support.SidecarApplicationFixture.seedDatabase(temporaryDirectory.resolve("sidecar.db"),
+                List.of(skill), Files.readString(routes));
+        String[] properties = properties();
         try {
             try (var context = application(properties)) {
                 var handler = context.getBean(RestSkillHandler.class);
-                assertThat(handler.handle(new RestSkillInvocation("echoRest", Map.of("message", "x"), context.getBean(SkillCatalog.class).generationId())))
+                var reloader = context.getBean(SkillReloader.class);
+                assertThat(handler.handle(new RestSkillInvocation("echoRest", Map.of("message", "x"), reloader.snapshot().generationId())))
                         .isEqualTo("first");
-                assertThat(context.getBean(SkillCatalog.class).skill("echoRest").orElseThrow().description())
+                assertThat(reloader.snapshot().skill("echoRest").orElseThrow().description())
                         .isEqualTo("Restart REST skill.");
                 writeSkill(skill, "Updated restart REST skill.");
                 writeRoutes(routes, second.getAddress().getPort(), "echoRest");
-                assertThat(handler.handle(new RestSkillInvocation("echoRest", Map.of("message", "x"), context.getBean(SkillCatalog.class).generationId())))
-                        .isEqualTo("first");
-                assertThat(context.getBean(SkillCatalog.class).skill("echoRest").orElseThrow().description())
-                        .isEqualTo("Restart REST skill.");
+                var store = context.getBean(ConfigurationSnapshotStore.class);
+                var draft = new ConfigurationDraft(store.current());
+                draft.replaceContent(new ManagedConfiguration(List.of(new SkillDocument(skill.getFileName().toString(),
+                        Files.readString(skill))), Files.readString(routes)));
+                assertThat(context.getBean(RuntimeConfigurationService.class).validate(draft).successful()).isTrue();
+                context.getBean(RuntimeConfigurationService.class).publish(draft);
+                assertThat(handler.handle(new RestSkillInvocation("echoRest", Map.of("message", "x"), reloader.snapshot().generationId())))
+                        .isEqualTo("second");
+                assertThat(reloader.snapshot().skill("echoRest").orElseThrow().description())
+                        .isEqualTo("Updated restart REST skill.");
             }
             try (var context = application(properties)) {
                 assertThat(context.getBean(RestSkillHandler.class)
-                        .handle(new RestSkillInvocation("echoRest", Map.of("message", "x"), context.getBean(SkillCatalog.class).generationId())))
+                        .handle(new RestSkillInvocation("echoRest", Map.of("message", "x"), context.getBean(SkillReloader.class).snapshot().generationId())))
                         .isEqualTo("second");
-                assertThat(context.getBean(SkillCatalog.class).skill("echoRest").orElseThrow().description())
+                assertThat(context.getBean(SkillReloader.class).snapshot().skill("echoRest").orElseThrow().description())
                         .isEqualTo("Updated restart REST skill.");
             }
-            writeRoutes(routes, second.getAddress().getPort(), "unknownSkill");
-            assertThatThrownBy(() -> application(properties)).hasMessage(
-                    "Invalid REST routes at " + routes.toUri() + ": REST skill 'echoRest' has no route");
         } finally {
             first.stop(0);
             second.stop(0);
@@ -79,11 +91,10 @@ class RestRouteRestartIntegrationTest {
                 .web(WebApplicationType.NONE).run(properties);
     }
 
-    private String[] properties(Path skill, Path routes) {
-        return new String[] {"--loomspan.skills.locations=" + skill.toUri(),
+    private String[] properties() {
+        return new String[] {
                 "--loomspan-sidecar.storage.database-path=" + temporaryDirectory.resolve("sidecar.db"),
                 "--loomspan.observability.enabled=false",
-                "--loomspan-sidecar.rest-routes-location=" + routes.toUri(),
                 "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
                 "--loomspan-sidecar.auth.jwt.audience=sidecar",
                 "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem"};

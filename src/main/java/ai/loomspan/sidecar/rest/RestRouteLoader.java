@@ -1,12 +1,9 @@
 package ai.loomspan.sidecar.rest;
 
 import ai.loomspan.sidecar.config.RestRoutesProperties;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.convert.DurationStyle;
 import org.springframework.boot.ssl.SslBundles;
 import org.springframework.core.env.ConfigurableEnvironment;
-import org.springframework.core.io.Resource;
-import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.util.unit.DataSize;
@@ -14,7 +11,6 @@ import tools.jackson.core.StreamReadFeature;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.dataformat.yaml.YAMLMapper;
 
-import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.time.Duration;
@@ -41,35 +37,35 @@ final class RestRouteLoader {
     private static final Set<String> AUTH_FIELDS = Set.of("mode", "headers");
     private static final Set<String> ROUTE_FIELDS = Set.of("target", "method", "path");
 
-    private final RestRouteConfiguration configuration;
+    private static final Pattern URL_VARIABLE = Pattern.compile("\\$\\{([A-Za-z_][A-Za-z0-9_]*)}");
+    private final RestRoutesProperties properties;
+    private final ConfigurableEnvironment environment;
+    private final SslBundles sslBundles;
+    private final java.util.function.Function<String, String> processEnvironment;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    RestRouteLoader(RestRoutesProperties properties, ConfigurableEnvironment environment,
+                    org.springframework.beans.factory.ObjectProvider<SslBundles> sslBundlesProvider) {
+        this(properties, environment, sslBundlesProvider.getIfAvailable(), System::getenv);
+    }
 
     RestRouteLoader(RestRoutesProperties properties, ConfigurableEnvironment environment,
-                    ResourceLoader resources, ObjectProvider<SslBundles> sslBundlesProvider) {
-        String location = properties.getRestRoutesLocation();
-        if (!StringUtils.hasText(location)) {
-            throw new IllegalStateException("REST routes location must not be blank");
-        }
-        this.configuration = load(location, environment, resources,
-                sslBundlesProvider.getIfAvailable());
+                    SslBundles sslBundles, java.util.function.Function<String, String> processEnvironment) {
+        this.properties = properties;
+        this.environment = environment;
+        this.sslBundles = sslBundles;
+        this.processEnvironment = processEnvironment;
     }
 
-    RestRouteConfiguration configuration() {
-        return configuration;
-    }
-
-    private static RestRouteConfiguration load(String location, ConfigurableEnvironment environment,
-                                               ResourceLoader resources, SslBundles sslBundles) {
-        Resource resource = resources.getResource(location);
-        if (!resource.exists() || !resource.isReadable()) {
-            throw failure(location, "$", "route file is missing or unreadable", null);
-        }
+    public RestRouteConfiguration parse(String authoredYaml, String sourceLabel) {
+        String location = sourceLabel;
         JsonNode root;
-        try (var input = resource.getInputStream()) {
+        try {
             var mapper = YAMLMapper.builder()
                     .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
                     .build();
-            root = mapper.readTree(input);
-        } catch (IOException | RuntimeException ex) {
+            root = mapper.readTree(authoredYaml);
+        } catch (RuntimeException ex) {
             String detail = ex.getMessage() != null
                     && ex.getMessage().toLowerCase(Locale.ROOT).contains("duplicate")
                     ? "duplicate mapping key" : "malformed YAML";
@@ -92,7 +88,7 @@ final class RestRouteLoader {
             if (!StringUtils.hasText(name) || targets.containsKey(name)) {
                 throw failure(location, keyPath, "target name is blank or duplicated after placeholder resolution", null);
             }
-            targets.put(name, parseTarget(location, keyPath, name, entry.getValue(), environment, sslBundles));
+            targets.put(name, parseTarget(location, keyPath, name, entry.getValue()));
         }
 
         Map<String, RestRouteConfiguration.Route> routes = new LinkedHashMap<>();
@@ -116,13 +112,15 @@ final class RestRouteLoader {
         return new RestRouteConfiguration(location, targets, routes);
     }
 
-    private static RestRouteConfiguration.Target parseTarget(String location, String path, String name,
-                                                              JsonNode node, ConfigurableEnvironment environment,
-                                                              SslBundles sslBundles) {
+    private RestRouteConfiguration.Target parseTarget(String location, String path, String name,
+                                                              JsonNode node) {
         requireObject(location, path, node);
         requireOnly(location, path, node, TARGET_FIELDS);
+        JsonNode authoredUrl = node.get("base-url");
+        if (authoredUrl == null || !authoredUrl.isTextual())
+            throw failure(location, path + ".base-url", "required string is missing", null);
         URI baseUrl = parseBaseUrl(location, path + ".base-url",
-                requiredString(location, path, node, "base-url", environment));
+                resolveBaseUrl(location, path + ".base-url", authoredUrl.asText()));
         JsonNode authNode = requiredObject(location, node, "auth", path);
         requireOnly(location, path + ".auth", authNode, AUTH_FIELDS);
         String modeText = requiredString(location, path + ".auth", authNode, "mode", environment);
@@ -158,6 +156,18 @@ final class RestRouteLoader {
                 requiredString(location, path, node, "max-response-size", environment));
         return new RestRouteConfiguration.Target(name, baseUrl,
                 new RestRouteConfiguration.Auth(mode, headers), bundle, connect, read, max);
+    }
+
+    private String resolveBaseUrl(String location, String path, String authored) {
+        if (!authored.contains("${")) return authored;
+        Matcher matcher = URL_VARIABLE.matcher(authored);
+        if (!matcher.matches()) throw failure(location, path, "must be a literal URL or whole-value ${NAME}", null);
+        String name = matcher.group(1);
+        if (!properties.getUrlVariables().contains(name))
+            throw failure(location, path, "environment variable is not allowlisted", null);
+        String value = processEnvironment.apply(name);
+        if (!StringUtils.hasText(value)) throw failure(location, path, "environment variable is missing or blank", null);
+        return value;
     }
 
     private static RestRouteConfiguration.Route parseRoute(String location, String path, String name,

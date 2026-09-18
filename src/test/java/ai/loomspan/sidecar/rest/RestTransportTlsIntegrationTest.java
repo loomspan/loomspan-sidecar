@@ -104,13 +104,15 @@ class RestTransportTlsIntegrationTest {
                       absent: {target: absent, method: GET, path: /echo}
                     """.formatted(server.getAddress().getPort(), server.getAddress().getPort(), server.getAddress().getPort()));
             RestRoutesProperties properties = new RestRoutesProperties();
-            properties.setRestRoutesLocation(routes.toUri().toString());
             var factory = new DefaultListableBeanFactory();
             factory.registerSingleton("sslBundles", bundles);
             var provider = factory.getBeanProvider(SslBundles.class);
-            var loader = new RestRouteLoader(properties, new MockEnvironment(), new DefaultResourceLoader(), provider);
-            targetClients = new RestTargetClients(loader, provider);
-            var handler = new GenericRestSkillHandler(loader, targetClients);
+            var loader = new RestRouteLoader(properties, new MockEnvironment(), provider);
+            var registry = new GenerationRestResources(loader, provider);
+            var staged = registry.prepare(Files.readString(routes));
+            registry.stage("test-generation", staged, java.util.UUID.randomUUID());
+            var handler = new GenericRestSkillHandler(registry);
+            targetClients = staged.clients();
             assertThat(handler.handle(new RestSkillInvocation("correct", Map.of(), "test-generation"))).isEqualTo("mutual-tls");
             assertThatThrownBy(() -> handler.handle(new RestSkillInvocation("wrong", Map.of(), "test-generation")))
                     .isInstanceOf(SkillException.class).hasMessageContaining("transport error");

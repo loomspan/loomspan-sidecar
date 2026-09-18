@@ -1,6 +1,6 @@
 package ai.loomspan.sidecar.skill;
 
-import ai.loomspan.api.SkillCatalog;
+import ai.loomspan.api.SkillReloader;
 import ai.loomspan.api.SkillKind;
 import ai.loomspan.sidecar.LoomspanSidecarApplication;
 import org.junit.jupiter.api.Test;
@@ -23,7 +23,7 @@ class MountedSkillRegistrationIntegrationTest
     Path temporaryDirectory;
 
     @Test
-    void registersYamlAndYmlSkillsFromMountedTreeWithoutScanningRouteFile() throws IOException
+    void activatesNamedYamlAndYmlDocumentsFromDatabaseWithoutScanningRouteFile() throws IOException
     {
         Path skills = temporaryDirectory.resolve("sidecar/skills");
         copyFixture("fixtures/skills/mounted-yaml-skill.yaml", skills.resolve("mounted.yaml"));
@@ -31,9 +31,12 @@ class MountedSkillRegistrationIntegrationTest
         copyFixture("fixtures/rest-routes-invalid-as-skill.yaml",
                 temporaryDirectory.resolve("sidecar/rest-routes.yaml"));
 
-        try (var context = runApplication(skillPatterns(skills), modelProperties()))
+        ai.loomspan.sidecar.support.SidecarApplicationFixture.seedDatabase(temporaryDirectory.resolve("sidecar.db"),
+                List.of(skills.resolve("mounted.yaml"), skills.resolve("nested/mounted.yml")),
+                ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_REST_ROUTES);
+        try (var context = runApplication(modelProperties()))
         {
-            SkillCatalog catalog = context.getBean(SkillCatalog.class);
+            var catalog = context.getBean(SkillReloader.class).snapshot();
             assertThat(catalog.skills()).extracting(descriptor -> descriptor.name())
                     .containsExactly("mountedYamlSkill", "mountedYmlSkill");
             assertThat(catalog.skills()).extracting(descriptor -> descriptor.kind())
@@ -42,14 +45,17 @@ class MountedSkillRegistrationIntegrationTest
     }
 
     @Test
-    void registersSkillFromCustomLocation() throws IOException
+    void activatesSingleNamedDocumentFromDatabase() throws IOException
     {
         Path custom = temporaryDirectory.resolve("custom");
         copyFixture("fixtures/skills/mounted-yml-skill.yml", custom.resolve("only.yml"));
 
-        try (var context = runApplication(List.of(custom.toUri() + "**/*.yml"), modelProperties()))
+        ai.loomspan.sidecar.support.SidecarApplicationFixture.seedDatabase(temporaryDirectory.resolve("sidecar.db"),
+                List.of(custom.resolve("only.yml")),
+                ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_REST_ROUTES);
+        try (var context = runApplication(modelProperties()))
         {
-            assertThat(context.getBean(SkillCatalog.class).skills())
+            assertThat(context.getBean(SkillReloader.class).snapshot().skills())
                     .extracting(descriptor -> descriptor.name())
                     .containsExactly("mountedYmlSkill");
         }
@@ -60,29 +66,41 @@ class MountedSkillRegistrationIntegrationTest
     {
         Path skills = temporaryDirectory.resolve("skills");
         copyFixture("fixtures/skills/mounted-yaml-skill.yaml", skills.resolve("mounted.yaml"));
+        ai.loomspan.sidecar.support.SidecarApplicationFixture.seedDatabase(temporaryDirectory.resolve("sidecar.db"),
+                List.of(skills.resolve("mounted.yaml")),
+                ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_REST_ROUTES);
 
         Throwable failure = catchThrowable(() ->
         {
-            try (var ignored = runApplication(skillPatterns(skills), List.of()))
+            try (var ignored = runApplication(List.of()))
             {
                 // A successful startup is the failure condition, but still close its resources.
             }
         });
 
-        assertThat(failure).rootCause()
-                .hasMessageContaining("YAML skill 'mountedYamlSkill'")
-                .hasMessageContaining("unknown model 'fixture-model'")
-                .hasMessageContaining("loomspan.models");
+        assertThat(failure).hasMessageContaining("Selected configuration activation");
     }
 
-    private org.springframework.context.ConfigurableApplicationContext runApplication(
-            List<String> locations, List<String> additionalProperties)
+    @Test
+    void rejectsNonemptyConfiguredFrameworkStartupSource() throws IOException {
+        Path skill = temporaryDirectory.resolve("external-rest.yaml");
+        Files.writeString(skill, """
+                name: externalRest
+                description: Must not bypass database selection.
+                rest: true
+                input_schema: {type: object, properties: {}}
+                """);
+        Throwable failure = catchThrowable(() -> {
+            try (var ignored = runApplication(List.of("loomspan.skills.locations=" + skill.toUri()))) { }
+        });
+        assertThat(failure).hasMessageContaining("Framework startup catalog must be empty");
+    }
+
+    private org.springframework.context.ConfigurableApplicationContext runApplication(List<String> additionalProperties)
     {
         var properties = new java.util.ArrayList<String>();
         properties.add("--loomspan.observability.enabled=false");
         properties.add("--loomspan-sidecar.storage.database-path=" + temporaryDirectory.resolve("sidecar.db"));
-        properties.add("--loomspan-sidecar.rest-routes-location=classpath:fixtures/rest-routes/empty.yaml");
-        properties.add("--loomspan.skills.locations=" + String.join(",", locations));
         properties.add("--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test");
         properties.add("--loomspan-sidecar.auth.jwt.audience=sidecar");
         properties.add("--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem");
@@ -91,11 +109,6 @@ class MountedSkillRegistrationIntegrationTest
         return new SpringApplicationBuilder(LoomspanSidecarApplication.class)
                 .web(WebApplicationType.NONE)
                 .run(properties.toArray(String[]::new));
-    }
-
-    private static List<String> skillPatterns(Path skills)
-    {
-        return List.of(skills.toUri() + "**/*.yaml", skills.toUri() + "**/*.yml");
     }
 
     private static List<String> modelProperties()

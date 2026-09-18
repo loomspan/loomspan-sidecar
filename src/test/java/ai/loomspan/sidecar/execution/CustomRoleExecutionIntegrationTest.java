@@ -23,7 +23,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "management.server.port=0",
         "loomspan.observability.enabled=false",
-        "loomspan.skills.locations=classpath*:fixtures/execution-skills/echo-rest.yml",
         "loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
         "loomspan-sidecar.auth.jwt.audience=sidecar",
         "loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem",
@@ -40,8 +39,15 @@ class CustomRoleExecutionIntegrationTest {
 
     @DynamicPropertySource
     static void restProperties(DynamicPropertyRegistry properties) {
-        properties.add("loomspan-sidecar.storage.database-path", () -> storageDirectory.resolve("sidecar.db").toString());
-        properties.add("loomspan-sidecar.rest-routes-location", () -> ROUTES.toUri().toString());
+        properties.add("loomspan-sidecar.storage.database-path", () -> ai.loomspan.sidecar.support.SidecarApplicationFixture.seedDatabase(
+                storageDirectory.resolve("sidecar.db"), java.util.List.of(
+                        ai.loomspan.sidecar.support.SidecarApplicationFixture.resourceFile("fixtures/execution-skills/echo-rest.yml")),
+                readRoutes()).toString());
+    }
+
+    private static String readRoutes() {
+        try { return java.nio.file.Files.readString(ROUTES); }
+        catch (java.io.IOException failure) { throw new IllegalStateException(failure); }
     }
 
     @org.junit.jupiter.api.AfterAll

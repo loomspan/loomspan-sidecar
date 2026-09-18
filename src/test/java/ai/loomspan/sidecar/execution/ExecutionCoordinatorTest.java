@@ -40,6 +40,27 @@ import static org.mockito.Mockito.when;
 
 class ExecutionCoordinatorTest {
     @Test
+    void missingCapturedGenerationMappingFailsRecordAndReleasesAdmission() throws Exception {
+        var admitted = mock(ai.loomspan.api.AdmittedSkillInvocation.class);
+        when(admitted.generationId()).thenReturn("unmapped-generation");
+        var handoff = mock(SkillInvocationHandoff.class);
+        when(handoff.handoff(anyString(), anyMap())).thenReturn(admitted);
+        var coordinator = new ExecutionCoordinator(handoff, properties(), mock(ApplicationContext.class),
+                Clock.systemUTC(), task -> { }, generation -> null);
+        coordinator.openAfterActivation();
+        var authentication = authentication("token", "owner");
+        var owner = ExecutionOwner.from(authentication);
+        try {
+            var id = coordinator.admit("skill", Map.of(), 2, owner, authentication);
+            var terminal = awaitTerminal(coordinator, id, owner);
+            assertThat(terminal.status()).isEqualTo(ExecutionStatus.FAILED);
+            assertThat(terminal.configurationSnapshotId()).isNull();
+            verify(admitted).release();
+            verify(admitted, never()).invoke(any());
+        } finally { coordinator.destroy(); }
+    }
+
+    @Test
     void directHandoffDoesNotConsumeWaitingBudgetAndHandoffReleasesBeforeCompletion() throws Exception {
         var firstEntered = new CountDownLatch(1);
         var firstRelease = new CountDownLatch(1);

@@ -1,12 +1,12 @@
 # Loomspan Sidecar
 
-Loomspan Sidecar is a Java 21 / Spring Boot 4.1 application that loads mounted,
-model-backed Loomspan YAML skills and exposes an authenticated asynchronous
+Loomspan Sidecar is a Java 21 / Spring Boot 4.1 application that activates
+database-selected Loomspan YAML skills and exposes an authenticated asynchronous
 execution API. It provides verified JWT identity, owner-scoped polling,
 bounded in-memory workers and retention, prompt shutdown gates, and a generic
-bounded outbound REST handler for mounted REST skills. The supported container
-runs as a fixed non-root user and consumes environment configuration, read-only
-mounted runtime files, and a writable `/sidecar/data` volume.
+bounded outbound REST handler for managed REST skills. The supported container
+runs as a fixed non-root user and consumes environment configuration and a
+writable `/sidecar/data` volume.
 
 ## Build locally
 
@@ -42,32 +42,24 @@ management port 9091, and starts Java with
 heap or GC settings are needed. The Java entry point is exec-form so container
 SIGTERM reaches Spring directly.
 
-The self-contained example uses only local containers: an example-only issuer,
-an OpenAI-compatible deterministic model stub, and a callback host that verifies
-the forwarded JWT signature, issuer, audience, expiry, subject, and roles. Its
-checked-in private key is intentionally public test material and must never be
-used outside this example.
+The Compose example runs an example-only issuer, a deterministic model stub,
+and Sidecar with a persistent local SQLite volume. A new volume activates an
+empty snapshot. The checked-in skill and route YAML are authored examples for
+later management publication; they are not mounted as an alternate runtime
+source. The checked-in private key is intentionally public test material and
+must never be used outside this example.
 
 ```powershell
 $env:SIDECAR_IMAGE = "loomspan-sidecar:sc5-local"
 docker compose -f examples/quickstart/compose.yaml up -d --build
 $token = (Invoke-RestMethod http://localhost:8081/token).access_token
 $headers = @{ Authorization = "Bearer $token" }
-$accepted = Invoke-RestMethod http://localhost:8080/v1/skills/quickstartPlanner/executions `
-  -Method Post -Headers $headers -ContentType application/json -Body '{"message":"hello"}'
-do {
-  Start-Sleep -Milliseconds 250
-  $result = Invoke-RestMethod "http://localhost:8080/v1/executions/$($accepted.id)" -Headers $headers
-} until ($result.status -in @("COMPLETED", "FAILED"))
-$result
-Invoke-RestMethod http://localhost:8081/status
+Invoke-RestMethod http://localhost:8080/v1/skills -Headers $headers # [] on a new volume
 docker compose -f examples/quickstart/compose.yaml down
 ```
 
-The terminal result is `quickstart complete`; host status contains both callback
-paths with subject `quickstart-user` and role `QUICKSTART_USER`. Run the exact
-automated packaging contract, including negative startup, ownership, probes,
-SIGTERM, and Kubernetes checks, with:
+The image smoke check verifies the empty database selection, JWT protection,
+readiness/liveness probes, bounded process exit, and Kubernetes example structure:
 
 ```powershell
 python scripts/verify-image.py --image loomspan-sidecar:sc5-local --verify-kubernetes
@@ -82,14 +74,17 @@ python scripts/verify-image.py --image loomspan-sidecar:sc5-local --verify-kuber
   --api-port 18080 --host-port 18081 --management-port 19091
 ```
 
-Verify SIGTERM during active nested work and at the framework deadline with:
+With a stopped, isolated test database already containing the authored
+quickstart planner and routes, verify SIGTERM during active nested work and at
+the framework deadline with:
 
 ```powershell
-python scripts/verify-shutdown.py --image loomspan-sidecar:sc5-local
+python scripts/verify-shutdown.py --image loomspan-sidecar:sc5-local --database-dir C:/path/to/stopped-test-data
 ```
 
-This uses isolated Compose projects and ports `28080`, `28081`, and `29091`
-(overridable with the same port flags). A verification-only callback gate holds
+This copies the stopped test database into isolated Compose projects and uses
+ports `28080`, `28081`, and `29091` (overridable with the same port flags).
+A verification-only callback gate holds
 an admitted execution across SIGTERM. One case releases it and checks that the
 remaining callback and final model response finish; the other holds it past a
 three-second framework budget and checks bounded exit without a forced kill.
@@ -98,13 +93,15 @@ three-second framework budget and checks bounded exit without a forced kill.
 
 `loomspan-sidecar.storage.database-path` defaults to `/sidecar/data/sidecar.db`.
 Sidecar migrates and validates a file-backed SQLite database at startup, then
-atomically creates one empty, **pending** current snapshot on a new database.
+atomically creates one empty current snapshot on a new database, then activates
+and records it as **published** before opening execution dispatch.
 The empty content is no skill documents and the exact REST text
 `targets: {}\nroutes: {}\n`. Reopening retains that snapshot; an inconsistent
 initialized store or existing database without migration history fails startup.
-This storage does not activate a framework
-generation. Mounted files still supply the running skills and routes until the
-Phase 2 activation work.
+On restart the committed current pointer is prepared and published as a new
+process-local framework generation, regardless of its previous status. The
+durable local UUID is preserved. Invalid content or required bookkeeping failure
+aborts startup without falling back to empty or older content.
 
 Each snapshot contains an ordered set of complete `SkillDocument` diagnostic
 labels and original YAML text, plus one original REST targets/routes YAML
@@ -145,11 +142,11 @@ An edit clears the draft's validation result, including when replacement text is
 identical. A caller can attach a validation result only to the precise current
 frozen candidate; late results for older candidates and results from another
 draft are rejected. Supplied validation errors retain their source labels and
-available locations. This model does not run framework validation, prepare
-resources, authorize publication, persist drafts, or update the running
-configuration. Phase 2 must validate and publish through the supported framework
-API, require successful validation of the exact frozen content before ordinary
-Publish, and coordinate accepted updates. Phase 3 must supply real server-session
+available locations. The internal runtime service validates an exact candidate
+through the public framework preparation API, checks REST routes and clients,
+then releases validation-only resources. Ordinary Publish requires that exact
+successful result and serializes fresh preparation, staging, durable commit,
+framework publication, and outcome recording. Phase 3 must supply real server-session
 privacy, draft and lease lifecycle enforcement, and integrated concurrency
 verification. No end-to-end management workflow is provided by this model alone.
 
@@ -161,15 +158,26 @@ B failed; B remains inspectable. A successful activation records B published
 separately. On restart, Sidecar loads the committed pointer even if pending:
 pending does not establish failure or success, and older pending attempts
 remain unknown. An unreadable selection fails startup and requires a consistent
-backup restore. Phase 2 will activate the selection and gate dispatch.
+backup restore. An unreverted B becomes the startup selection even if A was
+still running before the previous process stopped.
+
+The internal runtime inspection reports the published UUID, intended UUID and
+stored status, plus any mutation fault. A failed framework publication with a
+successful revert leaves A running/intended and B failed. If revert fails, A
+continues running while intended B stays pending and further mutations stop.
+If B publishes but status recording fails, B continues running/intended while
+its pending status remains outcome-unknown; further mutations stop. Existing
+executions continue through either fault. Do not infer runtime state from the
+database pointer alone until a stopped restart activates that pointer.
 
 `loomspan-sidecar.snapshots.max-retained` is a positive snapshot count, default
-`10`. Startup prunes oldest eligible snapshots after a valid selected load.
+`10`. Startup prunes oldest eligible snapshots after successful activation.
 Pending and failed records count too. The selected snapshot and caller-supplied
 IDs needed by publication or live generations are protected and count toward
 the target; history may temporarily exceed it. An expired ID is absent on
-lookup. Phase 2 will provide live-generation protection and invoke pruning
-after completed update attempts; retirement alone does not delete history.
+lookup. The runtime service protects live generations and accepted updates,
+then prunes after completed attempts. Retirement alone does not delete history;
+retained execution IDs do not pin it forever.
 
 The database directory, database file, and SQLite `-wal` and `-shm` auxiliary
 files must be writable by UID/GID `10001:10001`. Use one Sidecar instance per
@@ -231,29 +239,21 @@ readiness. Restore rolls current selection, statuses, and history back to the
 backup point. This full installation database backup includes authored YAML and
 literal sensitive values without redaction or v1 encryption. Account/session
 transfer is not introduced. Protect backup access accordingly. The database
-copy test verifies storage recovery; Phase 2 must separately verify runtime
-publication faults, startup dispatch gating, live-generation pruning races,
-and retirement before release.
+copy test verifies both storage and runtime recovery. For an outcome-bookkeeping
+fault, stop the sole instance, preserve a consistent full database-set copy,
+correct the storage problem, and restart if the committed intended selection is
+wanted. An unreverted A/B publication failure restarts onto B, not A. To recover
+A, restore a known-good stopped full database backup and verify activation and
+readiness. No online repair endpoint or live SQL procedure is provided.
 
-## Mounted configuration
+## Runtime configuration
 
-The default mount layout is:
-
-```text
-/sidecar/skills/**/*.yaml
-/sidecar/skills/**/*.yml
-/sidecar/rest-routes.yaml
-```
-
-`loomspan.skills.locations` contains only the two skills patterns. The sibling
-route file is loaded separately from `loomspan-sidecar.rest-routes-location` and
-is never parsed as a skill manifest. Override either location at startup, for example:
-
-```powershell
-java -jar target/loomspan-sidecar-1.0.0-beta.5-SNAPSHOT.jar `
-  "--loomspan.skills.locations=file:C:/mounted/skills/**/*.yaml,file:C:/mounted/skills/**/*.yml" `
-  "--loomspan-sidecar.rest-routes-location=file:C:/mounted/rest-routes.yaml"
-```
+The database-selected snapshot is the only runtime skill and REST route source.
+The framework's documented `loomspan.skills.locations` points to a packaged
+empty directory so the initial catalog is empty. Sidecar checks that baseline
+before publishing the selected snapshot. A new database starts with no skills.
+Authored skill YAML and REST text remain unchanged in durable snapshots;
+resolved deployment values are never written over references.
 
 Each model-backed manifest names a model. Configure its connection and provider
 model explicitly; the manifest does not create them:
@@ -271,14 +271,17 @@ loomspan:
       provider-model: ${MODEL_NAME}
 ```
 
-Keep credentials in environment variables. Skills and REST routes are immutable
-startup snapshots; restart the process after changing either file.
+Keep credentials in environment variables. Model connection and URL allowlist
+changes require restart; a complete snapshot publication changes skills and
+REST routes without restart. Phase 3 adds real session and lease authorization
+to the serialized admission boundary, invalidating prior-base drafts only after
+framework publication succeeds. Phase 5 import and rollback must reuse this
+publication path and assign fresh local IDs with source provenance.
 
 ## REST skill routes
 
-Exactly one production handler is always present. Its required route document is
-the single source of REST targets and skill mappings. When no REST skills exist,
-mount an explicit empty document:
+Exactly one production handler is always present. Each complete snapshot has
+one authored route document. When no REST skills exist, use:
 
 ```yaml
 targets: {}
@@ -287,7 +290,7 @@ routes: {}
 
 Each REST skill must have one exact, case-sensitive route and every route must name
 a registered REST skill and target. Invalid, unknown, duplicate, or incomplete
-configuration fails startup without contacting any target. A complete example is:
+configuration fails validation or startup without contacting any target. A complete example is:
 
 ```yaml
 targets:
@@ -319,9 +322,12 @@ routes:
     path: /customers/{id}
 ```
 
-All string fields and names support required Spring `${NAME}` placeholders.
-Unresolved placeholders fail startup with their file and field, while resolved
-secret values are omitted from diagnostics. Authentication modes are `none`,
+`base-url` accepts a literal HTTP(S) URL or a whole-value `${NAME}` reference.
+The name must appear in `loomspan-sidecar.url-variables`; only the process
+environment supplies its value. Missing, blank, composed, defaulted, and invalid
+URLs fail validation or startup. Unused allowlist entries require no value.
+Other string fields and names retain required Spring `${NAME}` placeholder
+behavior. Resolved secret values are omitted from diagnostics. Authentication modes are `none`,
 `static`, and `caller-passthrough`; configured headers are accepted only for
 `static`. Invocation input never becomes a header. Every request sends
 `Accept: application/json, text/*`.
@@ -334,7 +340,10 @@ were consumed. Resource, file, stream, non-string object key, nonfinite number, 
 other non-JSON values fail before I/O. Segment encoding and base-path confinement
 prevent input from replacing the configured authority or traversing above its base.
 
-Targets receive isolated Apache HTTP clients. Redirects, automatic retries, and
+Each framework generation owns matching routes and isolated Apache HTTP clients.
+Old generations retain them until public retirement establishes that admitted
+and nested work has finished. Shutdown retains clients through the framework's
+completion or cutoff and closes them without another drain period. Redirects, automatic retries, and
 automatic cookie storage/replay are disabled; caller sessions are not shared across
 executions. Literal plus signs in GET query names and values are percent-encoded.
 Connect/read timeouts and the byte response cap apply per target; equality
@@ -453,6 +462,10 @@ does not cancel accepted work.
 Ownership compares the verified issuer and subject as separate fields. A renewed
 token for the same pair can poll existing work; changing either field cannot.
 Records are memory-only and disappear on restart.
+The GET response includes nullable `configurationSnapshotId`. It is null while
+queued or if capture fails; after worker handoff it is the durable UUID of the
+captured framework generation and remains on the terminal record even after
+that generation retires. Observer diagnostics do not determine this field.
 
 ## Capacity, retention, and diagnostics
 
@@ -485,12 +498,12 @@ selected events. Record count, TTL and queued-input bytes therefore do not bound
 total heap: running inputs, results, diagnostics, and uncooperative framework
 work may consume additional memory.
 
-Skills and REST routes remain startup-only. Before restarting to activate a
-change, finish active work and retrieve any results you need. Restart loses all
+Complete validated snapshots can be published while work runs. Old admitted
+work keeps its captured definitions and REST resources. Restart loses all
 queued, active and retained execution records, shutdown discards waiting work,
-and unfinished admitted work may be interrupted at the framework deadline. Disk
-edits never change a running process and invalid skills or routes prevent startup
-and readiness until corrected; there is no hot reload or durable recovery. REST clients stay
+and unfinished admitted work may be interrupted at the framework deadline.
+Invalid selected content prevents startup and readiness until corrected through
+a stopped database restore. REST clients stay
 available for framework-owned admitted work until normal completion or the single
 `loomspan.shutdown.timeout` cutoff, then close without a second drain period. SC5
 uses the framework's 30-second default; configure orchestrator termination grace
@@ -502,7 +515,7 @@ above that budget plus cleanup margin (the Kubernetes example uses 45 seconds).
 
 | Key | Default / requirement |
 | --- | --- |
-| `loomspan-sidecar.rest-routes-location` | `file:/sidecar/rest-routes.yaml`; required readable unified route document; override at startup. |
+| `loomspan-sidecar.url-variables` | Empty by default; exact allowed process-environment names for REST `base-url`; changes require restart. |
 | `loomspan-sidecar.storage.database-path` | `/sidecar/data/sidecar.db`; writable persistent local database path and parent directory required at startup. |
 | `loomspan-sidecar.snapshots.max-retained` | `10`; positive count of stored snapshots, including pending and failed history; protected snapshots may exceed it. |
 | `loomspan-sidecar.auth.jwt.issuer-uri` | Required nonblank issuer; also used with an explicit local key or JWKS URL. |
@@ -522,16 +535,16 @@ above that budget plus cleanup margin (the Kubernetes example uses 45 seconds).
 
 <!-- configuration-reference:end -->
 
-The route schema and `${NAME}` environment placeholders are described in
-[REST skill routes](#rest-skill-routes). Skill discovery stays under documented
-`loomspan.skills.locations`; framework shutdown remains
+The route schema and `${NAME}` bindings are described in
+[REST skill routes](#rest-skill-routes). Framework startup discovery uses the
+packaged empty source; framework shutdown remains
 `loomspan.shutdown.timeout`; inbound server and outbound mTLS configuration
 remains under standard `server.ssl.*` and `spring.ssl.bundle.*` namespaces. The
 image honors those standard Boot environment and command-line overrides.
 
 The Kubernetes example at `examples/kubernetes/deployment.yaml` keeps the
-application and Sidecar in one pod, mounts skill files and the separate route
-document read-only, sources credentials from Secrets, uses port 9091 for all
+application and Sidecar in one pod, expects a prepopulated persistent SQLite
+volume, sources credentials from Secrets, uses port 9091 for all
 management probes, and leaves resource requests/limits for the operator to size
 from actual model concurrency and diagnostic retention.
 

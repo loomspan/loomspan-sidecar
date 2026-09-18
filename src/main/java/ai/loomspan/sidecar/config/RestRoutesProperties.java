@@ -4,13 +4,13 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties("loomspan-sidecar")
 public class RestRoutesProperties {
-    private String restRoutesLocation = "file:/sidecar/rest-routes.yaml";
+    private java.util.Set<String> urlVariables = java.util.Set.of();
 
-    public String getRestRoutesLocation() {
-        return restRoutesLocation;
+    public java.util.Set<String> getUrlVariables() {
+        return urlVariables;
     }
 
-    public void setRestRoutesLocation(String restRoutesLocation) {
-        this.restRoutesLocation = restRoutesLocation;
+    public void setUrlVariables(java.util.Set<String> urlVariables) {
+        this.urlVariables = urlVariables == null ? java.util.Set.of() : java.util.Set.copyOf(urlVariables);
     }
 }

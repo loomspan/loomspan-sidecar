@@ -1,8 +1,7 @@
 loomspan:
   skills:
     locations:
-      - "file:/sidecar/skills/**/*.yaml"
-      - "file:/sidecar/skills/**/*.yml"
+      - "classpath:/sidecar-empty-skills/*.yaml"
   observability:
     enabled: false
 
@@ -11,7 +10,7 @@ loomspan-sidecar:
     database-path: /sidecar/data/sidecar.db
   snapshots:
     max-retained: 10
-  rest-routes-location: "file:/sidecar/rest-routes.yaml"
+  url-variables: []
   auth:
     jwt:
       roles-claim: roles

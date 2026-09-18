@@ -5,11 +5,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 import org.springframework.boot.ssl.SslBundles;
-import org.springframework.core.io.DefaultResourceLoader;
 import org.springframework.mock.env.MockEnvironment;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -20,10 +21,10 @@ class RestRouteLoaderTest {
     @Test
     void loadsDefaultOverrideAndExplicitEmptyDocuments() throws Exception {
         RestRoutesProperties defaults = new RestRoutesProperties();
-        assertThat(defaults.getRestRoutesLocation()).isEqualTo("file:/sidecar/rest-routes.yaml");
+        assertThat(defaults.getUrlVariables()).isEmpty();
         Path file = write("empty.yaml", "targets: {}\nroutes: {}\n");
-        assertThat(load(file, new MockEnvironment()).configuration().targets()).isEmpty();
-        assertThat(load(file, new MockEnvironment()).configuration().routes()).isEmpty();
+        assertThat(load(file, new MockEnvironment()).targets()).isEmpty();
+        assertThat(load(file, new MockEnvironment()).routes()).isEmpty();
     }
 
     @Test
@@ -74,7 +75,7 @@ class RestRouteLoaderTest {
         Path valid = write("resolved.yaml", """
                 targets:
                   callback:
-                    base-url: ${CALLBACK_URL}/api
+                    base-url: http://localhost/api
                     auth: {mode: static, headers: {X-Key: '${CALLBACK_SECRET}'}}
                     connect-timeout: ${TIMEOUT}
                     read-timeout: ${TIMEOUT}
@@ -85,7 +86,7 @@ class RestRouteLoaderTest {
         var environment = new MockEnvironment().withProperty("CALLBACK_URL", "http://localhost")
                 .withProperty("CALLBACK_SECRET", "sentinel-secret")
                 .withProperty("TIMEOUT", "2s").withProperty("PATH_PART", "echo");
-        var configuration = load(valid, environment).configuration();
+        var configuration = load(valid, environment);
         assertThat(configuration.targets().get("callback").auth().headers()).containsEntry("X-Key", "sentinel-secret");
         assertThat(configuration.routes().get("call").path()).isEqualTo("/echo");
 
@@ -95,7 +96,7 @@ class RestRouteLoaderTest {
                 routes: {}
                 """);
         assertThatThrownBy(() -> load(unresolved, new MockEnvironment()))
-                .hasMessageContaining("unresolved.yaml", "targets.callback.base-url", "${MISSING}");
+                .hasMessageContaining("unresolved.yaml", "targets.callback.base-url", "allowlisted");
 
         Path secretFailure = write("secret-failure.yaml", """
                 targets:
@@ -119,12 +120,52 @@ class RestRouteLoaderTest {
                         .contains("targets.callback.base-url"));
     }
 
-    private RestRouteLoader load(Path file, MockEnvironment environment) {
+    @Test
+    void baseUrlUsesOnlyExactAllowlistedProcessEnvironmentVariables() {
+        String fixture = """
+                targets:
+                  callback: {base-url: '%s', auth: {mode: none}, connect-timeout: 1s, read-timeout: 1s, max-response-size: 1KB}
+                routes: {}
+                """;
+        var properties = new RestRoutesProperties();
+        var spring = new MockEnvironment().withProperty("CALLBACK_URL", "http://wrong.example");
+        var loader = new RestRouteLoader(properties, spring, null,
+                Map.of("CALLBACK_URL", "http://localhost:1234/api")::get);
+        assertThat(loader.parse(fixture.formatted("http://localhost/api"), "authored.yaml")
+                .targets().get("callback").baseUrl()).hasToString("http://localhost/api");
+        assertThatThrownBy(() -> loader.parse(fixture.formatted("${CALLBACK_URL}"), "authored.yaml"))
+                .hasMessageContaining("allowlisted");
+        properties.setUrlVariables(Set.of("CALLBACK_URL", "UNUSED"));
+        assertThat(loader.parse(fixture.formatted("${CALLBACK_URL}"), "authored.yaml")
+                .targets().get("callback").baseUrl()).hasToString("http://localhost:1234/api");
+        for (String invalid : java.util.List.of("${CALLBACK_URL}/path", "http://${CALLBACK_URL}",
+                "${CALLBACK_URL:default}", "${CALLBACK_URL}${CALLBACK_URL}", "${CALLBACK_URL}#fragment")) {
+            assertThatThrownBy(() -> loader.parse(fixture.formatted(invalid), "authored.yaml"))
+                    .hasMessageContaining("whole-value");
+        }
+        for (String invalid : java.util.List.of("http://user:secret@localhost", "ftp://localhost",
+                "http://localhost/?token=secret", "http://localhost/#fragment")) {
+            assertThatThrownBy(() -> loader.parse(fixture.formatted(invalid), "authored.yaml"))
+                    .hasMessageContaining("base-url").hasMessageNotContaining("secret");
+        }
+        var absent = new RestRouteLoader(properties, spring, null, name -> null);
+        assertThatThrownBy(() -> absent.parse(fixture.formatted("${CALLBACK_URL}"), "authored.yaml"))
+                .hasMessageContaining("missing or blank");
+        var blank = new RestRouteLoader(properties, spring, null, name -> " ");
+        assertThatThrownBy(() -> blank.parse(fixture.formatted("${CALLBACK_URL}"), "authored.yaml"))
+                .hasMessageContaining("missing or blank");
+        var malformed = new RestRouteLoader(properties, spring, null, name -> "not-a-url");
+        assertThatThrownBy(() -> malformed.parse(fixture.formatted("${CALLBACK_URL}"), "authored.yaml"))
+                .hasMessageContaining("absolute HTTP(S)");
+    }
+
+    private RestRouteConfiguration load(Path file, MockEnvironment environment) {
         RestRoutesProperties properties = new RestRoutesProperties();
-        properties.setRestRoutesLocation(file.toUri().toString());
         var beanFactory = new DefaultListableBeanFactory();
-        return new RestRouteLoader(properties, environment, new DefaultResourceLoader(),
-                beanFactory.getBeanProvider(SslBundles.class));
+        try {
+            return new RestRouteLoader(properties, environment, beanFactory.getBeanProvider(SslBundles.class))
+                    .parse(Files.readString(file), file.getFileName().toString());
+        } catch (java.io.IOException failure) { throw new IllegalStateException(failure); }
     }
 
     private void assertInvalid(String name, String yaml, String... messages) throws Exception {

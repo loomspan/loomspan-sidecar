@@ -5,8 +5,8 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
-record RestRouteConfiguration(String location, Map<String, Target> targets, Map<String, Route> routes) {
-    RestRouteConfiguration {
+public record RestRouteConfiguration(String location, Map<String, Target> targets, Map<String, Route> routes) {
+    public RestRouteConfiguration {
         targets = Map.copyOf(targets);
         routes = Map.copyOf(routes);
     }

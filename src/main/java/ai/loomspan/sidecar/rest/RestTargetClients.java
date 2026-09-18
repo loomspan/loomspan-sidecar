@@ -1,6 +1,7 @@
 package ai.loomspan.sidecar.rest;
 
 import org.apache.hc.client5.http.config.RequestConfig;
+import org.apache.hc.core5.io.CloseMode;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
@@ -11,7 +12,6 @@ import org.apache.hc.core5.util.Timeout;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.ssl.SslBundles;
 import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
-import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
 import java.io.IOException;
@@ -21,18 +21,16 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-@Component
 final class RestTargetClients implements AutoCloseable {
     record TargetClient(RestClient restClient, CloseableHttpClient httpClient) {}
 
     private final Map<String, TargetClient> clients;
     private final AtomicBoolean closed = new AtomicBoolean();
 
-    RestTargetClients(RestRouteLoader loader, ObjectProvider<SslBundles> sslBundlesProvider) {
-        SslBundles sslBundles = sslBundlesProvider.getIfAvailable();
+    RestTargetClients(RestRouteConfiguration configuration, SslBundles sslBundles) {
         Map<String, TargetClient> built = new LinkedHashMap<>();
         try {
-            for (var target : loader.configuration().targets().values()) {
+            for (var target : configuration.targets().values()) {
                 built.put(target.name(), build(target, sslBundles));
             }
         } catch (RuntimeException failure) {
@@ -108,8 +106,8 @@ final class RestTargetClients implements AutoCloseable {
 
     private static void closeQuietly(TargetClient client) {
         try {
-            client.httpClient().close();
-        } catch (IOException ignored) {
+            client.httpClient().close(CloseMode.IMMEDIATE);
+        } catch (RuntimeException ignored) {
             // Closing an already-failed client must not add a second shutdown failure.
         }
     }
