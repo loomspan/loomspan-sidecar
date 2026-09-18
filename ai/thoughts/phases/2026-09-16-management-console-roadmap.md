@@ -2,8 +2,10 @@
 
 Date: 2026-09-16
 
-Last handoff update: 2026-09-18. Phase 1 and Phase 2 implementation are complete;
-Phase 3 refinement selects email-address usernames and email-only forgotten-password
+Last handoff update: 2026-09-18. Phases 1 through 3 are complete, with PR 1.3.3
+completion reported by the developer. Phase 4 is next; its quiet automatic
+validation, automatic session-draft saving and console scope are selected below.
+Phase 3 selects email-address usernames and email-only forgotten-password
 recovery for SQLite-backed Spring Security management accounts. Execution JWT
 authentication stays separate. Passwords require uppercase and lowercase letters,
 at least one number and at least one special character; no common-password or
@@ -24,7 +26,7 @@ The latest review also settled non-cancellable updates, refreshed destructive
 confirmation, failed snapshot status, fresh local import/rollback identities, and
 separate validation and publication preparation.
 
-Status: Phase 1 and Phase 2 complete; framework validation delivered; Phase 3 tickets prepared.
+Status: Phases 1 through 3 complete; Phase 4 ready for ticket preparation.
 This document is not a set of implementation tickets or authorization to run them.
 
 ## Outcome
@@ -62,7 +64,15 @@ states. Apply the design lens's simplicity and technical-debt rule throughout.
 
 ## Resume here in a new context
 
-Current handoff, 2026-09-18: framework validation and the candidate-metadata follow-up
+Current handoff, 2026-09-18: the developer reports PR 1.3.3 complete, finishing
+Phase 3. Next prepare Phase 4 tickets under PR 1.4.x for the embedded console,
+account screens, authoring/lease workflow and publication history. The developer
+selected low-key automatic validation after an editing pause and automatic saving
+to the session draft; see Phase 4 and the agreed editor behavior below. Frontend
+tooling, editor component, precise layouts and timing remain implementation-planning
+choices. This roadmap update does not rerun Phase 3 verification or start a pipeline.
+
+Historical pre-Phase-3 handoff: framework validation and the candidate-metadata follow-up
 are delivered and available in the installed snapshot. The earlier 21 targeted
 Sidecar regressions passed against the initial validation API. A subsequent direct
 public-API smoke check passed against the metadata extension, including immutable
@@ -72,11 +82,11 @@ draft validation; adapting it and its route checker remains implementation work.
 Earlier Phase 2 descriptions record the prior implementation. See the validation
 handoff below for details.
 
-Phase 3 decisions are settled for ticket preparation. The developer accepted emailed
+Phase 3 decisions were settled for ticket preparation. The developer accepted emailed
 initial-password links, immutable email usernames, deployment-configured SMTP and
 15-character minimum passwords with the selected composition rules. SMTP belongs
-in application YAML. The following sequential Full-profile tickets are prepared;
-their pipelines have not been started:
+in application YAML. The following sequential Full-profile tickets are now complete
+per the developer's handoff:
 
 1. [PR 1.3.1 — Management accounts and email recovery](../tickets/2026-09-18-pr-1.3.1-management-accounts-and-email-recovery.md).
 2. [PR 1.3.2 — Session drafts and editing leases](../tickets/2026-09-18-pr-1.3.2-session-drafts-and-editing-leases.md).
@@ -366,8 +376,18 @@ Candidate ticket groups:
 
 - Build the embedded console shell, initial setup/login flow and current published
   configuration views. Choose frontend tooling during implementation planning.
+- Include logout, emailed initial-password setup, forgotten-password recovery,
+  password change and account administration screens using the Phase 3 contracts.
 - Deliver complete skill editing and REST route/target editing with useful
   explanations and validation feedback. Preserve the full supported YAML surface.
+- Automatically save changes to the owning session's draft, with subtle lower-left
+  status-bar feedback such as "Saving..." and "Saved". Saving does not publish or
+  provide cross-session recovery; failures must not be presented as saved changes.
+- Automatically validate the complete draft after a pause in editing. Above the
+  editor, show a compact green "Valid" or red "Validation errors" indicator with
+  expandable details. Keep automatic feedback unobtrusive: no interrupting dialogs
+  or automatically expanded error lists. Use text as well as color and quiet
+  checking/out-of-date states so old results never imply that new edits are valid.
 - Display draft ownership, renewal/loss of lease, changed configuration, validation
   state and publication results. Preserve unsaved editor content on lease loss
   according to the agreed UX, without allowing stale writes.
@@ -384,6 +404,10 @@ and two users contending for the draft. The published catalog reflects the updat
 **Ticket preparation:** Use the full YAML editor and the editing policy below.
 Present source-labelled validation errors and a clear publication result; frontend
 tooling and precise layouts remain implementation choices.
+The developer accepted this console scope and its grouping into shell/account
+flows, authoring/lease/publication workflow and history. Refine these into
+independently verifiable PR 1.4.x tickets rather than treating the groups as fixed
+ticket counts. Export/import and rollback remain Phase 5 work.
 
 ## Phase 5: Backup, restore and configuration transfer
 
@@ -911,12 +935,21 @@ editor validation. Sidecar still owns route/target/URL validation and resource
 staging; explicit publication still prepares and stages afresh. No Sidecar production
 integration or full editor workflow is claimed complete by this contract review.
 
-Proposed editor behavior, not yet selected: validate the complete draft after a
-pause in editing, coalesce requests, show checking/valid/invalid/out-of-date status,
-and apply a result only to the exact candidate checked. Publication stays explicit
-and prepares/stages afresh. Phase 3 owns API integration and Phase 4 owns automatic
-editor scheduling and presentation. Existing Phase 2 validation remains historical
-implementation evidence; adapting it requires the delivered framework contract.
+Agreed editor behavior, selected 2026-09-18: automatically save changes to the
+session draft and validate the complete draft after a pause in editing. Coalesce
+requests and apply results only to the exact candidate checked. Show a quiet,
+expandable indicator above the editor: green "Valid" or red "Validation errors",
+with checking/out-of-date states as needed. Details stay collapsed until requested;
+automatic validation must not interrupt typing or repeatedly push errors at users.
+Use subtle lower-left status-bar "Saving..." / "Saved" feedback for automatic
+saves, and accurately indicate unsaved changes or save failures. A saved draft
+remains session-owned and is lost on logout/session expiry under the agreed policy.
+Saving, validation and publication are separate effects; publication stays explicit
+and prepares/stages afresh. Automatic requests do not themselves count as login or
+lease activity. Phase 3 owns API integration and Phase 4 owns automatic editor
+scheduling and presentation. Exact save/validation timing belongs in implementation
+planning. The preceding framework handoff checks are historical evidence, not a
+replacement for the completed Phase 3 ticket's own integration evidence.
 
 ### Release and ticket sequence
 

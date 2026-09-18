@@ -49,9 +49,11 @@ public class ManagementSecurityConfiguration {
                 .authenticationProvider(provider)
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/management/login", "/management/setup", "/management/forgot",
-                                "/management/password/set", "/management/password/reset",
+                                "/management/password/set", "/management/password/reset", "/management/assets/console.css",
+                                "/management/assets/console.js",
                                 "/api/management/setup", "/api/management/password/forgot",
                                 "/api/management/password/set", "/api/management/password/reset").permitAll()
+                        .requestMatchers("/management/accounts").hasAuthority("MGT_ADMIN")
                         .requestMatchers("/api/management/accounts", "/api/management/accounts/**").hasAuthority("MGT_ADMIN")
                         .requestMatchers("/api/management/editing/lease/takeover").hasAuthority("MGT_ADMIN")
                         .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/management/editing", "/api/management/editing/draft").authenticated()

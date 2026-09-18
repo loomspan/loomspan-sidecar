@@ -193,6 +193,9 @@ class ManagementIdentityStoreTest {
         ManagementPolicy.password("A".repeat(125) + "a1!");
         ManagementPolicy.password("Åbcdefghijkl ١!");
         ManagementPolicy.password("Long Password 123!");
+        ManagementPolicy.password("A" + "😀".repeat(124) + "a1!");
+        assertThatThrownBy(() -> ManagementPolicy.password("A" + "😀".repeat(125) + "a1!"))
+                .isInstanceOf(IllegalArgumentException.class);
         assertThat(ManagementPolicy.email(" Admin@Example.Test ")).isEqualTo("admin@example.test");
         assertThatThrownBy(() -> ManagementPolicy.email("first..last@example.test"))
                 .isInstanceOf(IllegalArgumentException.class);

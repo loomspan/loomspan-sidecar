@@ -69,6 +69,45 @@ class ManagementHttpIntegrationTest {
     private static final String PASSWORD = "Long Password 123!";
     private static final Pattern CSRF = Pattern.compile("name='_csrf' value='([^']+)'", Pattern.CASE_INSENSITIVE);
 
+    @Test void authenticatedViewerCanOpenCurrentConfigurationPage() throws Exception {
+        seed("current-viewer@example.test", "viewer");
+        var anonymous = new Browser();
+        assertThat(anonymous.get("/management/configuration/current").statusCode()).isEqualTo(302);
+        var viewer = new Browser();
+        String csrf = csrf(viewer.get("/management/login").body());
+        assertThat(viewer.postForm("/management/login", "email=current-viewer%40example.test&password="
+                + encode(PASSWORD) + "&_csrf=" + encode(csrf)).statusCode()).isEqualTo(302);
+        var current = viewer.get("/management/configuration/current");
+        assertThat(current.statusCode()).isEqualTo(200);
+        assertThat(current.body()).contains("Current configuration", "/management/assets/console.js");
+        assertThat(current.headers().firstValue("Cache-Control")).hasValue("no-store");
+        assertThat(current.headers().firstValue("Referrer-Policy")).hasValue("no-referrer");
+        assertThat(viewer.get("/management/accounts").statusCode()).isEqualTo(403);
+        assertThat(viewer.get("/api/management/configuration/current").statusCode()).isEqualTo(200);
+        assertThat(viewer.get("/management/assets/console.js").statusCode()).isEqualTo(200);
+        assertThat(viewer.get("/management/assets/console.css").statusCode()).isEqualTo(200);
+        assertThat(anonymous.get("/management/assets/console.js").statusCode()).isEqualTo(200);
+        assertThat(anonymous.get("/management/assets/console.css").headers().firstValue("Referrer-Policy"))
+                .hasValue("no-referrer");
+    }
+
+    @Test void accountPageUsesAdminAuthorityAndPasswordFormsExplainExactPolicy() throws Exception {
+        seed("console-admin@example.test", "admin");
+        var browser = new Browser();
+        String token = csrf(browser.get("/management/login").body());
+        assertThat(browser.get("/management/accounts").statusCode()).isEqualTo(302);
+        assertThat(browser.postForm("/management/login", "email=console-admin%40example.test&password="
+                + encode(PASSWORD) + "&_csrf=" + encode(token)).statusCode()).isEqualTo(302);
+        assertThat(browser.get("/management/accounts").body()).contains("Invite account", "name='email'", "id='accounts-list'");
+        assertThat(browser.get("/management/home").body()).contains("/management/accounts", "/management/configuration/current");
+        for (String route : List.of("/management/password/set?token=fixture", "/management/password/reset?token=fixture",
+                "/management/password/change")) {
+            String html = browser.get(route).body();
+            assertThat(html).contains("15–128 Unicode characters", "512 UTF-8 bytes", "non-whitespace punctuation", "Spaces are allowed", "paste", "password manager", "name='_csrf'");
+            assertThat(html).doesNotContain("maxlength=", "onpaste=");
+        }
+    }
+
     @Test void managementAuthenticationAndCsrfStaySeparateFromExecution() throws Exception {
         long admin = seed("admin@example.test", "admin");
         long viewer = seed("viewer@example.test", "viewer");
@@ -137,6 +176,8 @@ class ManagementHttpIntegrationTest {
         assertThat(browser.get("/api/management/session").statusCode()).isEqualTo(200);
         clock.advance(Duration.ofMinutes(29));
         assertThat(browser.get("/api/management/session").statusCode()).isEqualTo(200);
+        assertThat(browser.get("/management/configuration/current").statusCode()).isEqualTo(200);
+        assertThat(browser.get("/api/management/configuration/current").statusCode()).isEqualTo(200);
         String csrf = jsonCsrf(browser.get("/api/management/session").body());
         assertThat(browser.postJson("/api/management/session/activity", "{}", csrf).statusCode()).isEqualTo(204);
         clock.advance(Duration.ofMinutes(29));

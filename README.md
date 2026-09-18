@@ -476,9 +476,17 @@ salted PBKDF2-HMAC-SHA256. They must have 15–128 Unicode code points (at most
 punctuation or symbol. Spaces are accepted but do not count as symbols. There
 is no blocklist, breached-password lookup or periodic expiration.
 
-The public `/management/login`, `/management/forgot`, and
-`/management/password/{set,reset}` pages provide minimal keyboard-accessible
-forms, including password-manager paste/autofill. Forgotten-password requests
+The embedded console is served from the Sidecar JAR on the application port;
+no frontend service is needed. Open `/management/login` to sign in. The landing
+page explains an available, reserved, or locked first-administrator setup state;
+`/management/setup` accepts the one-time credential only until activation.
+Authenticated users reach `/management/home`,
+`/management/configuration/current`, and `/management/password/change`.
+Administrators also reach `/management/accounts` to invite accounts, change
+roles, disable or re-enable accounts, and resend a pending password link. The
+public `/management/forgot` and `/management/password/{set,reset}` forms support
+email-only recovery and initial password setup. Forms permit keyboard use,
+password-manager autofill and paste. Forgotten-password requests
 always give the same response for known and unknown addresses. Set links expire
 after 24 hours and reset links after 30 minutes; each is single-use. A successful
 password change or reset ends affected sessions and invalidates other links.
@@ -486,6 +494,20 @@ Sign in normally afterward. Recovery is email only: there is no offline account
 repair, security question, or admin-assigned replacement password. If email and
 administrator access are both lost, restore a known-good **full database backup**
 as an installation recovery operation, not as a password-reset bypass.
+
+The current-configuration page shows the complete authored skill YAML and REST
+routes/targets from the **runtime-published** snapshot, including placeholders
+and any literal sensitive values. Give viewer access only to people allowed to
+read those values. The separately labeled intended ID/status are the database
+selection for restart, not proof of what handles executions now. Authored text
+is displayed as text, never interpreted as HTML. Refresh is explicit; passive
+reads do not extend the idle login. The browser reports deliberate interaction
+at most once every 30 seconds. If an invitation reports a delivery failure,
+refresh the account list: it may contain a pending account. Correct SMTP and
+resend the link. A used or expired set/reset link requires a fresh email link.
+Role changes, disables, resets and password changes invalidate affected sessions;
+sign in again before continuing. Viewer/editor/admin checks and CSRF are enforced
+by the server even if a stale browser page still shows an action.
 
 JSON clients obtain a CSRF token from a session page or the authenticated
 `GET /api/management/session` response and send it as `X-CSRF-TOKEN` on unsafe

@@ -90,7 +90,7 @@ class ManagementConfigurationHttpIntegrationTest {
         assertThat(store.history()).hasSize(count);
         JsonNode changed = ok(editor.put("/api/management/editing/draft", "{\"tabId\":\"" + tab
                 + "\",\"grantId\":\"" + id + "\",\"expectedCandidateId\":\"" + first
-                + "\",\"skillDocuments\":[],\"restRoutesYaml\":\"targets: {}\\nroutes: {}\\n# authored-${EXAMPLE}-literal\\n\"}"));
+                + "\",\"skillDocuments\":[],\"restRoutesYaml\":\"targets: {}\\nroutes: {}\\n# authored-${EXAMPLE}-literal <script>alert(1)</script>\\n\"}"));
         assertThat(changed.path("candidateId").asText()).isNotEqualTo(first);
         assertThat(changed.path("validation").isNull()).isTrue();
         var stale = editor.post("/api/management/editing/draft/validate", capability);
@@ -105,7 +105,7 @@ class ManagementConfigurationHttpIntegrationTest {
         JsonNode current = ok(editor.get("/api/management/configuration/current"));
         assertThat(current.path("published").path("localId").asText()).isEqualTo(published.path("localId").asText());
         assertThat(current.path("published").path("configuration").path("restRoutesYaml").asText())
-                .contains("authored-${EXAMPLE}-literal");
+                .contains("authored-${EXAMPLE}-literal <script>alert(1)</script>");
         assertThat(current.path("intendedId").asText()).isEqualTo(published.path("localId").asText());
         assertThat(current.path("intendedStatus").asText()).isEqualTo("PUBLISHED");
         JsonNode history = ok(editor.get("/api/management/configuration/history"));
@@ -118,6 +118,8 @@ class ManagementConfigurationHttpIntegrationTest {
         String email = "viewer-" + UUID.randomUUID() + "@example.test";
         seed(email, "viewer");
         Browser viewer = login(email);
+        assertThat(viewer.get("/management/configuration/current").statusCode()).isEqualTo(200);
+        assertThat(new Browser().get("/management/configuration/current").statusCode()).isEqualTo(302);
         assertThat(viewer.get("/api/management/configuration/current").statusCode()).isEqualTo(200);
         assertThat(viewer.get("/api/management/configuration/history").statusCode()).isEqualTo(200);
         assertThat(viewer.post("/api/management/editing/draft/validate", "{}").statusCode()).isEqualTo(403);

@@ -59,10 +59,13 @@ class ManagementMailHttpIntegrationTest {
 
     @Test void setupInvitationAndRecoveryUseConfiguredMailOrigin() throws Exception {
         var browser = new Browser();
-        String csrf = formCsrf(browser.get("/management/setup").body());
+        String setupPage = browser.get("/management/setup").body();
+        assertThat(setupPage).contains("one-time operator setup credential", "name='_csrf'").doesNotContain(SETUP);
+        String csrf = formCsrf(setupPage);
         var setup = browser.post("/api/management/setup", "{\"credential\":\"" + SETUP
                 + "\",\"email\":\"Admin@Example.Test\"}", csrf);
         assertThat(setup.statusCode()).isEqualTo(202);
+        assertThat(browser.get("/management/setup").body()).contains("address is reserved").doesNotContain(SETUP);
         assertThat(smtp.messages()).hasSize(1);
         assertThat(smtp.messages().getFirst()).contains("From: operator@example.test",
                 "To: admin@example.test", "https://console.example.test/management/password/set?token=")
@@ -73,6 +76,8 @@ class ManagementMailHttpIntegrationTest {
         assertThat(prelogin.headers().firstValue("Location").orElseThrow()).endsWith("/management/login?error");
         assertThat(browser.post("/api/management/password/set", "{\"token\":\"" + token
                 + "\",\"password\":\"Long Password 123!\"}", csrf).statusCode()).isEqualTo(204);
+        assertThat(browser.get("/management/setup").body()).contains("Management setup is complete")
+                .doesNotContain("name='credential'");
         assertThat(browser.post("/api/management/password/set", "{\"token\":\"" + token
                 + "\",\"password\":\"Long Password 123!\"}", csrf).statusCode()).isEqualTo(400);
         assertThat(browser.postForm("/management/login", "email=admin%40example.test&password=Long+Password+123%21&_csrf=" + csrf)
