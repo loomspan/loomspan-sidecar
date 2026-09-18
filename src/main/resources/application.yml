@@ -10,6 +10,10 @@ loomspan-sidecar:
     database-path: /sidecar/data/sidecar.db
   snapshots:
     max-retained: 10
+  management:
+    session-idle-timeout: 30m
+    mail-from: ${LOOMSPAN_SIDECAR_MAIL_FROM:}
+    external-base-url: ${LOOMSPAN_SIDECAR_EXTERNAL_BASE_URL:}
   url-variables: []
   auth:
     jwt:
@@ -26,10 +30,32 @@ loomspan-sidecar:
     diagnostics: NEVER
 
 spring:
+  mail:
+    host: ${LOOMSPAN_SIDECAR_SMTP_HOST:}
+    port: ${LOOMSPAN_SIDECAR_SMTP_PORT:587}
+    username: ${LOOMSPAN_SIDECAR_SMTP_USERNAME:}
+    password: ${LOOMSPAN_SIDECAR_SMTP_PASSWORD:}
+    properties:
+      mail.smtp.auth: ${LOOMSPAN_SIDECAR_SMTP_AUTH:false}
+      mail.smtp.starttls.enable: ${LOOMSPAN_SIDECAR_SMTP_STARTTLS:true}
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 5000
+      mail.smtp.writetimeout: 5000
   flyway:
     enabled: false
 
+server:
+  servlet:
+    session:
+      cookie:
+        http-only: true
+        same-site: lax
+        secure: ${LOOMSPAN_SIDECAR_SECURE_COOKIE:true}
+
 management:
+  health:
+    mail:
+      enabled: false
   server:
     port: 9091
   endpoint:

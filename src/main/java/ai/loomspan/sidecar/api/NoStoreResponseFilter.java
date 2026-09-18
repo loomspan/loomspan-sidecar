@@ -18,6 +18,10 @@ public class NoStoreResponseFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
             FilterChain filterChain) throws ServletException, IOException {
         response.setHeader("Cache-Control", "no-store");
+        if (request.getRequestURI().startsWith("/management/")
+                || request.getRequestURI().startsWith("/api/management/")) {
+            response.setHeader("Referrer-Policy", "no-referrer");
+        }
         filterChain.doFilter(request, response);
     }
 }

@@ -2,7 +2,17 @@
 
 Date: 2026-09-16
 
-Last handoff update: 2026-09-17, including delivered framework contracts, revised
+Last handoff update: 2026-09-18. Phase 1 and Phase 2 implementation are complete;
+Phase 3 refinement selects email-address usernames and email-only forgotten-password
+recovery for SQLite-backed Spring Security management accounts. Execution JWT
+authentication stays separate. Passwords require uppercase and lowercase letters,
+at least one number and at least one special character; no common-password or
+compromised-password checking is included. Public framework `validate()` is delivered
+and checked against the updated local snapshot. The candidate metadata follow-up
+is also delivered and checked; the framework contract now covers Sidecar's REST
+route-validation needs without preparation during editor checks.
+
+Earlier handoff updates included delivered framework contracts, revised
 restart bootstrap, the agreed SQLite/Flyway/Spring JDBC storage stack, and v1
 database-first publication, startup, history, accounts, editing defaults, bundle
 compatibility and the beta 5 release scope. Review clarifications record editor
@@ -14,7 +24,7 @@ The latest review also settled non-cancellable updates, refreshed destructive
 confirmation, failed snapshot status, fresh local import/rollback identities, and
 separate validation and publication preparation.
 
-Status: agreed six-phase beta 5 scope, ready for incremental ticket preparation.
+Status: Phase 1 and Phase 2 complete; framework validation delivered; Phase 3 tickets prepared.
 This document is not a set of implementation tickets or authorization to run them.
 
 ## Outcome
@@ -51,6 +61,26 @@ new design; they do not create compatibility obligations for discarded developme
 states. Apply the design lens's simplicity and technical-debt rule throughout.
 
 ## Resume here in a new context
+
+Current handoff, 2026-09-18: framework validation and the candidate-metadata follow-up
+are delivered and available in the installed snapshot. The earlier 21 targeted
+Sidecar regressions passed against the initial validation API. A subsequent direct
+public-API smoke check passed against the metadata extension, including immutable
+candidate names/kinds, invalid/empty results and unchanged active state. The framework
+dependency is now sufficient for Phase 3 planning. Sidecar still uses prepare-based
+draft validation; adapting it and its route checker remains implementation work.
+Earlier Phase 2 descriptions record the prior implementation. See the validation
+handoff below for details.
+
+Phase 3 decisions are settled for ticket preparation. The developer accepted emailed
+initial-password links, immutable email usernames, deployment-configured SMTP and
+15-character minimum passwords with the selected composition rules. SMTP belongs
+in application YAML. The following sequential Full-profile tickets are prepared;
+their pipelines have not been started:
+
+1. [PR 1.3.1 — Management accounts and email recovery](../tickets/2026-09-18-pr-1.3.1-management-accounts-and-email-recovery.md).
+2. [PR 1.3.2 — Session drafts and editing leases](../tickets/2026-09-18-pr-1.3.2-session-drafts-and-editing-leases.md).
+3. [PR 1.3.3 — Protected configuration management](../tickets/2026-09-18-pr-1.3.3-protected-configuration-management.md).
 
 First read the [Sidecar design lens](../design-lens.md). Keep its principles in
 context throughout our discussion, ticket preparation, planning, implementation
@@ -324,8 +354,9 @@ be reused after initialization; unauthorized management calls fail. Concurrent-u
 tests prove exclusivity, expiry, renewal and rejection of writes from a former owner.
 
 **Ticket preparation:** Apply the account, permission, session and editing defaults
-below. Specify the minimal offline administrator recovery procedure and public
-management API contracts without adding external identity providers in v1.
+below. Specify email-based forgotten-password recovery, deployment email delivery,
+setup-token validation and public management API contracts without adding external
+identity providers in v1. No offline administrator account recovery is included.
 
 ## Phase 4: Embedded authoring and publication console
 
@@ -742,14 +773,55 @@ submitted content is inspectable history even if publication fails or its outcom
 remains pending; the owning session's draft remains private.
 
 These roles do not grant execution API access or override its JWT/skill authorization.
-Support admin-created accounts, role changes, disable/re-enable and password resets;
-users can change their own password. No public self-registration or email recovery
-service in v1. Invalidate affected sessions on password reset, disable or role change.
-Prevent removal/demotion/disable of the last enabled administrator. Document a minimal
-offline recovery procedure for loss of administrator access. Keep the existing
+Support admin-created accounts, role changes and disable/re-enable; users can change
+their own password. The username is the account's email address, used for both
+management login and password-recovery email. No separate username or public
+self-registration is included. Account recovery uses a forgot-password email flow
+only, replacing the earlier offline recovery requirement and exclusion of email
+recovery. Do not add an offline reset or an administrator-set replacement password
+as an alternative recovery path. Invalidate affected sessions on password reset,
+disable or role change. Prevent removal/demotion/disable of the last enabled
+administrator. This decision concerns account access, not the separate full-database
+backup/restore procedure for configuration/storage failures. Keep the existing
 one-time environment-credential setup rule; use
 `LOOMSPAN_SIDECAR_SETUP_TOKEN`, require a nonblank high-entropy operator-supplied value,
 and never log or store the plaintext token. Exact validation is a ticket detail.
+
+On 2026-09-18 the developer explicitly selected password composition rules:
+require uppercase and lowercase letters, at least one number and at least one
+special character. Do not implement common-password or compromised-password
+checking: no bundled blocklist, breach lookup service or background checking.
+This replaces the earlier recommendation to use a blocklist without composition
+rules. Retain the proposed minimum of 15 characters, long-password support
+(maximum at least 64 characters), spaces and password-manager paste/autofill.
+No routine periodic password changes are required. Use salted adaptive password
+hashing through Spring Security and login throttling. Exact hashing parameters,
+length cap and character classification belong in planning.
+
+The email recovery design must use unpredictable, expiring, single-use reset tokens,
+protected token storage, rate limits and generic request responses that do not
+reveal account existence. Successful reset invalidates affected sessions and does
+not automatically log the user in. Follow the
+[OWASP forgotten-password guidance](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html).
+The developer accepted the following email/account decisions on 2026-09-18:
+
+- Admin-created accounts receive a single-use emailed link to set their own initial
+  password. Reuse the password-reset mechanism; users cannot log in before completing
+  password setup. The first administrator follows the same email-link flow after
+  authorization with the one-time setup token, confirming mailbox control before login.
+- Account email addresses are immutable in v1. Create a replacement account and
+  disable the old account to change an address, preserving the last-admin safeguard.
+- SMTP configuration belongs in deployment application YAML under standard
+  `spring.mail.*` settings. Sender and trusted external console base URL also belong
+  in application YAML, under Sidecar-owned management settings where no standard
+  property applies. These are outside managed snapshots and the console editor.
+- Existing login and execution remain available when email delivery is missing or
+  unavailable. Email-dependent setup/recovery remains unavailable until delivery is
+  restored, with safe retries and no alternative password-recovery mechanism.
+
+Use the configured external URL for email links rather than a caller-supplied host.
+Exact property names for Sidecar-owned settings, token expiry/throttling defaults,
+email normalization and API representations are implementation-planning details.
 
 The developer delegated reasonable editing defaults on 2026-09-17:
 
@@ -791,6 +863,60 @@ bindings remain outside v1. Specify concrete
 storage/deployment details, trace-correlation fields, the operator recovery steps,
 setup-token validation and the bundle structure in their affected tickets/plans.
 Do not reopen the settled publication policy to add automated recovery machinery.
+
+Phase 3 discussion on 2026-09-18 also confirmed separate draft-save, validation and
+publication effects, rejection of stale lease/draft writes, accurate distinction
+between activation failure and post-activation bookkeeping failure, and activity
+tracking that does not count background polling as login or editing activity.
+
+The developer selected a separate public framework `validate()` method on
+2026-09-18 and has now delivered it with the framework developer. The existing
+`prepare()` leaves active skills unchanged but
+advances generation identity, constructs a publishable candidate and may initialize
+cached dependencies. It is not a side-effect-free validation utility; retain its
+prepare/publish purpose rather than merely renaming it.
+
+Delivered in framework commit `236cf3c`, both `SkillReloader.validate()` and
+`validate(Collection<SkillDocument>)` return an immutable `SkillValidationResult`
+with `valid()` and structured issues: severity, source name, optional skill name,
+optional field path and message. Validation and preparation share checking logic;
+validation avoids generation allocation, handler construction and publication state.
+Public documentation and focused framework tests cover those guarantees. The saved
+framework review reports 1,177 passing tests; this handoff did not rerun that suite
+or rebuild the framework.
+
+Local Sidecar verification against the installed snapshot passed 21 tests covering
+runtime publication/recovery, REST generations, execution correlation and the public
+boundary. A temporary public-API smoke check also passed valid, invalid and empty
+validation, repeatable/source-labelled feedback, unchanged active state and
+publication of a candidate prepared before a later validation call. These checks
+do not establish integrated editor validation or Phase 3 workflow completion.
+
+Candidate metadata follow-up reviewed on 2026-09-18: `SkillValidationResult.skills()`
+now returns immutable `ValidatedSkill(name, SkillKind)` entries sorted by exact name.
+A valid result includes the complete proposed YAML/REST set and fixed Java skills;
+warnings preserve that metadata. Errors produce an empty list, so consumers must
+check `valid()` first. Both overloads share these semantics. The implementation
+derives metadata from the shared checked definitions without preparing a generation;
+the public type is included in the supported-surface allowlist and documentation.
+Source tests cover mixed kinds, fixed Java retention, ordering, warning-only results,
+invalid results and state isolation. A direct installed-snapshot smoke check passed
+candidate REST name/kind, immutable/detached metadata, invalid/empty results,
+unchanged active state and publication of a previously prepared candidate.
+
+This resolves the previously identified framework contract gap. Sidecar can adapt
+`RestRouteCatalogValidator` to consume candidate names/kinds for missing, unknown and
+non-REST route checks without parsing framework YAML or calling `prepare()` during
+editor validation. Sidecar still owns route/target/URL validation and resource
+staging; explicit publication still prepares and stages afresh. No Sidecar production
+integration or full editor workflow is claimed complete by this contract review.
+
+Proposed editor behavior, not yet selected: validate the complete draft after a
+pause in editing, coalesce requests, show checking/valid/invalid/out-of-date status,
+and apply a result only to the exact candidate checked. Publication stays explicit
+and prepares/stages afresh. Phase 3 owns API integration and Phase 4 owns automatic
+editor scheduling and presentation. Existing Phase 2 validation remains historical
+implementation evidence; adapting it requires the delivered framework contract.
 
 ### Release and ticket sequence
 

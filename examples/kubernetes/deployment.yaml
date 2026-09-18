@@ -40,6 +40,24 @@ spec:
               valueFrom: {secretKeyRef: {name: loomspan-sidecar-secrets, key: audience}}
             - name: LOOMSPAN_SIDECAR_AUTH_JWT_PUBLIC_KEY_LOCATION
               value: file:/sidecar/keys/public.pem
+            - name: LOOMSPAN_SIDECAR_SETUP_TOKEN
+              valueFrom: {secretKeyRef: {name: loomspan-sidecar-secrets, key: setup-token}}
+            - name: LOOMSPAN_SIDECAR_MAIL_FROM
+              value: sidecar@example.invalid
+            - name: LOOMSPAN_SIDECAR_EXTERNAL_BASE_URL
+              value: https://console.example.invalid
+            - name: LOOMSPAN_SIDECAR_SMTP_HOST
+              value: smtp.example.invalid
+            - name: LOOMSPAN_SIDECAR_SMTP_PORT
+              value: "587"
+            - name: LOOMSPAN_SIDECAR_SMTP_AUTH
+              value: "true"
+            - name: LOOMSPAN_SIDECAR_SMTP_STARTTLS
+              value: "true"
+            - name: LOOMSPAN_SIDECAR_SMTP_USERNAME
+              valueFrom: {secretKeyRef: {name: loomspan-sidecar-secrets, key: smtp-username}}
+            - name: LOOMSPAN_SIDECAR_SMTP_PASSWORD
+              valueFrom: {secretKeyRef: {name: loomspan-sidecar-secrets, key: smtp-password}}
             - name: LOOMSPAN_SHUTDOWN_TIMEOUT
               value: 30s
           volumeMounts:

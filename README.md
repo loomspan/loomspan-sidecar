@@ -409,7 +409,7 @@ loomspan-sidecar:
 ```
 
 Roles are read from the configured trusted claim. The prefix is also applied to
-Loomspan's `rbac_roles` checks. Sidecar has no user/role table and does not mint,
+Loomspan's `rbac_roles` checks. Execution authentication has no local user/role table and Sidecar does not mint,
 refresh or exchange tokens. A backend using browser sessions must supply a
 backend-issued access token suitable for both Sidecar's and any callback target's
 audience checks; cookies and OIDC ID tokens are not assumed to be API credentials.
@@ -423,6 +423,84 @@ for queueing and callback time or expect the callback to reject it as a skill fa
 Standard Boot TLS configuration can require inbound mTLS, for example
 `server.ssl.client-auth=need`. This protects the transport; Sidecar does not map
 X.509 certificates to execution identities.
+
+## Local management accounts
+
+The browser management surface is on the application port (`/management/**` and
+`/api/management/**`); port 9091 remains the health-only Actuator port. Local
+accounts use server-side form-login sessions and CSRF protection. Their roles
+are `viewer`, `editor`, and `admin`, with each higher role including lower-role
+permissions. This release exposes account and session APIs; configuration
+reading, editing and publication arrive in PR 1.3.2/1.3.3. A management session
+cannot call `/v1/**`; an execution JWT or observability API key cannot log in to
+management. Sessions are local to one process and do not survive restart.
+
+Set `LOOMSPAN_SIDECAR_SETUP_TOKEN` to an **unpadded base64url encoding of exactly
+32 cryptographically random bytes**. For example, generate a value with
+`python -c "import secrets; print(secrets.token_urlsafe(32))"` and deliver it
+through a deployment secret. The value is read only from the process environment;
+it is never saved in SQLite. Visit `/management/setup`, supply that credential
+and the first admin email, then follow the emailed password-set link. Missing,
+malformed or wrong credentials leave setup locked; execution stays available.
+The first successful request permanently reserves the chosen address before
+email delivery. If delivery fails, repeat setup with the same credential and
+address after fixing SMTP. Other addresses cannot replace it. After the admin
+sets a password, setup remains closed even if the environment variable remains.
+
+Configure SMTP with standard `spring.mail.*` values in deployment YAML or their
+environment overrides. Set `loomspan-sidecar.management.mail-from` to a sender
+address and `loomspan-sidecar.management.external-base-url` to the trusted public
+HTTPS console URL; loopback HTTP is allowed for local development. Links are
+built solely from that configured URL. SMTP connect, read and write waits default
+to five seconds. Missing or failed delivery prevents setup/invitations/recovery;
+existing logins and execution remain available. Test the deployment's SMTP and
+HTTPS settings with a dedicated mailbox before initial setup. Never use a live
+recipient in automated tests. The mail health probe is disabled so an SMTP outage
+does not mark execution readiness down; email actions report their own failure.
+
+Account usernames are email addresses. Sidecar trims surrounding whitespace and
+lowercases the whole ASCII address, including the local part, for unique storage,
+login and recovery. Addresses are immutable. To replace one, an admin invites
+the new address, waits for its activation, then disables the old account. Pending
+or disabled accounts cannot log in. Admins may invite, change roles, disable,
+re-enable and resend an invitation, but cannot set someone else's password.
+The last enabled, activated admin cannot be disabled or demoted. Passwords use
+salted PBKDF2-HMAC-SHA256. They must have 15–128 Unicode code points (at most
+512 UTF-8 bytes), with uppercase, lowercase, a digit and a non-whitespace
+punctuation or symbol. Spaces are accepted but do not count as symbols. There
+is no blocklist, breached-password lookup or periodic expiration.
+
+The public `/management/login`, `/management/forgot`, and
+`/management/password/{set,reset}` pages provide minimal keyboard-accessible
+forms, including password-manager paste/autofill. Forgotten-password requests
+always give the same response for known and unknown addresses. Set links expire
+after 24 hours and reset links after 30 minutes; each is single-use. A successful
+password change or reset ends affected sessions and invalidates other links.
+Sign in normally afterward. Recovery is email only: there is no offline account
+repair, security question, or admin-assigned replacement password. If email and
+administrator access are both lost, restore a known-good **full database backup**
+as an installation recovery operation, not as a password-reset bypass.
+
+JSON clients obtain a CSRF token from a session page or the authenticated
+`GET /api/management/session` response and send it as `X-CSRF-TOKEN` on unsafe
+requests. The login page and all other forms include a hidden CSRF value. The
+session endpoint returns `id`, normalized `email`, `role`, effective
+`permissions`, and `csrfToken`. `POST /api/management/session/activity` records
+an intentional user action and extends the default 30-minute idle deadline;
+polling the session endpoint does not. `POST /api/management/logout` ends the
+session. `POST /api/management/password/change` takes `currentPassword` and
+`newPassword`. Anonymous `POST /api/management/setup` takes `credential` and
+`email`; `POST /api/management/password/forgot` takes `email`; and
+`POST /api/management/password/{set,reset}` takes `token` and `password`.
+Admin-only `GET/POST /api/management/accounts` lists accounts or invites one
+with `email` and `role`; `PATCH /api/management/accounts/{id}` accepts `role`
+and/or `enabled`, and `POST …/{id}/resend-invite` resends to a pending user.
+Responses expose account id, email, role, enabled and activated state, never
+password hashes or tokens. The session cookie is HttpOnly, SameSite=Lax and
+Secure by default; use HTTPS in deployment. Set
+`LOOMSPAN_SIDECAR_SECURE_COOKIE=false` only for a local HTTP test. Browser and
+management API responses use `Cache-Control: no-store` and
+`Referrer-Policy: no-referrer`.
 
 ## Execution API
 
@@ -518,6 +596,9 @@ above that budget plus cleanup margin (the Kubernetes example uses 45 seconds).
 | `loomspan-sidecar.url-variables` | Empty by default; exact allowed process-environment names for REST `base-url`; changes require restart. |
 | `loomspan-sidecar.storage.database-path` | `/sidecar/data/sidecar.db`; writable persistent local database path and parent directory required at startup. |
 | `loomspan-sidecar.snapshots.max-retained` | `10`; positive count of stored snapshots, including pending and failed history; protected snapshots may exceed it. |
+| `loomspan-sidecar.management.session-idle-timeout` | `30m`; positive idle deadline extended only by intentional session activity. |
+| `loomspan-sidecar.management.mail-from` | Required nonblank sender address for email-dependent management actions. |
+| `loomspan-sidecar.management.external-base-url` | Required trusted HTTPS console URL for email links; loopback HTTP is allowed in development. |
 | `loomspan-sidecar.auth.jwt.issuer-uri` | Required nonblank issuer; also used with an explicit local key or JWKS URL. |
 | `loomspan-sidecar.auth.jwt.audience` | Required nonblank audience. |
 | `loomspan-sidecar.auth.jwt.jwk-set-uri` | Optional explicit JWKS URL; mutually exclusive with the public-key location. |

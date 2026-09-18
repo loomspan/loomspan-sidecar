@@ -18,6 +18,7 @@ class ConfigurationReferenceTest {
         add(expected, "loomspan-sidecar.", RestRoutesProperties.class);
         add(expected, "loomspan-sidecar.storage.", SidecarStorageProperties.class);
         add(expected, "loomspan-sidecar.snapshots.", SidecarSnapshotProperties.class);
+        add(expected, "loomspan-sidecar.management.", SidecarManagementProperties.class);
         add(expected, "loomspan-sidecar.auth.jwt.", SidecarJwtProperties.class);
         add(expected, "loomspan-sidecar.executions.", SidecarExecutionProperties.class);
 
@@ -36,6 +37,10 @@ class ConfigurationReferenceTest {
         assertThat(defaults).contains("classpath:/sidecar-empty-skills/*.yaml", "url-variables: []", "port: 9091");
         assertThat(defaults).contains("database-path: /sidecar/data/sidecar.db");
         assertThat(defaults).contains("max-retained: 10");
+        assertThat(defaults).contains("session-idle-timeout: 30m", "mail-from:", "external-base-url:",
+                "mail.smtp.connectiontimeout: 5000", "mail.smtp.timeout: 5000", "mail.smtp.writetimeout: 5000");
+        assertThat(defaults).contains("http-only: true", "same-site: lax",
+                "secure: ${LOOMSPAN_SIDECAR_SECURE_COOKIE:true}");
         assertThat(compose).contains("./sidecar/keys:/sidecar/keys:ro", "LOOMSPAN_SIDECAR_AUTH_JWT_AUDIENCE",
                 "${QUICKSTART_HOST_PORT:-8081}:8081", "${SIDECAR_API_PORT:-8080}:8080",
                 "${SIDECAR_MANAGEMENT_PORT:-9091}:9091", "sidecar-data:/sidecar/data");
@@ -61,6 +66,10 @@ class ConfigurationReferenceTest {
                 .contains(new SidecarStorageProperties().getDatabasePath(), "writable", "persistent", "startup");
         assertThat(rows.get("loomspan-sidecar.snapshots.max-retained"))
                 .contains("`" + new SidecarSnapshotProperties().getMaxRetained() + "`", "positive", "snapshot");
+        assertThat(rows.get("loomspan-sidecar.management.session-idle-timeout"))
+                .contains("`30m`", "positive", "activity");
+        assertThat(rows.get("loomspan-sidecar.management.mail-from")).contains("sender", "email");
+        assertThat(rows.get("loomspan-sidecar.management.external-base-url")).contains("HTTPS", "link");
         assertThat(rows.get("loomspan-sidecar.auth.jwt.issuer-uri")).contains("nonblank", "explicit local key or JWKS");
         assertThat(rows.get("loomspan-sidecar.auth.jwt.audience")).contains("nonblank");
         assertThat(rows.get("loomspan-sidecar.auth.jwt.jwk-set-uri")).contains("mutually exclusive");

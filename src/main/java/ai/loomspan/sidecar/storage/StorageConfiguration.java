@@ -2,12 +2,14 @@ package ai.loomspan.sidecar.storage;
 
 import ai.loomspan.sidecar.config.SidecarStorageProperties;
 import ai.loomspan.sidecar.config.SidecarSnapshotProperties;
+import ai.loomspan.sidecar.management.ManagementAccountRepository;
 import org.flywaydb.core.Flyway;
 import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteDataSource;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -39,6 +41,12 @@ public class StorageConfiguration
     ConfigurationSnapshotRepository configurationSnapshotRepository(DataSource storageDataSource, Flyway storageFlyway)
     {
         return new ConfigurationSnapshotRepository(new NamedParameterJdbcTemplate(storageDataSource));
+    }
+
+    @Bean
+    ManagementAccountRepository managementAccountRepository(DataSource storageDataSource, Flyway storageFlyway)
+    {
+        return new ManagementAccountRepository(new JdbcTemplate(storageDataSource));
     }
 
     @Bean

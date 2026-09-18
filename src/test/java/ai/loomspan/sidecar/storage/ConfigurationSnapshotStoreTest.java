@@ -246,7 +246,7 @@ class ConfigurationSnapshotStoreTest
         assertThat(initial.status()).isEqualTo(SnapshotStatus.PENDING);
         assertThat(count(first.source, "configuration_snapshot")).isEqualTo(1);
         assertThat(count(first.source, "configuration_skill_document")).isZero();
-        assertThat(count(first.source, "flyway_schema_history")).isEqualTo(1);
+        assertThat(count(first.source, "flyway_schema_history")).isEqualTo(2);
         var second = open(path);
         assertThat(second.store.current()).isEqualTo(initial);
         assertThat(count(second.source, "configuration_snapshot")).isEqualTo(1);
