@@ -130,6 +130,29 @@ UUID; imported status will not prove publication there. Phase 5 defines the
 archive layout, integrity checks, and import/export operations. Flyway version
 and application version are not transfer compatibility rules.
 
+### In-memory configuration drafts
+
+`ConfigurationDraft` starts from a runtime-published `ConfigurationSnapshot`
+explicitly supplied by its caller. It retains that snapshot's local UUID as the
+base and holds the complete authored skill documents and REST YAML. The model
+does not consult the database's intended-production pointer. Each draft is an
+independent, ephemeral copy; edits replace the complete content without parsing
+YAML or resolving placeholders, so temporarily invalid text and literal values
+are retained. A frozen candidate keeps that base identity and authored content
+unchanged after later draft edits or loss of the draft reference.
+
+An edit clears the draft's validation result, including when replacement text is
+identical. A caller can attach a validation result only to the precise current
+frozen candidate; late results for older candidates and results from another
+draft are rejected. Supplied validation errors retain their source labels and
+available locations. This model does not run framework validation, prepare
+resources, authorize publication, persist drafts, or update the running
+configuration. Phase 2 must validate and publish through the supported framework
+API, require successful validation of the exact frozen content before ordinary
+Publish, and coordinate accepted updates. Phase 3 must supply real server-session
+privacy, draft and lease lifecycle enforcement, and integrated concurrency
+verification. No end-to-end management workflow is provided by this model alone.
+
 The current database pointer records **intended production**, not the framework
 generation that handled an execution or the source for an export. A publication
 attempt stores complete B as pending and switches the pointer from expected A
