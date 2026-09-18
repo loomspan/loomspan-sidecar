@@ -2,81 +2,186 @@
 
 Date: 2026-09-16
 
-Last handoff update: 2026-09-16, including framework tickets and restart bootstrap.
+Last handoff update: 2026-09-17, including delivered framework contracts, revised
+restart bootstrap, the agreed SQLite/Flyway/Spring JDBC storage stack, and v1
+database-first publication, startup, history, accounts, editing defaults, bundle
+compatibility and the beta 5 release scope. Review clarifications record editor
+import safeguards, unsanitized v1 exports, draft invalidation after successful
+publication, allowlisted environment variables for REST base URLs, unreverted-publication fault behavior, and
+the unreleased development policy. The admitted-invocation generation accessor
+was subsequently delivered and checked in the installed beta 5 snapshot.
+The latest review also settled non-cancellable updates, refreshed destructive
+confirmation, failed snapshot status, fresh local import/rollback identities, and
+separate validation and publication preparation.
 
-Status: proposed phase structure grounded in the agreed product scope. Ready for
-roadmap review; not a set of implementation tickets or authorization to implement.
+Status: agreed six-phase beta 5 scope, ready for incremental ticket preparation.
+This document is not a set of implementation tickets or authorization to run them.
 
 ## Outcome
 
 An embedded console manages its own Sidecar instance. Users create, update and
 remove skills and REST configuration in session-owned drafts, validate the complete
 candidate, and publish it without restarting Sidecar. Published configuration can
-be backed up, restored, and moved between development, QA and production as a unit.
+be backed up, restored, and transferred as a unit. V1 transfers authored
+configuration as-is, preserving URL placeholders that resolve against each
+destination's explicitly allowlisted environment variables.
 
-Define phases now and refine this roadmap before creating tickets. Keep one
-roadmap rather than separate phase documents that duplicate decisions. Split out
+Keep one roadmap rather than separate phase documents that duplicate decisions. Split out
 phase detail only when it becomes useful. Unresolved product decisions below
 block affected tickets, not this roadmap.
 
+## Development policy: break and rebuild
+
+Sidecar is in development with no releases or deployed-version compatibility
+obligations. The beta labels in this document are development milestones, not
+evidence of shipped versions. Destructive changes are welcome when they simplify
+the intended design. Replace obsolete code, configuration and schemas directly;
+do not add compatibility shims, deprecated paths, legacy readers, conversion tools
+or migration/adoption workflows to preserve the current development implementation.
+Development databases and configuration may be discarded and recreated.
+
+All six phases will be completed before a working Sidecar deployment is expected.
+Intermediate phase commits may break existing functionality, application startup
+or even the build while later phases complete the replacement. Do not retain old
+implementations or add temporary bridges solely to keep those commits deployable.
+Tickets still own their tests and documentation; identify checks blocked by later
+phases and complete them when those dependencies land. The integrated result must
+pass its required checks before release. Flyway and bundle versioning serve the
+new design; they do not create compatibility obligations for discarded development
+states. Apply the design lens's simplicity and technical-debt rule throughout.
+
 ## Resume here in a new context
 
-The work is at product/architecture refinement, not Sidecar implementation. The
-developer requested two framework dependency tickets, created locally for manual
-transfer to loomspan-framework. No pipeline, framework change, Sidecar production
-change, commit or publication was performed for this roadmap work.
+First read the [Sidecar design lens](../design-lens.md). Keep its principles in
+context throughout our discussion, ticket preparation, planning, implementation
+and review: choose the simplest solution that covers the requirements, avoid
+technical debt, and welcome destructive development changes without compatibility
+shims. Apply these principles when refining this roadmap as well as implementing it.
 
-Read Agreed scope first, then Blocking loomspan-framework issues and the proposal
+The work is at product/architecture refinement, not Sidecar implementation. On
+2026-09-17 the developer reported both framework enhancements complete. The matching
+local checkout now exposes `prepare(Collection<SkillDocument>)` and
+`onGenerationRetired(Consumer<String>)`. These contracts were checked against the
+public API and framework reload documentation; no Sidecar integration evidence is
+claimed. The Sidecar development version is now `1.0.0-beta.5-SNAPSHOT`;
+the framework dependency is the developer-installed beta 5 snapshot, confirmed by
+the developer on 2026-09-17. No feature
+implementation, pipeline execution or publication is claimed by this roadmap update.
+
+The framework subsequently delivered `AdmittedSkillInvocation.generationId()`.
+Its implementation, public documentation and installed snapshot API were checked
+on 2026-09-17. Sidecar can use the captured ID directly for snapshot correlation;
+no additional handoff/publication synchronization is needed solely to discover it.
+This establishes the framework contract, not implemented Sidecar correlation.
+
+After the design lens, read Agreed scope, then Delivered loomspan-framework contracts and the proposal
 sections below. Do not reopen settled session ownership, snapshot invalidation,
 destructive import, or management-only bootstrap locking. In particular, the old
 one-shared-draft proposal was rejected: users must never inherit another user's
 unpublished changes or responsibility for them.
 
-The latest discussion favors application-supplied skill content, including initial
-activation after restart. The framework ticket now requests that capability; this
-does not select SQLite as Sidecar's persistence engine. Next, confirm the Sidecar
-storage choice and beta deployment scope, then define persistent publication and
-crash recovery. Continue refining this document before creating Sidecar tickets.
-Target URL portability remains deliberately deferred until ticket preparation.
+The framework accepts application-supplied skill content, including resubmission
+after restart, but does not defer its ordinary configured startup activation.
+Sidecar must gate execution during startup restore and staging. SQLite is now selected as
+the embedded default for production-capable single-instance storage, with Flyway
+migrations and `NamedParameterJdbcTemplate` repositories using Spring transactions.
+Publication commits the intended production snapshot in SQLite before framework
+publication; restart follows that committed pointer. A failed publication attempts
+to revert the pointer; failure of that revert requires operator intervention in v1.
+Retain snapshot history separately from runtime generation retirement, defaulting
+to ten snapshots including current production. Framework startup must be empty;
+Sidecar loads/publishes the database-selected configuration before opening dispatch,
+and fails startup on any load/activation error. All six phases target beta 5.
+Next, prepare settled phase tickets using `PR 1.<phase>.<sequence>` identifiers.
+V1 supports allowlisted environment variables for complete REST base URLs;
+automatic URL rewriting and console-managed destination bindings remain outside v1.
 
-When the developer returns, inspect whether the framework tickets have moved or
-been completed and recheck the public contracts against the matching local checkout.
-Do not assume an API described as requested here exists. Framework completion
-requires the developer's snapshot reinstall and affected Sidecar integration checks.
-Existing beta 4 QA/release state remains in the handoff, not in this document.
+Use the developer-maintained installed snapshot and matching local checkout workflow.
+Dependent implementation must supply affected Sidecar integration checks, including
+restart gating and retirement.
 
 ## Agreed scope
 
+- Ship SQLite as the embedded default for durable managed configuration, suitable
+  for single-instance production use without a separate database process. Provide
+  writable persistent storage and verified recovery/backup procedures. External
+  database support remains a separate scope decision.
+- Use Flyway for schema creation, versioned DDL, required reference data and
+  upgrade-related data transformations. Use Spring JDBC's
+  `NamedParameterJdbcTemplate` with small repository classes and Spring transactions
+  for runtime persistence. Hibernate/JPA is not part of the selected stack.
 - Support all framework-supported model-backed and REST YAML skill types and
   all aspects of their declarations. Exclude Java skill authoring and hosting.
-- The editor may start as a complete YAML text editor; a section-based editor
-  with explanations is an alternative or later enhancement. The choice is not
-  settled, and the UI must not restrict the supported authoring surface.
+- Use a full YAML text editor for v1, preserving the complete supported authoring
+  surface. Structured skill editing is deferred.
+- Start the framework with no skills, then load, prepare and publish the complete
+  current database snapshot with matching REST resources before opening the queue
+  for execution requests. Log errors and fail startup if loading or activation fails.
+- Use SQLite-backed Spring Security local accounts with hierarchical management
+  roles `viewer`, `editor` and `admin`, as detailed below. Keep execution JWT
+  authentication separate.
 - Run the console inside Sidecar and manage only that instance. Central management
   of multiple instances is outside this feature set.
 - Maintain session-owned edits with one active editing lease for the instance.
   Users start from the current published snapshot, never another user's edits.
   Logout or changing browsers loses the edits; cross-session recovery is deferred.
   Lease expiry alone preserves edits within the session. Resumption requires an
-  unchanged base snapshot ID and reacquisition of the lease. A changed snapshot
+  unchanged runtime-published base snapshot ID and reacquisition of the lease. A changed runtime snapshot
   invalidates and clears old edits. No cross-user draft revision is required.
 - Protect editing with an exclusive lease with expiry. Automatically
   attempt renewal while the user is still working. Enforce ownership server-side.
 - Validate before publication using the framework's prepare/publish API. Skill
   and REST configuration activation must not require a restart.
-- Successful publication releases the lease. Validation/publication errors are
-  shown to the user and preserve their edits and lease, subject to normal expiry.
-- Initial import/restore is destructive: break leases, delete drafts and notify
-  users that they must start over. Whether invalid imports leave editing sessions
-  untouched until validation succeeds is a recommendation still to settle.
+- Commit the intended production snapshot pointer in SQLite immediately before
+  framework publication, after complete validation and REST resource staging.
+  Restart activates the database-selected snapshot even if publication did not
+  finish before a crash. On publication failure, attempt to restore the prior
+  pointer; if that also fails, require operator recovery in v1.
+- Retain immutable configuration history for rollback and historical debugging.
+  Database history cleanup is separate from framework generation retirement;
+  default to the latest ten stored snapshots, including failed attempts and current
+  production, configurable under `loomspan-sidecar`. Correlate Sidecar diagnostics
+  with durable snapshot IDs.
+- After framework publication succeeds, invalidate drafts based on the prior
+  runtime-published snapshot and cancel editing leases. Committing or reverting the
+  intended SQLite pointer alone does not invalidate drafts or cancel leases.
+  Failed ordinary publication preserves edits and leases subject to their normal
+  lifecycle; destructive import/rollback cutover remains the exception. Show
+  validation/publication errors to the user.
+- Once an authorized update starts with frozen content, run it to completion of
+  its success or failure handling. No user, session, lease or subsequent management
+  action can cancel it. This does not promise success despite operational failure
+  or process interruption; the existing shutdown and recovery policies still apply.
+- Import/restore validates the complete package and candidate before destructive
+  cutover: break leases, delete drafts and notify users that they must start over.
+  Validation failure leaves editing sessions untouched. Once cutover begins, drafts
+  remain discarded even if activation subsequently fails.
+- Editors may import or roll back even when doing so breaks another user's lease. Before
+  destructive cutover, the UI must clearly warn that drafts will be discarded,
+  identify the current lease owner when present, and require explicit confirmation.
+  If the specific editing lease grant (or absence of a lease) or runtime-published
+  snapshot changes before update acceptance, reject
+  the stale confirmation and require refreshed confirmation before starting the update.
+  Every replacement lease requires fresh confirmation, including one granted to
+  the same user, session or tab; renewal of the existing grant is not replacement.
+  This is an intentional exception to admin-only explicit lease takeover.
 - Keep one fixed RestSkillHandler bean. Select the matching route configuration
   for each captured invocation generation; do not replace the bean.
 - Managed configuration currently means skill declarations and the REST routes
   and target configuration needed by that handler. Arbitrary Spring settings,
   model-connection reload, and identity-provider configuration are not included.
 - Skill definitions and REST route mappings travel together in snapshots.
-- Target URL portability is explicitly TBD. Revisit during ticket preparation;
-  do not silently choose whether imports replace or preserve destination URLs.
+- V1 exports/backups preserve authored configuration without secret detection,
+  redaction or encryption. Sensitive values entered into configuration are included.
+  Backup encryption is a possible future feature, outside v1.
+- Support multiple deployment-declared URL variables through
+  `loomspan-sidecar.url-variables`. REST `base-url` may be a literal URL or a whole-value
+  `${NAME}` reference to an allowlisted, nonblank environment variable whose value
+  passes REST URL validation. Export/import preserves authored placeholders and
+  resolves them against the destination environment before activation. The allowlist
+  and environment values are deployment configuration, outside managed snapshots
+  and configuration bundles. No automatic URL rewriting, destination-URL preservation
+  or console-managed destination bindings are included in v1.
 - Require an environment-supplied, unique one-time setup credential for initial
   administrator creation. On an uninitialized instance with no usable credential,
   lock management access and explain the condition in logs and the console landing
@@ -93,18 +198,22 @@ single immutable startup route configuration. The container uses a read-only
 configuration mount. Browser login, authoring storage, management APIs and an
 embedded authoring UI still need implementation.
 
-The matching local framework provides SkillReloader.prepare(), publish() and
-snapshot(). Preparation freezes and validates a complete candidate; publication
-does not reread files. The application must stabilize source files during prepare
-and stage external configuration before publication. The injected SkillCatalog
+The matching local framework provides `SkillReloader.prepare()`,
+`prepare(Collection<SkillDocument>)`, `publish()`, `snapshot()` and
+`onGenerationRetired(Consumer<String>)`. Preparation freezes and validates a
+complete candidate; publication does not reread files. The application must
+stabilize source files during directory-based prepare, or supply complete named YAML
+content, and stage external configuration before publication. The injected SkillCatalog
 remains a startup snapshot. Framework-admitted invocation trees retain their
 captured generation; REST invocations carry its ID.
 
 Preparation validates configuration, not future model outcomes or remote service
 availability. Publication can reject stale candidates or shutdown-time updates.
-The framework supplies neither a multi-file storage transaction nor a signal that
-old application-owned routes and clients are safe to delete. Its generation IDs
-are process-local, not durable exported snapshot identities.
+The framework supplies retirement notification for superseded published generations
+after captured preparation, pending admission and physical invocation work release
+them. Sidecar owns cleanup of matching routes and clients. It supplies no storage
+transaction or durable notification delivery. Its generation IDs are process-local,
+not durable exported snapshot identities.
 
 Use only supported ai.loomspan.api contracts. Missing capabilities must be resolved
 through deliberate framework planning, never internal imports or bean replacement.
@@ -112,32 +221,35 @@ This roadmap plans the evolution of the design lens's startup-only rule; it does
 not claim reload is already implemented. Preserve the existing shutdown budget,
 trusted execution identity, and framework execution authority.
 
-The [beta 4 handoff](../beta4-handoff.md) remains the sole tracker for existing QA
-and release work. This roadmap neither copies those obligations nor marks them
-complete. The target release and its relationship to beta 4 remain to be decided.
+All six management-console phases target Sidecar
+`1.0.0-beta.5-SNAPSHOT`; beta 4 release evidence is not implied by this scope change.
 
 ## Phase 1: Configuration storage and snapshot foundation
 
 **Outcome:** Establish a durable representation of the active configuration,
-session-owned edits, and complete snapshots that can support authoring and portability.
+session-owned edits, and complete snapshots that support authoring and backup/restore.
 
 Candidate ticket groups:
 
 - Define the managed configuration boundary, stable snapshot identity and format
   version, and separation between durable snapshot IDs and runtime generation IDs.
-- Implement the chosen persistent store and draft lifecycle, with a defined
-  migration/bootstrap path from existing mounted skills and routes.
-- Define and implement recovery of the last published configuration after process
-  restart, including interrupted writes and publication bookkeeping.
+- Implement SQLite persistence through Spring JDBC repositories, Flyway schema
+  migrations and the draft lifecycle. Start new databases empty. Do not adopt or
+  supply a migration path for the old mounted-skills/routes development setup.
+- Implement restart loading of the database-selected intended production snapshot
+  and retained immutable history, using the agreed database-first publication policy.
 
 **Exit evidence:** Draft edits do not change active execution; complete snapshots
 can be recovered without mixing skill and route versions; restart and interrupted
-write tests demonstrate the agreed recovery behavior. Storage and deployment
+write tests demonstrate the agreed recovery behavior. Migration and repository
+tests use real SQLite, covering fresh database creation and any explicitly supported
+schema upgrades. Discarded development schemas need no upgrade path. Storage and deployment
 requirements are documented in this phase.
 
-**Decisions before affected tickets:** File versus database storage; session expiry
-and restart behavior; backup history retention; initial mount compatibility; the portable
-configuration boundary, including target URLs where it affects the data contract.
+**Ticket preparation:** Specify SQLite deployment details and the snapshot/bundle
+data contract. Preserve authored URL placeholders; deployment URL-variable declarations
+remain outside the snapshot/bundle schema.
+Apply the startup, retention and session policies below.
 
 ## Phase 2: Validated runtime publication and REST generation lifecycle
 
@@ -149,6 +261,15 @@ Candidate ticket groups:
 - Coordinate immutable candidate content, framework preparation, candidate route
   validation and HTTP client preparation, and publication. An edit after validation
   must require validation of the new candidate before it can be published.
+  Validate records a result for immutable authored content and releases temporary
+  resources. Explicit Publish prepares and stages that content again; it does not
+  retain a prepared generation or clients while the user considers publication.
+  A prior validation success does not guarantee publication success.
+  The server must reject ordinary Publish unless the exact frozen draft content
+  has a successful validation result; this is not merely a disabled UI button.
+  Import/rollback follows its own required validation-before-cutover flow.
+- Validate literal REST base URLs and allowlisted whole-URL environment references
+  during startup and candidate staging, using the URL-variable policy below.
 - Use current catalog snapshots for discovery and generation-specific configuration
   in the single REST handler. Stage initial configuration before admitting work.
 - Coordinate execution handoff, old configuration/client retention and retirement,
@@ -163,8 +284,26 @@ No success claim is inferred solely from framework tests.
 Retain framework generation capture at Sidecar's existing worker handoff; no new
 Sidecar policy to pin a generation at HTTP acceptance is requested.
 
-**Decisions before affected tickets:** Safe retirement policy and bounds; exact
-publication/recovery semantics. Keep these consistent with the single admission owner.
+Serialize update attempts from authorization/base checks and content freezing
+through preparation, staging, publication and success/failure handling. An update
+starts only after these admission checks succeed. A waiting request has not started
+and must be checked when its turn arrives. Once started, lease expiry, takeover,
+logout, session expiry, account disable, role change, browser disconnect and later
+edits cannot cancel or change its frozen content. Do not provide a cancel operation.
+Operational errors still follow the failure policy; do not add an extra shutdown
+drain budget or promise completion across a process crash.
+
+Other sessions may edit A while B is being prepared. Draft bases always refer to
+the runtime-published snapshot, never the intended SQLite pointer. Successful
+publication of B invalidates A-based drafts and cancels leases; failed publication
+does not. Coordinate draft/lease operations with the short publish-and-invalidate
+section so no stale draft or lease escapes invalidation. This does not pause
+execution dispatch. No transaction spanning SQLite and the framework, cross-user
+draft revision scheme or lease-lifetime extension is required.
+
+**Ticket preparation:** Specify runtime resource cleanup bounds and the operator
+recovery procedure. Apply the agreed database-first publication and fault policies
+below, keeping dispatch behavior consistent with the single admission owner.
 
 ## Phase 3: Management identity, APIs and exclusive draft editing
 
@@ -184,10 +323,9 @@ Candidate ticket groups:
 be reused after initialization; unauthorized management calls fail. Concurrent-user
 tests prove exclusivity, expiry, renewal and rejection of writes from a former owner.
 
-**Decisions before affected tickets:** Local account/session details, permissions
-and account recovery; lease and inactivity timings; what counts as activity;
-save/release versus discard; administrator takeover; multiple tabs in one session.
-Those action details were proposed in discussion but have not all been approved.
+**Ticket preparation:** Apply the account, permission, session and editing defaults
+below. Specify the minimal offline administrator recovery procedure and public
+management API contracts without adding external identity providers in v1.
 
 ## Phase 4: Embedded authoring and publication console
 
@@ -202,18 +340,25 @@ Candidate ticket groups:
 - Display draft ownership, renewal/loss of lease, changed configuration, validation
   state and publication results. Preserve unsaved editor content on lease loss
   according to the agreed UX, without allowing stale writes.
+- Provide a publication-history screen showing retained submitted snapshots and
+  their recorded status, with the current runtime-published snapshot identified.
+  Users unsure whether publication completed can inspect this history after
+  reconnecting or logging in again. Pending status remains outcome-unknown;
+  no separate operation-status service or durable job system is required in v1.
 
 **Exit evidence:** Browser-level workflows cover creating, modifying and removing
 skills and routes, validation failures, successful publication without restart,
 and two users contending for the draft. The published catalog reflects the update.
 
-**Decisions before affected tickets:** Full-text editor versus structured sections
-for the first release; validation/review presentation; unsaved-change handling.
+**Ticket preparation:** Use the full YAML editor and the editing policy below.
+Present source-labelled validation errors and a clear publication result; frontend
+tooling and precise layouts remain implementation choices.
 
-## Phase 5: Backup, restore and environment promotion
+## Phase 5: Backup, restore and configuration transfer
 
 **Outcome:** Export and recover complete managed configuration, and move it between
-instances through a deliberate, validated workflow.
+instances as-is through a deliberate, validated workflow. Authored URL placeholders
+resolve using the destination's allowlist and environment values.
 
 Candidate ticket groups:
 
@@ -222,24 +367,25 @@ Candidate ticket groups:
 - Implement destructive import/restore: replace managed configuration, break
   leases, delete session drafts and notify users. Validate destination requirements
   and define the failure boundary before destructive cutover.
+  The confirmation UI must show the disruption and current lease owner's identity,
+  including when an editor imports; refresh that information before confirmation.
+  Reject stale confirmation if the specific lease grant (or absence of a lease)
+  or the runtime-published snapshot
+  changed before the update starts; refresh and reconfirm without discarding drafts.
 - Restore an earlier configuration through the same validated activation path;
   define backup scope, retention and supported recovery procedures.
 
 **Exit evidence:** Round-trip and two-instance tests preserve skill definitions
 and route mappings together; malformed/incompatible bundles cannot partially alter
 active configuration; restore and destination validation work without restarting
-for supported managed configuration. Target URL behavior matches its eventual
-explicit decision.
+for supported managed configuration. Imported target configuration matches the
+bundle as authored. Two-instance tests prove that the same placeholder resolves to
+each destination's URL, and missing, undeclared, blank or invalid URL bindings fail
+before destructive cutover.
 
-**Decisions before affected tickets:** Target URLs (explicitly deferred); secret
-references versus exported values; destination bindings; compatibility policy;
-destructive cutover timing; whether backup includes only managed configuration
-or also accounts for full instance recovery. Drafts are session-bound.
-
-Restoring as a new activation, keeping secrets local, and excluding
-accounts/sessions/locks from promotion bundles are recommended designs, not yet
-agreed product requirements. Portability shapes Phase 1 even though its complete
-user workflow ships here.
+**Ticket preparation:** Apply the versioned bundle, authored-content and destructive
+cutover and URL-variable policies below. Reuse the Phase 1 snapshot contract;
+automatic URL rewriting and console-managed destination bindings remain outside v1.
 
 ## Phase 6: Deployment and end-to-end readiness
 
@@ -249,159 +395,450 @@ procedures and verified interaction with Sidecar's existing execution service.
 Candidate ticket groups:
 
 - Finish container/deployment examples for writable persistent state, setup
-  credentials and console access, preserving non-root operation.
+  credentials, URL-variable allowlists and environment values, and console access,
+  preserving non-root operation.
 - Exercise publication, concurrent editing, backup/restore, process interruption
   and shutdown together through the real Sidecar application.
-- Complete operator guidance and phase-specific acceptance evidence; integrate
-  with the existing release handoff when the target release is chosen.
+- Complete operator guidance and phase-specific acceptance evidence for the beta 5 target.
 
 **Exit evidence:** Deployment exercises demonstrate persistent state, console-lock
 isolation, recovery and the complete author/export/import/publish workflow. Existing
-execution and shutdown contracts remain covered. Release checks follow the existing
-handoff and published-framework dependency policy.
+execution and shutdown contracts remain covered. Release checks follow the
+published-framework dependency policy.
 
 Tests and documentation belong to every implementation ticket. This phase covers
 cross-feature verification and packaging, not deferred correctness or documentation.
 
-## Blocking loomspan-framework issues
+## Delivered loomspan-framework contracts
 
-This is the working list of framework dependencies for this feature. Both items
-are open; local tickets were created for manual transfer to loomspan-framework.
-They have not been executed and are not external issue-tracker IDs.
-Resolve them through supported public contracts before dependent Sidecar work;
-do not compensate with internal imports or framework bean replacement.
+The reload enhancements and subsequent admitted-invocation generation accessor
+were reported complete by the developer on 2026-09-17 and their public contracts
+were verified in the matching local checkout. This establishes
+framework capability, not completed Sidecar behavior. Use only these supported
+contracts; do not compensate with internal imports or framework bean replacement.
 
-| Issue | Required outcome | Blocks |
+| Capability | Delivered contract | Sidecar integration required |
 | --- | --- | --- |
-| Safe retirement notification | A supported way to know that an old generation can no longer be used by admitted/running work, so Sidecar can retire its matching REST configuration and HTTP clients. Define ordering, concurrency and shutdown guarantees. Framework generation cleanup alone does not retire application-owned resources. | Phase 2 resource retirement |
-| Application-supplied skills at startup and reload | Prepare a complete collection of named YAML content without replacing the active skill tree. Support application-controlled initial activation and restart loading as well as reload; a directory-only prepare argument is insufficient for database-backed content. Preserve existing directory-based behavior for other applications. | Phase 1 storage integration and Phase 2 preparation/bootstrap |
+| Safe retirement notification | `onGenerationRetired(Consumer<String>)` reports safe retirement of a superseded published runtime generation. Sidecar still owns resource cleanup. | Phase 2 resource retirement and shutdown |
+| Application-supplied skills | `prepare(Collection<SkillDocument>)` accepts a complete named YAML replacement set. Configured startup activation still occurs; restore uses prepare/stage/publish behind a Sidecar execution gate. | Phase 1 storage integration and Phase 2 preparation/bootstrap |
+| Captured invocation generation | `AdmittedSkillInvocation.generationId()` returns the immutable process-local generation ID captured during preparation, before input conversion/validation. Reads do not retain ownership; the ID remains available after execution, release or cutoff. | Phase 2 generation-to-snapshot correlation at worker handoff |
 
-Tickets (self-contained; filenames remain identifiers after manual relocation):
+Original ticket identifiers (historical references; these files were not found in
+either checkout's `ai/thoughts` tree on 2026-09-17):
 
-- [2026-09-16-framework-generation-retirement-notification.md](../tickets/2026-09-16-framework-generation-retirement-notification.md)
-- [2026-09-16-framework-application-supplied-skill-lifecycle.md](../tickets/2026-09-16-framework-application-supplied-skill-lifecycle.md)
+- `2026-09-16-framework-generation-retirement-notification.md`
+- `2026-09-16-framework-application-supplied-skill-lifecycle.md`
 
-Both recommend the Full 5-Step Pipeline. After moving them, update these links or
-locate the same filenames under loomspan-framework/ai/thoughts/tickets/. They contain
-framework outcomes and acceptance criteria, not instructions to implement Sidecar.
+Integration constraints from the delivered contract:
 
-### Storage discussion — open, not a selected design
+- `SkillDocument(sourceName, yaml)` uses a diagnostic label, not a file path or
+  callable skill name. Labels must be nonblank and exactly unique; documents and
+  YAML must be non-null. Preparation copies/freezes the supplied content. Empty
+  content removes all YAML skills. No-argument preparation still uses configured
+  locations; Sidecar's stored-snapshot path must deliberately use supplied content.
+- Register retirement before staging initial resources. A callback can occur before
+  `publish` returns, can run concurrently, and must return promptly. Schedule slow
+  cleanup on a Sidecar-owned executor. Notification has no replay, ordering, retry
+  or durable delivery guarantee; it does not retire a durable backup snapshot.
+- Never-published candidates require explicit cleanup. A rejected repeated publish
+  does not authorize deleting resources for an already published generation.
+- Shutdown may omit notifications, including for the active generation, and does
+  not wait for cleanup. Preserve the existing framework shutdown budget and keep
+  application resources alive until completion/cutoff, then clean up remaining
+  resources. Closing registration does not wait for already selected callbacks.
 
-The developer proposed SQLite for skills and REST handler configuration, with a
-possible external redundant database option. Evaluate transactional storage of
-complete configuration snapshots and passing their YAML content into the framework.
-The framework should not need to own Sidecar's schema or database connections.
-An in-memory filesystem is another possibility, but does not itself provide durable
-storage or a supported framework source API. The latest recommendation is to accept
-named content directly; a directory overload can be a convenience, not a second
-mandatory implementation. Spring byte-backed resources demonstrate that a physical
-filesystem is not intrinsically required, but current Loomspan APIs do not expose
-this new preparation path. No custom filesystem or internal-bean workaround is agreed.
+### Storage decision — embedded SQLite
 
-SQLite would be embedded local persistence; supporting an external database is a
+On 2026-09-17 the developer favored an out-of-the-box production-capable database
+without a separate running process; use embedded SQLite for skills and REST handler
+configuration. Its engine runs within Sidecar through JDBC. This is the production
+storage direction, not a temporary development-only database. The framework owns
+neither Sidecar's schema nor its database connections; supply stored YAML through
+the delivered `SkillDocument` API.
+
+SQLite is embedded local persistence; supporting an external database is a
 separate scope decision. Database transactions do not atomically commit the JVM's
-active framework generation, so activation/restart recovery still needs a contract.
-Database backup and portable configuration export are distinct: the latter must
-select intended configuration and preserve compatibility and environment rules.
-Target URL portability remains TBD. No database requirement is approved yet.
+active framework generation; the database-first policy below defines that boundary.
+Database backup and configuration export are distinct: the latter selects the
+runtime-published snapshot and preserves its authored content and bundle contract. V1 resolves
+authored URL placeholders against the destination deployment without rewriting them.
 
-The assistant recommends SQLite for the local beta, with external database support
-deferred. SQLite remains local file-backed storage with permission/locking needs;
-it is not itself a redundant remote database. A supported external engine such as
+The initial supported deployment is one Sidecar instance owning its database on a
+writable persistent volume with reliable local filesystem locking. Do not share
+the database file among replicas over a network filesystem. Production readiness
+must verify transactional writes, contention handling, restart/crash recovery,
+explicitly supported schema upgrades and consistent backup/restore on the supported
+deployment. Exact
+journal/durability settings and migration scripts belong in implementation planning.
+SQLite remains local file-backed storage; it is not itself a redundant remote
+database. A supported external engine such as
 PostgreSQL would need explicit scope, migrations and verification, not merely an
 arbitrary JDBC URL. Keep storage operations contained without speculative multi-engine
 infrastructure. Store original YAML content so the authoring surface stays complete.
 
-For promotion, the assistant recommends a versioned configuration bundle containing
-snapshot metadata, YAML and REST configuration instead of executing SQL dumps.
-Database backup can serve installation recovery, but should not accidentally promote
-accounts, sessions or environment secrets. Export format and account/secret treatment
-still require decisions. A database transaction simplifies consistent storage; it
-does not eliminate the runtime-publication recovery problem.
+On 2026-09-17 the developer agreed to Flyway and Spring JDBC:
 
-### Proposed restart/bootstrap flow
+- Flyway owns initial schema creation, versioned schema changes, required reference
+  data and upgrade-related data transformations, including migration history and
+  validation. Complete migrations before loading stored configuration or accepting
+  management writes. Use one migration runner for the instance; Flyway's SQLite
+  support does not allow concurrent migration runners.
+- Application services own user-created skills, snapshots, publication state and
+  first-administrator setup. These runtime operations are not migration seed data.
+- Small repository classes use `NamedParameterJdbcTemplate` and Spring transactions
+  with explicit SQL and transaction boundaries. The expected persistence operations
+  do not justify Hibernate entity tracking, cascading or lazy loading; SQLite also
+  requires Hibernate's separately maintained community dialect.
+- Verify migrations and repositories against real SQLite, including fresh installs
+  and any explicitly supported upgrades preserving existing data. No preservation
+  of discarded development databases is required. Neither Flyway nor Spring JDBC
+  makes database commits atomic with framework publication; use the database-first
+  policy below rather than introducing a distributed transaction.
 
-This is the requested framework integration direction, not existing behavior:
+For configuration transfer, use a versioned bundle containing snapshot metadata,
+YAML and REST configuration, not SQL dumps. Exclude accounts, sessions and leases.
+Preserve authored configuration, including any literal sensitive values; v1 does
+not determine what is secret, require secret-reference conversion, or sanitize
+exports. Existing references remain references rather than being replaced with
+resolved values in stored/exported content; validate destination bindings as needed.
+Full database backup serves installation recovery and is a separate operator
+procedure, not a configuration-import feature. V1 adds no backup encryption. Possible
+future encryption does not justify additional v1 machinery.
 
-1. Sidecar opens its durable store and selects the recorded active snapshot.
-2. Sidecar supplies that snapshot's complete named YAML content to Loomspan while
-   initial execution activation is pending.
-3. Loomspan validates/freezes the initial candidate and assigns a fresh generation ID.
+### Agreed REST URL-variable policy
+
+Deployment application YAML declares the environment variables permitted for REST
+base-URL substitution. Multiple declarations are supported:
+
+```yaml
+loomspan-sidecar:
+  url-variables:
+    - CUSTOMER_API_URL
+    - EXPENSE_API_URL
+```
+
+REST configuration uses the same variable name as a whole base URL, for example
+`base-url: ${CUSTOMER_API_URL}`. The deployment supplies
+`CUSTOMER_API_URL=https://customers.example.com`. Literal base URLs remain supported.
+V1 URL references use only the whole-value `${NAME}` form; URL fragments, composed
+templates and placeholder defaults are not part of this feature.
+
+For each referenced URL variable, require an exact allowlist entry, an existing
+nonblank process environment value, and a resolved value satisfying the normal REST
+base-URL rules. Resolve URL variables from the process environment rather than
+arbitrary Spring property sources. An absent or empty allowlist permits literal
+URLs only. Unused declarations do not require environment values. This restriction
+applies to `base-url`; existing placeholder handling in other REST fields is unchanged.
+
+Validate these requirements during startup and candidate staging, including import
+and rollback, before changing production or performing destructive cutover. Preserve
+the authored placeholder in storage and exports; never replace it with the resolved
+URL. The destination supplies its own allowlist and environment values. Neither is
+included in managed snapshots or configuration exports, and the console does not
+edit deployment bindings.
+
+Changing deployment allowlists or process environment values requires restart.
+Editing a REST target to select another already-declared and available variable uses
+normal validation/publication without restart. Document the planned
+`loomspan-sidecar.url-variables` setting and verify allowed references, undeclared
+references, missing/blank values, invalid URLs, literal URLs and export/import
+preservation. This setting is not yet implemented.
+
+### Bundle compatibility and rollback
+
+Use an independent integer `formatVersion`, initially `1`, plus informational
+producer application/framework versions. Do not derive bundle compatibility from
+the application minor version or Flyway schema version. Increment the format version
+when the bundle contract becomes incompatible. Each release documents and tests its
+supported format versions; v1 supports format 1 and rejects unsupported versions
+before changing state. No generic format-conversion framework is required in v1.
+This governs the new bundle contract, not compatibility with discarded development
+formats or the old mounted configuration layout.
+
+A supported format does not guarantee that the destination has the needed model
+connections, secret bindings or framework skill features. Validate the full candidate
+through the destination framework and Sidecar before cutover. This avoids promising
+that arbitrary newer skill declarations run on an older release merely because the
+archive format is unchanged. Include representative export/import fixtures in release
+checks. Exact archive structure is a ticket-level choice.
+
+Export captures the runtime-published snapshot when the export starts and exports
+that immutable content, even if another snapshot is published while export runs.
+An intended SQLite snapshot that has not been activated is not the published snapshot.
+
+Rollback copies a retained snapshot into a new candidate and uses the same validation
+and activation path. Every import and rollback receives a fresh local snapshot ID,
+including repeated imports of the same bundle. A source snapshot ID is provenance
+only and never replaces or overwrites a local identity. Editors may roll back
+without owning the current editing lease,
+using the same destructive confirmation as import. Validate import and rollback
+before breaking leases and deleting drafts, serialize
+cutover with ordinary publication, and notify invalidated sessions through their next
+management response or normal status refresh; no push-notification subsystem is needed.
+Editors are deliberately authorized to perform disruptive imports and rollbacks without an admin
+takeover. The UI must identify the current lease owner and explain the loss of
+drafts before the user explicitly confirms destructive cutover.
+Bind confirmation to the specific editing lease grant (or absence of a lease)
+behind the displayed ownership and to the runtime-published snapshot. A replacement
+grant requires refreshed confirmation even for the same user, session or tab;
+renewing the existing grant does not. Treat all new lease grants alike.
+Recheck both under serialization before starting the update. If either changed,
+return a conflict and require refreshed confirmation; leave drafts untouched.
+Once accepted, the update is non-cancellable. For import/rollback, defer competing
+lease and draft operations from the confirmation check through completion so no
+new editing lease can be granted before the update finishes. Normal session/lease
+expiry does not cancel an accepted update. Finish preparation/staging before
+discarding drafts; validation failure leaves editing state untouched, subject to
+normal session/lease expiry. Execution dispatch continues throughout.
+
+### Agreed v1 publication and history policy
+
+Favor the simplest implementation that meets current requirements. Do not add an
+automatic reconciliation service, recovery journal or speculative multi-engine
+abstractions for exceptional failures. This is an explicit v1 scope choice; revisit
+it only if operational experience establishes a concrete need.
+
+1. Serialize the complete update attempt, including restore/import activation.
+   Check authorization, draft ownership and the runtime-published base snapshot,
+   or import/rollback confirmation, before accepting the operation. Freeze the
+   content and run the accepted update without cancellation. Prepare it afresh
+   through the framework, validate matching REST configuration and stage runtime
+   resources. Earlier editor validation is not a retained publishable candidate.
+2. After successful preparation/staging and any destructive import cutover, in a
+   SQLite transaction, persist the candidate and change one production-snapshot
+   pointer from A to B, retaining A as history. If this transaction fails, do not
+   publish B. Committing B alone does not invalidate drafts or cancel leases.
+3. Publish the prepared B generation. After success, invalidate A-based drafts and
+   cancel editing leases as part of the coordinated management transition. Record
+   B as published. Report publication success only after the framework call succeeds;
+   the durable pointer represents intended production, not proof of activation.
+4. If publication fails, attempt to restore the pointer to A and clean up resources
+   for the never-published candidate. Keep the stored B snapshot marked failed,
+   rather than deleting it. Reversion does not invalidate drafts or cancel leases;
+   ordinary publication failure preserves them subject to their normal lifecycle.
+   Drafts already discarded by destructive import/rollback cutover remain discarded.
+5. If the revert also fails, surface the failure and require operator intervention.
+   Reject further managed-configuration mutations, including draft changes,
+   publication, import and rollback. Clearly report that runtime execution remains
+   on A while SQLite selects B. Keep configuration/status inspection available and
+   continue execution on the still-active A until operator recovery. Do not report
+   publication success or add automatic recovery machinery in v1. Document the
+   operator recovery procedure; restart still follows the committed SQLite pointer
+   and the normal fail-startup policy.
+
+Snapshot content and identity are immutable; publication status is bookkeeping.
+Persist a pending status with B, then published or failed when the outcome is known.
+Pending means the outcome was not durably recorded, not proof that publication
+failed. A database error can prevent recording the outcome. Surface that error;
+do not undo a successful runtime publication or delete its resources because a
+later status write failed. In that case execution remains on B, the pointer remains
+B, and management configuration mutations stop for operator recovery. No additional
+recovery journal or automatic reconciliation service is required.
+
+On restart, load whichever snapshot the committed SQLite pointer selects. A crash
+after committing B but before publication or reversion therefore selects B. This
+is intentional: B was validated and selected as the intended production state.
+Startup still validates and stages that configuration through the supported API.
+Successful startup activation records the selected snapshot as published. Historical
+pending records may remain outcome-unknown after a crash; do not infer past success
+or failure. Status never overrides the committed pointer's restart authority.
+No routine pause of execution dispatch is required solely to make the database
+commit and publication simultaneous; existing work retains its captured generation.
+
+Retirement callbacks release generation-specific runtime routes and resources when
+safe. They do not delete stored configuration history. A separate database cleanup
+policy retains the latest ten stored snapshots by default, including current
+production and failed attempts. Failed snapshots remain distinguishable from
+published snapshots and count toward the same limit; no separate failed-history
+quota or cleanup service is needed. Failures before a candidate is persisted need
+not create a history record. Submission for publication makes persisted candidate
+content part of inspectable history; private session drafts remain private.
+Configure the positive count with `loomspan-sidecar.snapshots.max-retained` (default
+`10`). Always protect the current pointer and any snapshot still needed by an in-flight
+publication or live generation. Protected snapshots count toward the retention
+target; prune the oldest eligible snapshots first. Protected snapshots can exceed
+the target, and excess history remains until the next pruning opportunity even
+after its runtime generation retires. Run simple database pruning at startup and after completed update attempts
+when the database is usable; retirement callbacks do not delete database records. No separate scheduling service
+is required for v1.
+
+Sidecar execution diagnostics/log correlation must identify the durable snapshot
+actually used through the runtime-generation-to-snapshot mapping, never by reading
+the current production pointer after execution. Exact placement in existing diagnostic
+output belongs in the affected ticket and must use public contracts. When history
+has expired, report its absence; keeping traces does not pin snapshots indefinitely.
+Retained configuration enables inspection, not guaranteed replay of past model or
+remote-service results.
+
+Use the delivered `AdmittedSkillInvocation.generationId()` immediately after a
+successful worker handoff to resolve and record the Sidecar snapshot ID before
+invocation. The returned ID identifies the captured generation even if publication
+changes the current catalog before handoff returns. It covers model-only executions
+and does not depend on a completed observer callback; no `SkillExecutionView`
+change is required. Durable snapshot IDs and their mapping remain Sidecar-owned.
+Stage the mapping before publication and retain it with the generation's resources.
+The accessor does not retain ownership or guarantee that the mapping still exists
+after cutoff/release. Handle an unavailable mapping explicitly; never substitute
+the current snapshot. Release an admission abandoned during lookup or recording.
+Sidecar integration tests must prove correlation across publication and cleanup.
+
+Verify the normal sequence, database-commit failure, publication failure with a
+successful revert, restart between commit and publication, and visible failure when
+the revert fails. In that fault state, verify that configuration mutations are
+rejected, the A/B mismatch is visible, and execution continues on A. Verify draft
+invalidation and lease cancellation only after successful framework publication;
+ordinary publication failure and pointer reversion preserve valid drafts/leases.
+Destructive import cutover remains irreversible for discarded drafts. Cover failed
+status and shared retention, outcome-recording failure after successful publication,
+fresh local import/rollback IDs, stale destructive confirmation, and the absence of
+cancellation after update acceptance. Keep tests and operator
+documentation proportional to this policy.
+
+### Agreed restart/bootstrap flow
+
+This is planned Sidecar behavior using the delivered public contracts; Sidecar
+has not implemented it:
+
+1. Sidecar keeps its execution queue closed from startup. Configure Loomspan's ordinary
+   startup discovery to find no skills; it has no deferred activation mode. Use the
+   documented `loomspan.skills.locations` setting with a controlled empty source.
+   An empty list alone falls back to default scanning in the current framework;
+   integration tests must prove the configured baseline is empty. No Java skills
+   are hosted, and mounted skills/routes are not automatically adopted.
+2. Sidecar registers retirement notification, opens its durable store, completes
+   Flyway migrations and selects the recorded active snapshot. Management writes
+   remain unavailable until migrations complete.
+3. Sidecar calls `prepare(completeDocuments)` to validate/freeze that snapshot's
+   named YAML content and obtain a fresh runtime generation ID.
 4. Sidecar validates matching REST configuration and stages clients under that ID.
-5. Sidecar publishes the generation and opens execution traffic.
+5. Sidecar publishes the prepared generation and only then opens execution traffic.
+   The gate must protect actual dispatch, not only a readiness status endpoint.
 
 Durable snapshot identity survives restart; runtime generation identity does not.
-An explicit application-controlled startup path is needed so eager directory loading
-does not activate skills before Sidecar stages the matching resources. Default
-directory-based startup remains supported for other framework applications.
+A genuinely new database receives an empty current configuration and exposes initial
+administrator setup after successful startup. An initialized database with missing or
+invalid current configuration is an error, not a new installation. On any database
+load, preparation, REST staging or publication error, log actionable errors without
+secrets and fail application startup. Do not open the queue, silently substitute an
+empty configuration, or keep a management-only recovery server running. Recovery is
+an operator procedure. Session drafts and leases do not survive process restart.
 
-Proposed Sidecar policies, still to confirm: a new installation explicitly activates
-an empty configuration and exposes initial console setup; invalid stored configuration
-leaves execution unavailable while management remains available for recovery; session
-drafts and leases do not survive a process restart. Do not silently replace invalid
-stored configuration with an empty set. The framework ticket enables this workflow
-without making Sidecar's persistence or recovery policy a framework responsibility.
+### Agreed management accounts and editing defaults
 
-### Lease and authentication proposals still to confirm
+Use Spring Security form login, SQLite-backed local accounts, hashed passwords,
+server-side sessions and CSRF protection. Management roles form this hierarchy:
 
-- Proposed lease defaults: 15 minutes of inactivity, activity updates throttled to
-  at most once per 30 seconds, and a warning with a Continue editing action before
-  expiry. Meaningful editor activity includes typing, paste, clicks and scrolling;
-  mouse movement and background polling do not renew ownership. Server time and
-  lease ownership govern writes and publication. These numbers and activity rules
-  are recommendations, not accepted requirements.
-- Decide whether normal reading requires explicit renewal and how multiple tabs
-  share or contend for a session's editing lease. Administrative takeover and
-  explicit release/discard actions also remain open. No per-user durable draft or
-  cross-user draft revision scheme is requested.
-- Proposed beta authentication: Spring Security local username/password form login,
-  server-side sessions, hashed persistent passwords, CSRF protection for browser
-  operations, and separate existing JWT execution authentication. An embedded JDBC
-  account store and administrator/editor roles were recommended, not selected.
-- Account creation/disable/reset, recovery, session timeout, and management permissions
-  still need scope. LDAP and OAuth/OIDC are future possibilities, not beta requirements.
-  The setup environment variable's name and validation policy are not yet chosen.
-- Proposed import safety: validate the package and candidate before breaking leases
-  and deleting drafts; serialize cutover with ordinary publication. Destructive import
-  is agreed, but that failure boundary and notification mechanism are not yet settled.
+| Role | Permissions |
+| --- | --- |
+| `viewer` | Read current published configuration and all retained submitted snapshots, including pending and failed content; export authored configuration as stored, including any embedded sensitive values. No draft mutation or publication. |
+| `editor` | Viewer permissions plus author/validate/publish skills and REST handler configuration, import and rollback. |
+| `admin` | Editor permissions plus user administration, lease takeover and administrative features beyond skill-runtime management. |
+
+Unpublished draft content and its validation results are visible only to the owning
+session, including for administrators. Other sessions may see lease ownership and
+retained submitted snapshot history, but not another session's private draft or
+its validation results. Once a publication candidate is persisted, that immutable
+submitted content is inspectable history even if publication fails or its outcome
+remains pending; the owning session's draft remains private.
+
+These roles do not grant execution API access or override its JWT/skill authorization.
+Support admin-created accounts, role changes, disable/re-enable and password resets;
+users can change their own password. No public self-registration or email recovery
+service in v1. Invalidate affected sessions on password reset, disable or role change.
+Prevent removal/demotion/disable of the last enabled administrator. Document a minimal
+offline recovery procedure for loss of administrator access. Keep the existing
+one-time environment-credential setup rule; use
+`LOOMSPAN_SIDECAR_SETUP_TOKEN`, require a nonblank high-entropy operator-supplied value,
+and never log or store the plaintext token. Exact validation is a ticket detail.
+
+The developer delegated reasonable editing defaults on 2026-09-17:
+
+- Lease inactivity timeout: `loomspan-sidecar.management.edit-lease-timeout: 15m`.
+  Renew at most every 30 seconds while meaningful editor activity occurs (typing,
+  paste, clicks, scrolling, or explicit Continue editing). Mouse movement, background
+  polling and merely leaving a tab open do not renew. Warn two minutes before expiry.
+- Login idle timeout: `loomspan-sidecar.management.session-idle-timeout: 30m`.
+  Background polling must not indefinitely keep an otherwise idle login alive.
+  Logout/session expiry clears drafts and releases ownership; lease expiry alone
+  retains the draft within its still-valid session.
+- One writable editor tab per session. A second tab may read but cannot silently
+  take over the active editor; enforce session and tab ownership server-side.
+- Release editing preserves the session draft, subject to unchanged base and later
+  lease reacquisition. Discard edits clears it and releases the lease. Successful
+  framework publication invalidates drafts based on the prior runtime snapshot and
+  cancels leases. SQLite pointer changes or reversion alone do neither. Failed
+  ordinary publication preserves drafts/leases subject to their normal lifecycle;
+  destructive import/rollback cutover still discards them. None of these editing
+  actions cancels an already accepted update.
+- Admin takeover explicitly revokes the old lease and starts from production, never
+  inherits another session's edits. The former owner retains its own draft only while
+  its session and base snapshot remain valid. A changed runtime-published snapshot clears
+  stale drafts. Preserve local editor text on lease loss until these invalidation
+  rules apply, but reject stale writes.
+- Show validation errors with source labels and available locations. Require explicit
+  publication after validation; edits invalidate validation. No structured editor,
+  cross-session draft recovery or collaborative editing in v1.
+
+The two management timing properties and snapshot retention count are planned YAML
+settings, not yet implemented configuration. Keep renewal cadence and warning lead
+time as simple UI defaults rather than exposing every timing detail as configuration.
 
 ### Remaining decisions before Sidecar tickets
 
-Confirm storage and supported deployment first. Then settle recovery across the
-database/file commit and framework publication boundary, initial configuration
-adoption, backup-history retention, and the proposed first-start/error behavior.
-Framework safe retirement will govern runtime REST resources; it does not decide
-how long user-restorable backups are kept. Resolve lease/session/account details,
-the first editor UI, import cutover, bundle compatibility and environment bindings
-before their affected tickets. Do not convert these recommendations into requirements
-just because they have been recorded in this handoff.
+The product decisions above are selected for v1, including allowlisted environment
+variables for REST base URLs. Automatic URL rewriting and console-managed destination
+bindings remain outside v1. Specify concrete
+storage/deployment details, trace-correlation fields, the operator recovery steps,
+setup-token validation and the bundle structure in their affected tickets/plans.
+Do not reopen the settled publication policy to add automated recovery machinery.
+
+### Release and ticket sequence
+
+All six phases ship in Sidecar `1.0.0-beta.5-SNAPSHOT` development, leading to the
+beta 5 release after verification. The Sidecar version changes independently of the
+framework dependency. The developer confirmed framework beta 5 was installed, so use
+`1.0.0-beta.5-SNAPSHOT` until the framework release workflow authorizes its published
+`1.0.0-beta.5` replacement. Hosted CI remains deferred until that release is available.
+
+Use the developer's planning identifiers `PR 1.<phase>.<sequence>`, beginning with
+`PR 1.1.1`: phase 1 uses `PR 1.1.x`, phase 2 `PR 1.2.x`, through phase 6 `PR 1.6.x`.
+Keep dated ticket filenames and include the planning identifier in each ticket.
+These are planning labels, not invented GitHub pull-request numbers. Create tickets
+incrementally for settled outcomes; do not run their pipelines merely by recording
+this sequence. The developer explicitly deferred tagging until beta 5 is release-ready.
+Release tags remain immutable `v<non-SNAPSHOT-version>` and must not label unfinished
+snapshot development as a completed release.
 
 ### Sources consulted during refinement
 
-- Matching local framework public SkillReloader and PreparedSkillUpdate APIs and
-  skill-reload.md; current prepare() has no source argument. Sidecar queues work
+- Matching local framework public SkillReloader, SkillDocument and PreparedSkillUpdate
+  APIs and skill-reload.md, rechecked 2026-09-17. Sidecar queues work
   before SkillInvocationHandoff, so capture remains at existing worker handoff.
 - [Spring resource abstraction](https://docs.spring.io/spring-framework/reference/core/resources.html)
 - [Spring Security form login](https://docs.spring.io/spring-security/reference/servlet/authentication/passwords/form.html)
 - [Spring Security JDBC account management](https://docs.spring.io/spring-security/reference/servlet/authentication/passwords/jdbc.html)
 - [SQLite deployment guidance](https://www.sqlite.org/whentouse.html)
 - [SQLite backup API](https://www.sqlite.org/backup.html)
+- [Flyway SQLite support](https://documentation.red-gate.com/flyway/reference/database-driver-reference/sqlite)
+- [Spring JDBC approaches](https://docs.spring.io/spring-framework/reference/data-access/jdbc/choose-style.html)
+- [Hibernate dialect support](https://docs.hibernate.org/stable/orm/dialect/)
 
 ## Sequence and ticket readiness
 
 Storage precedes durable publication; publication and protected management APIs
-precede the complete editor workflow; portability uses the same validation and
+precede the complete editor workflow; configuration transfer uses the same validation and
 activation path with destructive draft invalidation. Authentication design can
 proceed once the identity storage boundary is known.
 These are dependency boundaries, not a requirement to finish every detail of one
-phase before discussing the next.
+phase before discussing the next or keep intermediate phases buildable/deployable.
+Apply the development policy above; complete integration and deferred checks before
+the first working deployment and release.
 
 Before writing tickets:
 
-1. Review the phase boundaries and target release together.
-2. Resolve the material choices affecting the next phase, starting with persistence,
-   snapshot/draft lifecycle and publication recovery. Resolve target URLs near ticket
-   creation as requested, early enough to avoid baking an assumption into storage.
+1. Use the agreed six-phase beta 5 scope and phase-based ticket sequence.
+2. Specify the material details affecting the next phase. Apply the URL-variable
+   policy and transfer authored configuration as-is, preserving placeholders.
 3. Refine candidate ticket groups into independently verifiable outcomes. They are
    not ticket IDs, fixed ticket counts or implementation plans.
 4. Use [write_ticket](../../commands/write_ticket.md) and dated ticket filenames.
@@ -416,7 +853,6 @@ pipeline execution or publication is authorized by this document.
 ## References
 
 - [Sidecar design lens](../design-lens.md)
-- [Beta 4 QA and release handoff](../beta4-handoff.md)
 - [Sidecar application and deployment reference](../../../README.md)
 - [Matching local framework reload contract](../../../../loomspan-framework/agent-skills/loomspan-docs/references/java-api/skill-reload.md)
 

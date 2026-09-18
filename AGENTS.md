@@ -27,8 +27,6 @@
 
 ## Plans, evidence, and workflow
 
-- [Delivery handoff](ai/thoughts/beta4-handoff.md) is the sole tracker for
-  remaining Sidecar QA and release work. Keep it authoritative.
 - Use this repository's `ai/commands`, including Full/Fast/Direct eligibility
   and dated ticket filenames. Do not replace them with framework commands or
   copy completed framework reports as Sidecar implementation evidence.
@@ -40,20 +38,20 @@
 ## Dependency and release policy
 
 - Initial framework source pin: `385729a254261de128df491505acd8898cc0a021`;
-  Maven dependency: `ai.loomspan:loomspan-spring-boot-starter:1.0.0-beta.4-SNAPSHOT`.
+  Maven dependency: `ai.loomspan:loomspan-spring-boot-starter:1.0.0-beta.5-SNAPSHOT`.
   Use the snapshot installed in the developer's local Maven repository. The
   developer runs a new framework install after framework changes, keeping that
   artifact aligned with `C:/opendev/code/loomspan-framework` for source lookups.
   Rely on this workflow; no separate artifact/source-revision verification is
   required for ordinary development. Retest affected Sidecar behavior
-  after framework changes. The handoff's release evidence requirements still apply.
+  after framework changes.
   Sidecar does not rebuild framework source in its normal build or CI; no
   snapshot repository is introduced.
 - Consult documentation in the matching local framework checkout during development.
   The separately installed `0.1.0-SNAPSHOT` documentation skill is stale for
-  beta 4. See the handoff's development reference.
+  beta 5.
 - Prove Sidecar integration against the snapshot before final framework release
   checks using local integration evidence. Publish the framework to Maven Central
-  first, then switch Sidecar to `1.0.0-beta.4` for its final build/tests and final
+  first, then switch Sidecar to `1.0.0-beta.5` for its final build/tests and final
   commit. Hosted CI resolves that published artifact; its execution is deferred
   until publication. Verify before releasing Sidecar. Never overwrite a release.

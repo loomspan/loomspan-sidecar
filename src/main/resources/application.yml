@@ -7,6 +7,8 @@ loomspan:
     enabled: false
 
 loomspan-sidecar:
+  storage:
+    database-path: /sidecar/data/sidecar.db
   rest-routes-location: "file:/sidecar/rest-routes.yaml"
   auth:
     jwt:
@@ -21,6 +23,10 @@ loomspan-sidecar:
     max-queued: 128
     max-queued-input-size: 64MB
     diagnostics: NEVER
+
+spring:
+  flyway:
+    enabled: false
 
 management:
   server:

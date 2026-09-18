@@ -17,10 +17,10 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
-      - name: Verify against published Loomspan beta 4
+      - name: Verify against published Loomspan beta 5
         run: |
           chmod +x mvnw
-          ./mvnw -B -ntp -Dloomspan.version=1.0.0-beta.4 verify
+          ./mvnw -B -ntp -Dloomspan.version=1.0.0-beta.5 verify
       - name: Build and verify image without publishing
         run: |
           docker build --tag loomspan-sidecar:ci .

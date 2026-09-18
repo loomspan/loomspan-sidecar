@@ -46,6 +46,8 @@ spec:
       labels: {app: example-with-loomspan-sidecar}
     spec:
       terminationGracePeriodSeconds: 45
+      securityContext:
+        fsGroup: 10001
       containers:
         - name: application
           image: example/application:replace-me
@@ -81,6 +83,7 @@ spec:
             - {name: sidecar-config, mountPath: /sidecar/skills/detail-leaf.yaml, subPath: detail-leaf.yaml, readOnly: true}
             - {name: sidecar-config, mountPath: /sidecar/rest-routes.yaml, subPath: rest-routes.yaml, readOnly: true}
             - {name: jwt-key, mountPath: /sidecar/keys, readOnly: true}
+            - {name: sidecar-data, mountPath: /sidecar/data}
           startupProbe:
             httpGet: {path: /actuator/health/readiness, port: management}
             periodSeconds: 2
@@ -98,3 +101,6 @@ spec:
           secret:
             secretName: loomspan-sidecar-jwt-key
             items: [{key: public.pem, path: public.pem}]
+        - name: sidecar-data
+          persistentVolumeClaim:
+            claimName: loomspan-sidecar-data

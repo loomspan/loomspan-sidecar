@@ -1,15 +1,22 @@
 # Sidecar design lens
 
-Established by the beta 4 roadmap and the 2026-09-13 phase handoff.
-These standing constraints complement the [remaining-work handoff](beta4-handoff.md).
+Standing design constraints for Sidecar planning, implementation and review.
 
 ## Simplicity and technical debt
+
+Standing guidance for our work together:
+
+> Remember that we are choosing the simplest solution that still covers the requirements.
+> We are working to avoid technical debt where possible. Also we are in development
+> so destructive changes are welcome. No compatibility shims.
 
 - **Decision:** Choose the simplest solution that fully satisfies the current
   requirements. Prefer existing capabilities and direct implementations. Add
   abstractions, configuration, dependencies or workflow artifacts only for a
   concrete need; speculative future needs are insufficient justification.
   Keep code, tests, documentation and process proportional to the work.
+  Replace obsolete development code, configuration and schemas directly rather
+  than preserving them with compatibility shims.
 - **Why this matters:** Complexity consumes implementation, review and
   maintenance effort. Minimize technical debt; accept it only when its concrete
   benefit outweighs its expected maintenance and future change costs. For

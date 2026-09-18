@@ -16,6 +16,7 @@ class ConfigurationReferenceTest {
     void configurationReferenceMatchesBoundPropertiesAndExamples() throws Exception {
         Set<String> expected = new LinkedHashSet<>();
         add(expected, "loomspan-sidecar.", RestRoutesProperties.class);
+        add(expected, "loomspan-sidecar.storage.", SidecarStorageProperties.class);
         add(expected, "loomspan-sidecar.auth.jwt.", SidecarJwtProperties.class);
         add(expected, "loomspan-sidecar.executions.", SidecarExecutionProperties.class);
 
@@ -30,11 +31,15 @@ class ConfigurationReferenceTest {
         String defaults = Files.readString(Path.of("src/main/resources/application.yml"));
         String compose = Files.readString(Path.of("examples/quickstart/compose.yaml"));
         String kubernetes = Files.readString(Path.of("examples/kubernetes/deployment.yaml"));
+        String dockerfile = Files.readString(Path.of("Dockerfile"));
         assertThat(defaults).contains("file:/sidecar/skills/**/*.yaml", "file:/sidecar/rest-routes.yaml", "port: 9091");
+        assertThat(defaults).contains("database-path: /sidecar/data/sidecar.db");
         assertThat(compose).contains("./sidecar:/sidecar:ro", "LOOMSPAN_SIDECAR_AUTH_JWT_AUDIENCE",
                 "${QUICKSTART_HOST_PORT:-8081}:8081", "${SIDECAR_API_PORT:-8080}:8080",
-                "${SIDECAR_MANAGEMENT_PORT:-9091}:9091");
+                "${SIDECAR_MANAGEMENT_PORT:-9091}:9091", "sidecar-data:/sidecar/data");
         assertThat(kubernetes).contains("/sidecar/skills/", "/sidecar/rest-routes.yaml", "readOnly: true", "secretKeyRef:");
+        assertThat(kubernetes).contains("mountPath: /sidecar/data", "claimName: loomspan-sidecar-data", "fsGroup: 10001");
+        assertThat(dockerfile).contains("mkdir -p /sidecar/data", "chown loomspan:loomspan /sidecar/data");
     }
 
     @Test
@@ -49,6 +54,8 @@ class ConfigurationReferenceTest {
         var jwt = new SidecarJwtProperties();
         assertThat(rows.get("loomspan-sidecar.rest-routes-location"))
                 .contains(new RestRoutesProperties().getRestRoutesLocation(), "readable", "startup");
+        assertThat(rows.get("loomspan-sidecar.storage.database-path"))
+                .contains(new SidecarStorageProperties().getDatabasePath(), "writable", "persistent", "startup");
         assertThat(rows.get("loomspan-sidecar.auth.jwt.issuer-uri")).contains("nonblank", "explicit local key or JWKS");
         assertThat(rows.get("loomspan-sidecar.auth.jwt.audience")).contains("nonblank");
         assertThat(rows.get("loomspan-sidecar.auth.jwt.jwk-set-uri")).contains("mutually exclusive");

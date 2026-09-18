@@ -6,7 +6,7 @@
 
   <groupId>ai.loomspan</groupId>
   <artifactId>loomspan-sidecar</artifactId>
-  <version>1.0.0-beta.4-SNAPSHOT</version>
+  <version>1.0.0-beta.5-SNAPSHOT</version>
   <name>Loomspan Sidecar</name>
 
   <properties>
@@ -14,7 +14,7 @@
     <maven.compiler.release>${java.version}</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <spring-boot.version>4.1.0</spring-boot.version>
-    <loomspan.version>1.0.0-beta.4-SNAPSHOT</loomspan.version>
+    <loomspan.version>1.0.0-beta.5-SNAPSHOT</loomspan.version>
     <archunit.version>1.4.1</archunit.version>
     <bouncycastle.version>1.81</bouncycastle.version>
   </properties>
@@ -61,6 +61,18 @@
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-jdbc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.xerial</groupId>
+      <artifactId>sqlite-jdbc</artifactId>
     </dependency>
     <dependency>
       <groupId>org.apache.httpcomponents.client5</groupId>
@@ -136,8 +148,8 @@
                     <requireReleaseDeps />
                     <requireProperty>
                       <property>loomspan.version</property>
-                      <regex>1\.0\.0-beta\.4</regex>
-                      <regexMessage>Release requires Loomspan 1.0.0-beta.4 exactly.</regexMessage>
+                      <regex>1\.0\.0-beta\.5</regex>
+                      <regexMessage>Release requires Loomspan 1.0.0-beta.5 exactly.</regexMessage>
                     </requireProperty>
                   </rules>
                 </configuration>

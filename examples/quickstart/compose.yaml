@@ -31,6 +31,7 @@ services:
       LOOMSPAN_SHUTDOWN_TIMEOUT: 10s
     volumes:
       - ./sidecar:/sidecar:ro
+      - sidecar-data:/sidecar/data
     ports:
       - "${SIDECAR_API_PORT:-8080}:8080"
       - "${SIDECAR_MANAGEMENT_PORT:-9091}:9091"
@@ -40,3 +41,6 @@ services:
       timeout: 1s
       retries: 30
       start_period: 10s
+
+volumes:
+  sidecar-data:

@@ -40,7 +40,7 @@ jobs:
           python scripts/verify-image.py --image loomspan-sidecar:release-candidate --verify-kubernetes
       - name: Prepare JAR archive and checksums
         run: |
-          python scripts/prepare-release.py --project-version "${{ steps.version.outputs.version }}" --loomspan-version 1.0.0-beta.4 --tag "${GITHUB_REF_NAME}"
+          python scripts/prepare-release.py --project-version "${{ steps.version.outputs.version }}" --loomspan-version 1.0.0-beta.5 --tag "${GITHUB_REF_NAME}"
       - uses: actions/upload-artifact@v4
         with:
           name: release-assets

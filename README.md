@@ -5,13 +5,13 @@ model-backed Loomspan YAML skills and exposes an authenticated asynchronous
 execution API. It provides verified JWT identity, owner-scoped polling,
 bounded in-memory workers and retention, prompt shutdown gates, and a generic
 bounded outbound REST handler for mounted REST skills. The supported container
-runs as a fixed non-root user and consumes environment configuration plus a
-read-only `/sidecar` mount.
+runs as a fixed non-root user and consumes environment configuration, read-only
+mounted runtime files, and a writable `/sidecar/data` volume.
 
 ## Build locally
 
 Local development uses
-`ai.loomspan:loomspan-spring-boot-starter:1.0.0-beta.4-SNAPSHOT` installed from
+`ai.loomspan:loomspan-spring-boot-starter:1.0.0-beta.5-SNAPSHOT` installed from
 the local checkout at `C:\opendev\code\loomspan-framework` (initial baseline
 `385729a254261de128df491505acd8898cc0a021`). The developer runs a new framework
 install after framework changes so the installed library matches source and
@@ -94,6 +94,53 @@ an admitted execution across SIGTERM. One case releases it and checks that the
 remaining callback and final model response finish; the other holds it past a
 three-second framework budget and checks bounded exit without a forced kill.
 
+## Durable configuration snapshots
+
+`loomspan-sidecar.storage.database-path` defaults to `/sidecar/data/sidecar.db`.
+Sidecar migrates and validates a file-backed SQLite database at startup, then
+atomically creates one empty, **pending** current snapshot on a new database.
+The empty content is no skill documents and the exact REST text
+`targets: {}\nroutes: {}\n`. Reopening retains that snapshot; an inconsistent
+initialized store or existing database without migration history fails startup.
+This storage does not activate a framework
+generation. Mounted files still supply the running skills and routes until the
+Phase 2 activation work.
+
+Each snapshot contains an ordered set of complete `SkillDocument` diagnostic
+labels and original YAML text, plus one original REST targets/routes YAML
+document. Labels are nonblank and exactly unique; the set may be empty. The
+REST text is stored before parsing or placeholder resolution, so comments,
+`${NAME}` references in `base-url`, and literal sensitive values remain exactly
+as authored. Snapshots include the full framework-supported model-backed and
+REST skill authoring surface. They do not include accounts, sessions, leases,
+deployment URL-variable declarations or environment values, model-connection
+settings, identity-provider settings, or arbitrary Spring settings. Storage
+does not sanitize or encrypt literal secrets; protect the database volume and
+any future exported bundle accordingly.
+
+A snapshot has a fresh stable local UUID, optional source UUID for provenance,
+and increasing submission sequence for later oldest-first history pruning.
+Content and identity do not change after insertion. Separate local status is
+`pending`, `published`, or `failed`; `pending` means the publication outcome is
+unknown. A source UUID never selects or overwrites a local snapshot. A future
+transfer bundle will carry the same complete authored content with independent
+integer `formatVersion: 1`, source identity, and informational producer
+application and framework versions. The destination will allocate a new local
+UUID; imported status will not prove publication there. Phase 5 defines the
+archive layout, integrity checks, and import/export operations. Flyway version
+and application version are not transfer compatibility rules.
+
+The database directory, database file, and SQLite `-wal` and `-shm` auxiliary
+files must be writable by UID/GID `10001:10001`. Use one Sidecar instance per
+database on a persistent local filesystem with reliable locking. Do not share
+one database across replicas or place it on a network filesystem. SQLite uses
+foreign keys, WAL journaling, `synchronous=FULL`, and a 5-second busy timeout on
+each connection. A competing writer can fail after that timeout; this is not a
+distributed transaction service. Keep WAL files with the database. Copying only
+the main database file while it is live is not a safe backup; operator backup
+and recovery procedures belong to PR 1.1.2. The Kubernetes sample expects a
+PVC named `loomspan-sidecar-data` that supports these permissions and locking.
+
 ## Mounted configuration
 
 The default mount layout is:
@@ -109,7 +156,7 @@ route file is loaded separately from `loomspan-sidecar.rest-routes-location` and
 is never parsed as a skill manifest. Override either location at startup, for example:
 
 ```powershell
-java -jar target/loomspan-sidecar-1.0.0-beta.4-SNAPSHOT.jar `
+java -jar target/loomspan-sidecar-1.0.0-beta.5-SNAPSHOT.jar `
   "--loomspan.skills.locations=file:C:/mounted/skills/**/*.yaml,file:C:/mounted/skills/**/*.yml" `
   "--loomspan-sidecar.rest-routes-location=file:C:/mounted/rest-routes.yaml"
 ```
@@ -362,6 +409,7 @@ above that budget plus cleanup margin (the Kubernetes example uses 45 seconds).
 | Key | Default / requirement |
 | --- | --- |
 | `loomspan-sidecar.rest-routes-location` | `file:/sidecar/rest-routes.yaml`; required readable unified route document; override at startup. |
+| `loomspan-sidecar.storage.database-path` | `/sidecar/data/sidecar.db`; writable persistent local database path and parent directory required at startup. |
 | `loomspan-sidecar.auth.jwt.issuer-uri` | Required nonblank issuer; also used with an explicit local key or JWKS URL. |
 | `loomspan-sidecar.auth.jwt.audience` | Required nonblank audience. |
 | `loomspan-sidecar.auth.jwt.jwk-set-uri` | Optional explicit JWKS URL; mutually exclusive with the public-key location. |
@@ -403,25 +451,24 @@ Error Prone annotations use the transitive dependency version; Sidecar does not
 require a separate annotation-version override.
 
 Push and pull-request CI is prepared to override the dependency with published
-`1.0.0-beta.4`. Hosted verification is deferred until that artifact exists on
+`1.0.0-beta.5`. Hosted verification is deferred until that artifact exists on
 Maven Central. The delivery order is local Sidecar integration against the
 snapshot, framework release checks and publication, then Sidecar verification
 against the released artifact. This project does not build framework source in
 its own build or CI.
 
 Release tags are exactly `v<project-version>`. The guarded workflow requires a
-non-SNAPSHOT Sidecar version and framework `1.0.0-beta.4`, reruns Maven and image
+non-SNAPSHOT Sidecar version and framework `1.0.0-beta.5`, reruns Maven and image
 verification, then publishes an immutable GHCR version tag and a GitHub release
 containing the executable JAR, a reproducible ZIP archive, and SHA-256 files.
 Local preparation is intentionally nonpublishing:
 
 ```powershell
-python scripts/prepare-release.py --validate-only --project-version 1.0.0-beta.4 --loomspan-version 1.0.0-beta.4
+python scripts/prepare-release.py --validate-only --project-version 1.0.0-beta.5 --loomspan-version 1.0.0-beta.5
 ```
 
-The current local stage remains on `1.0.0-beta.4-SNAPSHOT`. Do not change that
-pin, create either project tag, dispatch publication, or claim hosted CI until
-the framework release is separately authorized, published, and resolvable.
-
-See the [delivery handoff](ai/thoughts/beta4-handoff.md) for remaining QA and
-release work.
+Sidecar development is on `1.0.0-beta.5-SNAPSHOT` for the
+[management console roadmap](ai/thoughts/phases/2026-09-16-management-console-roadmap.md).
+The framework dependency remains `1.0.0-beta.5-SNAPSHOT`. Final dependency changes,
+release tags and publication follow the separate release verification workflow;
+the framework must be published and resolvable before final Sidecar verification.
