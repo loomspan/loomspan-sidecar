@@ -2,6 +2,7 @@ package ai.loomspan.sidecar.configuration;
 
 import ai.loomspan.api.PreparedSkillUpdate;
 import ai.loomspan.api.SkillReloader;
+import ai.loomspan.api.SkillValidationIssue;
 import ai.loomspan.sidecar.execution.ExecutionCoordinator;
 import ai.loomspan.sidecar.management.ManagementEditingState;
 import ai.loomspan.sidecar.rest.GenerationRestResources;
@@ -23,14 +24,19 @@ import java.util.List;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.regex.Pattern;
 
 /** Serializes durable selection with framework publication; the database pointer is restart authority. */
 @Component
 public final class RuntimeConfigurationService implements ApplicationRunner, AutoCloseable {
     private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(RuntimeConfigurationService.class);
-    private static final Pattern SKILL_FIELD = Pattern.compile("for field '([A-Za-z0-9_.-]+)'");
     public record Inspection(UUID publishedId, UUID intendedId, SnapshotStatus intendedStatus, String mutationFault) {}
+    public record Current(ConfigurationSnapshot published, UUID intendedId,
+            SnapshotStatus intendedStatus, String mutationFault) {}
+    public static final class PublicationFailure extends IllegalStateException {
+        private final String code;
+        public PublicationFailure(String code, String message) { super(message); this.code = code; }
+        public String code() { return code; }
+    }
     interface Hooks {
         default void beforeStartupActivation() {}
         default void beforePreparation() {}
@@ -67,6 +73,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     }
 
     void hooks(Hooks hooks) { this.hooks = java.util.Objects.requireNonNull(hooks); }
+    int queuedPublications() { return publication.getQueueLength(); }
 
     @Override
     public void run(ApplicationArguments args) {
@@ -117,39 +124,51 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
 
     public ConfigurationValidationResult validate(ConfigurationDraft draft) {
         FrozenConfigurationCandidate candidate = draft.freeze();
-        ConfigurationValidationResult result;
-        GenerationRestResources.Resources staged = null;
-        boolean preparingSkills = true;
-        try {
-            PreparedSkillUpdate prepared = prepare(candidate.configuration());
-            preparingSkills = false;
-            staged = stage(prepared, candidate.configuration());
-            result = new ConfigurationValidationResult(true, List.of());
-        } catch (RuntimeException failure) {
-            result = new ConfigurationValidationResult(false, List.of(
-                    preparingSkills ? skillValidationIssue(failure, candidate.configuration()) : validationIssue(failure)));
-        } finally {
-            if (staged != null) resources.release(staged);
-        }
+        ConfigurationValidationResult result = validate(candidate.configuration());
         draft.recordValidation(candidate, result);
         return result;
     }
 
-    public ConfigurationSnapshot publish(ConfigurationDraft draft) {
+    public ConfigurationValidationResult validate(ManagedConfiguration configuration) {
+        var checked = reloader.validate(configuration.skillDocuments());
+        var issues = new java.util.ArrayList<ConfigurationValidationIssue>();
+        checked.issues().forEach(issue -> issues.add(new ConfigurationValidationIssue(
+                issue.severity() == SkillValidationIssue.Severity.WARNING
+                        ? ConfigurationValidationIssue.Severity.WARNING : ConfigurationValidationIssue.Severity.ERROR,
+                issue.sourceName(), issue.skillName(), issue.fieldPath(), issue.message())));
+        if (!checked.valid()) return new ConfigurationValidationResult(false, issues);
+        GenerationRestResources.Resources staged = null;
+        try {
+            staged = resources.prepare(configuration.restRoutesYaml());
+            routes.validateCandidate(staged.routes(), checked.skills());
+        } catch (RuntimeException failure) {
+            issues.add(validationIssue(failure));
+        } finally {
+            if (staged != null) resources.release(staged);
+        }
+        return new ConfigurationValidationResult(issues.stream().noneMatch(issue ->
+                issue.severity() == ConfigurationValidationIssue.Severity.ERROR), issues);
+    }
+
+    /** The callback runs after acquiring the publication lock, at the admission point. */
+    public ConfigurationSnapshot publish(java.util.function.Supplier<ConfigurationDraft.ValidatedCandidate> admission) {
         publication.lock();
         try {
             requireHealthy();
-            FrozenConfigurationCandidate candidate = draft.freeze();
-            ConfigurationValidationResult validation = draft.validationFor(candidate);
-            if (validation == null || !validation.successful())
-                throw new IllegalStateException("Exact draft candidate requires successful validation");
+            FrozenConfigurationCandidate candidate = admission.get().candidate();
             UUID predecessor = published == null ? null : published.localId();
             if (predecessor == null || !predecessor.equals(candidate.baseSnapshotId()))
                 throw new IllegalStateException("Draft is based on a stale runtime snapshot");
 
-            hooks.beforePreparation();
-            PreparedSkillUpdate prepared = prepare(candidate.configuration());
-            GenerationRestResources.Resources staged = stage(prepared, candidate.configuration());
+            PreparedSkillUpdate prepared;
+            GenerationRestResources.Resources staged;
+            try {
+                hooks.beforePreparation();
+                prepared = prepare(candidate.configuration());
+                staged = stage(prepared, candidate.configuration());
+            } catch (RuntimeException failure) {
+                throw new PublicationFailure("preparation_failed", "Configuration preparation failed before activation");
+            }
             String generation = prepared.generationId();
             ConfigurationSnapshot submitted;
             try {
@@ -160,7 +179,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                 resources.discard(generation);
                 pruneAfterAttempt();
                 LOG.warn("Configuration commit failed before framework publication; runtime remains {}", predecessor);
-                throw new IllegalStateException("Configuration commit failed before runtime publication");
+                throw new PublicationFailure("commit_failed", "Configuration commit failed before runtime publication");
             }
             intendedId = submitted.localId();
             intendedStatus = SnapshotStatus.PENDING;
@@ -191,29 +210,67 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                 pruneAfterAttempt();
                 if (mutationFault == null) LOG.warn("Configuration {} publication failed; intended selection restored to {}",
                         submitted.localId(), predecessor);
-                throw new IllegalStateException(mutationFault == null
-                        ? "Configuration publication failed; intended selection reverted"
-                        : mutationFault);
+                throw new PublicationFailure(mutationFault == null ? "activation_failed" : "revert_failed",
+                        mutationFault == null ? "Configuration publication failed; intended selection reverted" : mutationFault);
             }
 
+            boolean statusRecorded = false;
             try {
                 hooks.beforeStatus();
                 store.updateStatus(submitted.localId(), SnapshotStatus.PUBLISHED);
                 intendedStatus = SnapshotStatus.PUBLISHED;
+                statusRecorded = true;
             } catch (RuntimeException failure) {
                 mutationFault = "Published configuration outcome could not be recorded";
                 LOG.error("Configuration mutation fault: runtime {} published but outcome was not recorded",
                         submitted.localId());
             }
             pruneAfterAttempt();
-            if (mutationFault != null) throw new IllegalStateException(mutationFault);
-            return store.findByLocalId(submitted.localId());
+            if (mutationFault != null) throw new PublicationFailure(
+                    statusRecorded ? "history_pruning_failed" : "outcome_recording_failed", mutationFault);
+            return new ConfigurationSnapshot(submitted.localId(), submitted.sourceId(),
+                    submitted.submissionSequence(), submitted.configuration(), SnapshotStatus.PUBLISHED);
         } finally {
             publication.unlock();
         }
     }
 
     public Inspection inspect() {
+        publication.lock();
+        try { return inspectLocked(); }
+        finally { publication.unlock(); }
+    }
+
+    public Current current() {
+        publication.lock();
+        try {
+            Inspection inspected = inspectLocked();
+            ConfigurationSnapshot runtime = published;
+            if (runtime == null) throw new IllegalStateException("Runtime configuration is unavailable");
+            ConfigurationSnapshot stored;
+            try { stored = store.findByLocalId(runtime.localId()); }
+            catch (RuntimeException failure) {
+                mutationFault = mutationFault == null ? "Configuration selection could not be inspected" : mutationFault;
+                stored = null;
+            }
+            return new Current(stored == null ? runtime : stored,
+                    inspected.intendedId(), inspected.intendedStatus(), mutationFault);
+        } finally { publication.unlock(); }
+    }
+
+    public List<ConfigurationSnapshot> history() {
+        publication.lock();
+        try { return store.history(); }
+        finally { publication.unlock(); }
+    }
+
+    public ConfigurationSnapshot history(UUID id) {
+        publication.lock();
+        try { return store.findByLocalId(id); }
+        finally { publication.unlock(); }
+    }
+
+    private Inspection inspectLocked() {
         try {
             ConfigurationSnapshot intended = store.current();
             return new Inspection(published == null ? null : published.localId(), intended.localId(), intended.status(), mutationFault);
@@ -277,24 +334,16 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
             int open = message.indexOf('[');
             int close = message.indexOf(']', open + 1);
             String location = open >= 0 && close > open ? message.substring(open + 1, close) : null;
-            return new ConfigurationValidationIssue("rest-routes.yaml", message, location);
+            return new ConfigurationValidationIssue(ConfigurationValidationIssue.Severity.ERROR,
+                    "rest-routes.yaml", null, location, message);
         }
-        return new ConfigurationValidationIssue("rest-routes.yaml", "REST client staging failed", null);
+        return new ConfigurationValidationIssue(ConfigurationValidationIssue.Severity.ERROR,
+                "rest-routes.yaml", null, null, "REST client staging failed");
     }
 
     private ConfigurationValidationIssue skillValidationIssue(RuntimeException failure, ManagedConfiguration configuration) {
-        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
-            String message = cause.getMessage();
-            if (message == null) continue;
-            for (var document : configuration.skillDocuments()) {
-                if (!message.contains("'" + document.sourceName() + "'")
-                        && !message.contains("[" + document.sourceName() + "]")) continue;
-                var field = SKILL_FIELD.matcher(message);
-                return new ConfigurationValidationIssue(document.sourceName(), "Skill preparation failed",
-                        field.find() ? field.group(1) : null);
-            }
-        }
-        return new ConfigurationValidationIssue("candidate", "Skill preparation failed", null);
+        return new ConfigurationValidationIssue(ConfigurationValidationIssue.Severity.ERROR,
+                "candidate", null, null, "Skill preparation failed");
     }
 
     @Override @jakarta.annotation.PreDestroy public void close() {

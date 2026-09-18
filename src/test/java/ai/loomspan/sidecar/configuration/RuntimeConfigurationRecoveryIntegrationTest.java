@@ -43,7 +43,7 @@ class RuntimeConfigurationRecoveryIntegrationTest {
                         @Override public void beforeFrameworkPublish() { throw new IllegalStateException("injected"); }
                         @Override public void beforeRevert() { throw new IllegalStateException("injected"); }
                     });
-                    assertThatThrownBy(() -> service.publish(draft)).hasMessageContaining("could not be reverted");
+                    assertThatThrownBy(() -> service.publish(draft::validatedCandidate)).hasMessageContaining("could not be reverted");
                     b = context.getBean(ConfigurationSnapshotStore.class).current();
                     assertThat(service.inspect().publishedId()).isEqualTo(a.localId());
                 }
@@ -83,7 +83,7 @@ class RuntimeConfigurationRecoveryIntegrationTest {
             service.hooks(new RuntimeConfigurationService.Hooks() {
                 @Override public void beforeStatus() { throw new IllegalStateException("injected"); }
             });
-            assertThatThrownBy(() -> service.publish(draft)).hasMessageContaining("outcome could not be recorded");
+            assertThatThrownBy(() -> service.publish(draft::validatedCandidate)).hasMessageContaining("outcome could not be recorded");
             published = context.getBean(ConfigurationSnapshotStore.class).current();
             assertThat(published.status()).isEqualTo(SnapshotStatus.PENDING);
             assertThat(service.inspect().publishedId()).isEqualTo(published.localId());
@@ -105,7 +105,8 @@ class RuntimeConfigurationRecoveryIntegrationTest {
         copyDatabaseSet(original, backup);
         try (var context = start(original)) {
             var service = context.getBean(RuntimeConfigurationService.class);
-            service.publish(validDraft(service, context.getBean(ConfigurationSnapshotStore.class).current(), "B"));
+            var draft = validDraft(service, context.getBean(ConfigurationSnapshotStore.class).current(), "B");
+            service.publish(draft::validatedCandidate);
             assertThat(context.getBean(ConfigurationSnapshotStore.class).current().localId()).isNotEqualTo(a.localId());
         }
         Path restored = directory.resolve("restored.db");
@@ -156,7 +157,7 @@ class RuntimeConfigurationRecoveryIntegrationTest {
             service.hooks(new RuntimeConfigurationService.Hooks() {
                 @Override public void beforeCommit() { throw new IllegalStateException("injected"); }
             });
-            assertThatThrownBy(() -> service.publish(draft)).hasMessageContaining("commit failed");
+            assertThatThrownBy(() -> service.publish(draft::validatedCandidate)).hasMessageContaining("commit failed");
             assertThat(service.inspect().publishedId()).isEqualTo(a.localId());
         }
         try (var restarted = start(database)) {

@@ -6,6 +6,12 @@ import java.util.UUID;
 /** Ephemeral authored content and validation association for a caller-supplied runtime snapshot. */
 public final class ConfigurationDraft
 {
+    /** Opaque proof that the current exact candidate passed complete validation. */
+    public static final class ValidatedCandidate {
+        private final FrozenConfigurationCandidate candidate;
+        private ValidatedCandidate(FrozenConfigurationCandidate candidate) { this.candidate = candidate; }
+        public FrozenConfigurationCandidate candidate() { return candidate; }
+    }
     private final UUID baseSnapshotId;
     private FrozenConfigurationCandidate current;
     private ConfigurationValidationResult validation;
@@ -51,5 +57,11 @@ public final class ConfigurationDraft
     public synchronized ConfigurationValidationResult validationFor(FrozenConfigurationCandidate candidate)
     {
         return candidate == current ? validation : null;
+    }
+
+    public synchronized ValidatedCandidate validatedCandidate() {
+        if (validation == null || !validation.successful())
+            throw new IllegalStateException("Exact draft candidate requires successful validation");
+        return new ValidatedCandidate(current);
     }
 }

@@ -44,6 +44,26 @@ class ConfigurationSnapshotStoreTest
     }
 
     @Test
+    void historyContainsAuthoredPendingAndFailedContentInSubmissionOrder() {
+        var fixture = open(directory.resolve("history.db"));
+        var a = fixture.store.current();
+        UUID source = UUID.randomUUID();
+        var b = fixture.store.submit(content("B"), source, a.localId());
+        fixture.store.revert(b.localId(), a.localId());
+        var c = fixture.store.submit(content("C"), null, a.localId());
+        var rows = fixture.store.history();
+        assertThat(rows).extracting(ConfigurationSnapshot::localId)
+                .containsExactly(a.localId(), b.localId(), c.localId());
+        assertThat(rows.get(1).sourceId()).isEqualTo(source);
+        assertThat(rows.get(1).configuration()).isEqualTo(content("B"));
+        assertThat(rows.get(1).status()).isEqualTo(SnapshotStatus.FAILED);
+        assertThat(rows.get(2).status()).isEqualTo(SnapshotStatus.PENDING);
+        fixture.store.prune(Set.of());
+        assertThat(fixture.store.history()).extracting(ConfigurationSnapshot::localId)
+                .containsExactly(a.localId(), b.localId(), c.localId());
+    }
+
+    @Test
     void submitAndRevertAreGuardedAndAtomic()
     {
         var fixture = open(directory.resolve("revert.db"));

@@ -2,6 +2,7 @@ package ai.loomspan.sidecar.management;
 
 import ai.loomspan.api.SkillDocument;
 import ai.loomspan.sidecar.storage.ManagedConfiguration;
+import ai.loomspan.sidecar.storage.ConfigurationValidationResult;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +26,9 @@ public final class ManagementEditingController {
     public record Capability(String tabId, UUID grantId) {}
     public record Save(String tabId, UUID grantId, UUID expectedCandidateId,
             List<SkillDocument> skillDocuments, String restRoutesYaml) {}
+    public record Candidate(String tabId, UUID grantId, UUID expectedCandidateId) {}
+    public record ValidationResponse(UUID draftId, UUID candidateId, UUID baseSnapshotId,
+            boolean applied, ConfigurationValidationResult validation) {}
 
     private final ManagementEditingService editing;
     private final ManagementSessionGuard sessions;
@@ -83,6 +87,15 @@ public final class ManagementEditingController {
                 body.expectedCandidateId(), configuration);
     }
 
+    @PostMapping("/draft/validate")
+    public ValidationResponse validate(@RequestBody Candidate body, Authentication auth,
+            HttpServletRequest request) {
+        var draft = editing.validate(session(request), ManagementController.principal(auth), body.tabId(),
+                body.grantId(), body.expectedCandidateId());
+        return new ValidationResponse(draft.draftId(), draft.candidateId(), draft.baseSnapshotId(),
+                true, draft.validation());
+    }
+
     @DeleteMapping("/draft")
     public ResponseEntity<Void> discard(@RequestBody(required = false) Capability body,
             Authentication auth, HttpServletRequest request) {
@@ -92,13 +105,20 @@ public final class ManagementEditingController {
     }
 
     @ExceptionHandler(ManagementEditingService.Conflict.class)
-    ResponseEntity<Map<String, String>> conflict() {
-        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", "Editing state changed or is unavailable"));
+    ResponseEntity<Map<String, String>> conflict(ManagementEditingService.Conflict conflict) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("code", conflict.code(),
+                "error", "Editing state changed or is unavailable"));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
     ResponseEntity<Map<String, String>> invalid() {
-        return ResponseEntity.badRequest().body(Map.of("error", "Invalid editing request"));
+        return ResponseEntity.badRequest().body(Map.of("code", "invalid_request", "error", "Invalid editing request"));
+    }
+
+    @ExceptionHandler(IllegalStateException.class)
+    ResponseEntity<Map<String, String>> unavailable() {
+        return ResponseEntity.status(503).body(Map.of("code", "configuration_unavailable",
+                "error", "Configuration mutations are unavailable"));
     }
 
     private static jakarta.servlet.http.HttpSession session(HttpServletRequest request) {

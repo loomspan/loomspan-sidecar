@@ -15,7 +15,12 @@ import java.time.ZoneId;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -82,5 +87,93 @@ class ManagementEditingServiceTest {
         service.release(session, editor, tab, resumed.grantId());
         service.discard(session, editor, null, null);
         assertThat(service.read(session, editor)).isNull();
+    }
+
+    @Test void lateValidationAfterEqualContentSaveCannotAttachOrReturnOldResult() throws Exception {
+        var base = new ConfigurationSnapshot(UUID.randomUUID(), null, 1,
+                new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES), SnapshotStatus.PUBLISHED);
+        var runtime = mock(RuntimeConfigurationService.class);
+        when(runtime.withEditingState(anyBoolean(), any())).thenAnswer(call -> {
+            Function<ConfigurationSnapshot, ?> operation = call.getArgument(1);
+            return operation.apply(base);
+        });
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        when(runtime.validate(any(ManagedConfiguration.class))).thenAnswer(call -> {
+            entered.countDown();
+            if (!release.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("test timeout");
+            return new ConfigurationValidationResult(true, List.of());
+        });
+        var identity = mock(ManagementIdentityService.class);
+        when(identity.account(1L)).thenReturn(new ManagementAccountRepository.Account(
+                1, "editor@example.test", "editor", true, "hash", 1));
+        var state = new ManagementEditingState();
+        var clock = new MutableClock();
+        var service = new ManagementEditingService(runtime, state, identity, new SidecarManagementProperties(), clock);
+        var editor = new ManagementUserDetailsService.Principal(1, "editor@example.test", "editor", 1, "hash", List.of());
+        var session = mock(HttpSession.class);
+        when(session.getId()).thenReturn("session");
+        when(session.getAttribute(ManagementSessionGuard.ACTIVITY)).thenReturn(clock.millis());
+        String tab = UUID.randomUUID().toString();
+        var grant = service.acquire(session, editor, tab, false);
+        UUID candidate = grant.draft().candidateId();
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var checking = workers.submit(() -> service.validate(session, editor, tab, grant.grantId(), candidate));
+            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+            var changed = service.save(session, editor, tab, grant.grantId(), candidate, base.configuration());
+            release.countDown();
+            assertThatThrownBy(() -> checking.get(5, TimeUnit.SECONDS))
+                    .hasCauseInstanceOf(ManagementEditingService.Conflict.class);
+            assertThat(changed.candidateId()).isNotEqualTo(candidate);
+            assertThat(service.read(session, editor).validation()).isNull();
+        } finally { release.countDown(); }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"release", "discard", "destroy", "expire"})
+    void lateValidationAfterOwnershipLossCannotAttach(String loss) throws Exception {
+        var base = new ConfigurationSnapshot(UUID.randomUUID(), null, 1,
+                new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES), SnapshotStatus.PUBLISHED);
+        var runtime = mock(RuntimeConfigurationService.class);
+        when(runtime.withEditingState(anyBoolean(), any())).thenAnswer(call -> {
+            Function<ConfigurationSnapshot, ?> operation = call.getArgument(1);
+            return operation.apply(base);
+        });
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        when(runtime.validate(any(ManagedConfiguration.class))).thenAnswer(call -> {
+            entered.countDown();
+            if (!release.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("test timeout");
+            return new ConfigurationValidationResult(true, List.of());
+        });
+        var identity = mock(ManagementIdentityService.class);
+        when(identity.account(1L)).thenReturn(new ManagementAccountRepository.Account(
+                1, "editor@example.test", "editor", true, "hash", 1));
+        var state = new ManagementEditingState();
+        var clock = new MutableClock();
+        var service = new ManagementEditingService(runtime, state, identity, new SidecarManagementProperties(), clock);
+        var editor = new ManagementUserDetailsService.Principal(1, "editor@example.test", "editor", 1, "hash", List.of());
+        var session = mock(HttpSession.class);
+        when(session.getId()).thenReturn("session");
+        when(session.getAttribute(ManagementSessionGuard.ACTIVITY)).thenReturn(clock.millis());
+        String tab = UUID.randomUUID().toString();
+        var grant = service.acquire(session, editor, tab, false);
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var checking = workers.submit(() -> service.validate(session, editor, tab,
+                    grant.grantId(), grant.draft().candidateId()));
+            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+            switch (loss) {
+                case "release" -> service.release(session, editor, tab, grant.grantId());
+                case "discard" -> service.discard(session, editor, tab, grant.grantId());
+                case "destroy" -> when(session.getCreationTime()).thenThrow(new IllegalStateException("destroyed"));
+                case "expire" -> clock.advance(Duration.ofMinutes(16));
+                default -> throw new AssertionError(loss);
+            }
+            release.countDown();
+            assertThatThrownBy(() -> checking.get(5, TimeUnit.SECONDS))
+                    .hasCauseInstanceOf(ManagementEditingService.Conflict.class);
+            if (!"discard".equals(loss) && !"destroy".equals(loss))
+                assertThat(service.read(session, editor).validation()).isNull();
+        } finally { release.countDown(); }
     }
 }

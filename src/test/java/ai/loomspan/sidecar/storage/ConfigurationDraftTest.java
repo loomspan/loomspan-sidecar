@@ -110,8 +110,10 @@ class ConfigurationDraftTest
     void preservesSourceLabelAndAvailableErrorLocation()
     {
         var callerIssues = new ArrayList<>(List.of(
-                new ConfigurationValidationIssue("B.yaml", "invalid sequence", "line 1, column 7"),
-                new ConfigurationValidationIssue("rest-routes.yaml", "missing target", null)));
+                new ConfigurationValidationIssue(ConfigurationValidationIssue.Severity.ERROR,
+                        "B.yaml", null, "line 1, column 7", "invalid sequence"),
+                new ConfigurationValidationIssue(ConfigurationValidationIssue.Severity.ERROR,
+                        "rest-routes.yaml", null, null, "missing target")));
         var result = new ConfigurationValidationResult(false, callerIssues);
         callerIssues.clear();
         ConfigurationDraft draft = new ConfigurationDraft(snapshot());
@@ -119,14 +121,29 @@ class ConfigurationDraftTest
         assertThat(draft.recordValidation(candidate, result)).isTrue();
 
         assertThat(draft.validationFor(candidate).issues()).containsExactly(
-                new ConfigurationValidationIssue("B.yaml", "invalid sequence", "line 1, column 7"),
-                new ConfigurationValidationIssue("rest-routes.yaml", "missing target", null));
+                new ConfigurationValidationIssue(ConfigurationValidationIssue.Severity.ERROR,
+                        "B.yaml", null, "line 1, column 7", "invalid sequence"),
+                new ConfigurationValidationIssue(ConfigurationValidationIssue.Severity.ERROR,
+                        "rest-routes.yaml", null, null, "missing target"));
         assertThatThrownBy(() -> result.issues().clear()).isInstanceOf(UnsupportedOperationException.class);
         assertThat(new ConfigurationValidationResult(false, List.of()).issues()).isEmpty();
-        assertThatThrownBy(() -> new ConfigurationValidationIssue(" ", "message", null))
+        assertThatThrownBy(() -> new ConfigurationValidationIssue(ConfigurationValidationIssue.Severity.ERROR,
+                " ", null, null, "message"))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new ConfigurationValidationIssue("source", " ", null))
+        assertThatThrownBy(() -> new ConfigurationValidationIssue(ConfigurationValidationIssue.Severity.ERROR,
+                "source", null, null, " "))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void validatedCandidateRequiresCurrentSuccessfulResult() {
+        var draft = new ConfigurationDraft(snapshot());
+        assertThatThrownBy(draft::validatedCandidate).hasMessageContaining("requires successful validation");
+        var first = draft.freeze();
+        draft.recordValidation(first, new ConfigurationValidationResult(true, List.of()));
+        assertThat(draft.validatedCandidate().candidate()).isSameAs(first);
+        draft.replaceContent(first.configuration());
+        assertThatThrownBy(draft::validatedCandidate).hasMessageContaining("requires successful validation");
     }
 
     private static ConfigurationSnapshot snapshot()

@@ -54,7 +54,7 @@ class RestRouteRestartIntegrationTest {
                 draft.replaceContent(new ManagedConfiguration(List.of(new SkillDocument(skill.getFileName().toString(),
                         Files.readString(skill))), Files.readString(routes)));
                 assertThat(context.getBean(RuntimeConfigurationService.class).validate(draft).successful()).isTrue();
-                context.getBean(RuntimeConfigurationService.class).publish(draft);
+                context.getBean(RuntimeConfigurationService.class).publish(draft::validatedCandidate);
                 assertThat(handler.handle(new RestSkillInvocation("echoRest", Map.of("message", "x"), reloader.snapshot().generationId())))
                         .isEqualTo("second");
                 assertThat(reloader.snapshot().skill("echoRest").orElseThrow().description())

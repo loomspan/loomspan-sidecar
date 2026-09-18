@@ -5,6 +5,8 @@ import ai.loomspan.sidecar.configuration.RuntimeConfigurationService;
 import ai.loomspan.sidecar.storage.ConfigurationDraft;
 import ai.loomspan.sidecar.storage.ConfigurationValidationResult;
 import ai.loomspan.sidecar.storage.ManagedConfiguration;
+import ai.loomspan.sidecar.storage.FrozenConfigurationCandidate;
+import ai.loomspan.sidecar.storage.ConfigurationSnapshot;
 import jakarta.servlet.http.HttpSession;
 import java.time.Clock;
 import java.time.Instant;
@@ -14,7 +16,13 @@ import org.springframework.stereotype.Service;
 @Service
 public final class ManagementEditingService {
     public static final class Conflict extends RuntimeException {
-        public Conflict() { super("Editing state changed or is unavailable"); }
+        private final String code;
+        public Conflict() { this("editing_conflict"); }
+        public Conflict(String code) {
+            super("Editing state changed or is unavailable");
+            this.code = code;
+        }
+        public String code() { return code; }
     }
     public record Status(boolean held, boolean mine, Instant expiresAt) {}
     public record Grant(UUID grantId, Instant expiresAt, Draft draft) {}
@@ -102,7 +110,8 @@ public final class ManagementEditingService {
             checkAccount(user);
             ownLease(sessionId, tabId, grantId);
             var entry = eligible(sessionId, base.localId());
-            if (entry == null || !entry.candidateId.equals(expectedCandidateId)) throw new Conflict();
+            if (entry == null || !entry.candidateId.equals(expectedCandidateId))
+                throw new Conflict("candidate_conflict");
             entry.draft.replaceContent(configuration);
             entry.candidateId = UUID.randomUUID();
             return view(entry);
@@ -136,19 +145,67 @@ public final class ManagementEditingService {
         });
     }
 
-    private <T> T mutation(java.util.function.Function<ai.loomspan.sidecar.storage.ConfigurationSnapshot, T> action) {
-        try {
-            return runtime.withEditingState(true, base -> {
-                synchronized (state) { return action.apply(base); }
-            });
-        } catch (IllegalStateException fault) {
-            throw new Conflict();
+    public Draft validate(HttpSession session, ManagementUserDetailsService.Principal user,
+            String tabId, UUID grantId, UUID expectedCandidateId) {
+        var captured = runtime.withEditingState(true, base -> {
+            synchronized (state) {
+                var entry = authorized(session, user, tabId, grantId, expectedCandidateId, base);
+                return new ValidationWork(entry, entry.candidateId, entry.draft.freeze());
+            }
+        });
+        ConfigurationValidationResult result = runtime.validate(captured.candidate.configuration());
+        return runtime.withEditingState(true, base -> {
+            synchronized (state) {
+                var entry = authorized(session, user, tabId, grantId, expectedCandidateId, base);
+                if (entry != captured.entry || !entry.candidateId.equals(captured.candidateId)
+                        || entry.draft.freeze() != captured.candidate) throw new Conflict();
+                entry.draft.recordValidation(captured.candidate, result);
+                return view(entry);
+            }
+        });
+    }
+
+    public ConfigurationSnapshot publish(HttpSession session, ManagementUserDetailsService.Principal user,
+            String tabId, UUID grantId, UUID expectedCandidateId) {
+        return runtime.publish(() -> runtime.withEditingState(true, base -> {
+            synchronized (state) {
+                var entry = authorized(session, user, tabId, grantId, expectedCandidateId, base);
+                try { return entry.draft.validatedCandidate(); }
+                catch (IllegalStateException missing) { throw new Conflict("validation_required"); }
+            }
+        }));
+    }
+
+    private record ValidationWork(ManagementEditingState.Entry entry, UUID candidateId,
+            FrozenConfigurationCandidate candidate) {}
+
+    private ManagementEditingState.Entry authorized(HttpSession session, ManagementUserDetailsService.Principal user,
+            String tabId, UUID grantId, UUID expectedCandidateId, ConfigurationSnapshot base) {
+        String sessionId = activeForAdmission(session);
+        checkAccount(user);
+        if ("viewer".equals(user.role())) throw new Conflict("role_conflict");
+        ownLease(sessionId, tabId, grantId);
+        var existing = state.drafts.get(sessionId);
+        if (existing != null && !existing.draft.baseSnapshotId().equals(base.localId())) {
+            state.clearSession(sessionId);
+            throw new Conflict("base_conflict");
         }
+        var entry = eligible(sessionId, base.localId());
+        if (entry == null || expectedCandidateId == null || !entry.candidateId.equals(expectedCandidateId))
+            throw new Conflict("candidate_conflict");
+        return entry;
+    }
+
+    private <T> T mutation(java.util.function.Function<ai.loomspan.sidecar.storage.ConfigurationSnapshot, T> action) {
+        return runtime.withEditingState(true, base -> {
+            synchronized (state) { return action.apply(base); }
+        });
     }
 
     private void checkAccount(ManagementUserDetailsService.Principal user) {
         var account = identity.account(user.id());
-        if (account == null || !account.active() || account.version() != user.version()) throw new Conflict();
+        if (account == null || !account.active() || account.version() != user.version()
+                || !account.role().equals(user.role())) throw new Conflict("account_conflict");
     }
 
     private static String active(HttpSession session) {
@@ -157,6 +214,16 @@ public final class ManagementEditingService {
             return session.getId();
         }
         catch (IllegalStateException invalidated) { throw new Conflict(); }
+    }
+
+    private String activeForAdmission(HttpSession session) {
+        String sessionId = active(session);
+        try {
+            Long activity = (Long) session.getAttribute(ManagementSessionGuard.ACTIVITY);
+            if (activity == null || clock.millis() - activity >= settings.getSessionIdleTimeout().toMillis())
+                throw new Conflict("session_conflict");
+            return sessionId;
+        } catch (IllegalStateException invalidated) { throw new Conflict(); }
     }
 
     private void expire() {
@@ -177,7 +244,7 @@ public final class ManagementEditingService {
         expire();
         var lease = state.lease;
         if (lease == null || grantId == null || !lease.sessionId.equals(sessionId)
-                || !lease.tabId.equals(tabId) || !lease.grantId.equals(grantId)) throw new Conflict();
+                || !lease.tabId.equals(tabId) || !lease.grantId.equals(grantId)) throw new Conflict("grant_conflict");
         return lease;
     }
 

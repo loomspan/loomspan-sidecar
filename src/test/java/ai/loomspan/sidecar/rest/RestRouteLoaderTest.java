@@ -121,6 +121,27 @@ class RestRouteLoaderTest {
     }
 
     @Test
+    void routeBindingDiagnosticsUseAuthoredNameInsteadOfResolvedProperty() {
+        var environment = new MockEnvironment().withProperty("SENSITIVE_ROUTE", "sentinel-resolved-secret");
+        var loader = new RestRouteLoader(new RestRoutesProperties(), environment, null, name -> null);
+        String yaml = """
+                targets:
+                  callback: {base-url: http://localhost, auth: {mode: none}, connect-timeout: 1s, read-timeout: 1s, max-response-size: 1KB}
+                routes:
+                  ${SENSITIVE_ROUTE}: {target: callback, method: GET, path: /call}
+                """;
+        var configuration = loader.parse(yaml, "rest-routes.yaml");
+        assertThatThrownBy(() -> new RestRouteCatalogValidator().validateCandidate(configuration, java.util.List.of()))
+                .hasMessageContaining("routes.${SENSITIVE_ROUTE}", "unknown skill")
+                .hasMessageNotContaining("sentinel-resolved-secret");
+
+        String unknownTarget = yaml.replace("target: callback, method", "target: absent, method");
+        assertThatThrownBy(() -> loader.parse(unknownTarget, "rest-routes.yaml"))
+                .hasMessageContaining("routes.${SENSITIVE_ROUTE}.target")
+                .hasMessageNotContaining("sentinel-resolved-secret");
+    }
+
+    @Test
     void baseUrlUsesOnlyExactAllowlistedProcessEnvironmentVariables() {
         String fixture = """
                 targets:

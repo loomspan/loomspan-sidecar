@@ -101,11 +101,11 @@ final class RestRouteLoader {
             if (!StringUtils.hasText(name) || routes.containsKey(name)) {
                 throw failure(location, keyPath, "route name is blank or duplicated after placeholder resolution", null);
             }
-            routes.put(name, parseRoute(location, keyPath, name, entry.getValue(), environment));
+            routes.put(name, parseRoute(location, keyPath, name, rawName, entry.getValue(), environment));
         }
         for (var route : routes.values()) {
             if (!targets.containsKey(route.target())) {
-                throw failure(location, "routes." + route.skillName() + ".target",
+                throw failure(location, "routes." + route.sourceName() + ".target",
                         "references unknown target", null);
             }
         }
@@ -170,7 +170,7 @@ final class RestRouteLoader {
         return value;
     }
 
-    private static RestRouteConfiguration.Route parseRoute(String location, String path, String name,
+    private static RestRouteConfiguration.Route parseRoute(String location, String path, String name, String sourceName,
                                                             JsonNode node, ConfigurableEnvironment environment) {
         requireObject(location, path, node);
         requireOnly(location, path, node, ROUTE_FIELDS);
@@ -186,7 +186,7 @@ final class RestRouteLoader {
         List<RestRouteConfiguration.PathPart> parts = new ArrayList<>();
         List<String> variables = new ArrayList<>();
         validateAndCompilePath(location, path + ".path", routePath, parts, variables);
-        return new RestRouteConfiguration.Route(name, target, method, routePath, parts, variables);
+        return new RestRouteConfiguration.Route(name, sourceName, target, method, routePath, parts, variables);
     }
 
     private static Map<String, String> parseHeaders(String location, String path, JsonNode node,

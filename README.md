@@ -141,10 +141,11 @@ unchanged after later draft edits or loss of the draft reference.
 An edit clears the draft's validation result, including when replacement text is
 identical. A caller can attach a validation result only to the precise current
 frozen candidate; late results for older candidates and results from another
-draft are rejected. Supplied validation errors retain their source labels and
-available locations. The internal runtime service validates an exact candidate
-through the public framework preparation API, checks REST routes and clients,
-then releases validation-only resources. Ordinary Publish requires that exact
+draft are rejected. Validation issues retain severity, source label, skill name
+and available field location. The runtime service checks the complete candidate
+with the public framework validation API, checks REST routes and temporary
+clients, then releases validation-only resources without allocating a generation.
+Ordinary Publish requires that exact
 successful result and serializes fresh preparation, staging, durable commit,
 framework publication, and outcome recording. The management editing API now
 stores one private draft per authenticated server session. It copies the complete
@@ -152,8 +153,7 @@ runtime-published snapshot, even while SQLite points at a pending selection.
 Only the session holding the instance lease and its selected browser tab may
 replace content. Successful framework publication clears prior drafts and grants,
 including when later status bookkeeping fails. Rejected publication preserves
-old-base editing state. PR 1.3.3 will expose validation, Publish, and history;
-this API does not validate or activate a save.
+old-base editing state. Saving and validating do not activate a draft.
 
 The current database pointer records **intended production**, not the framework
 generation that handled an execution or the source for an export. A publication
@@ -279,8 +279,9 @@ loomspan:
 Keep credentials in environment variables. Model connection and URL allowlist
 changes require restart; a complete snapshot publication changes skills and
 REST routes without restart. Successful framework publication invalidates
-prior-base drafts and leases under the runtime transition gate. PR 1.3.3 adds
-Publish admission checks. Phase 5 import and rollback must reuse this
+prior-base drafts and leases under the runtime transition gate. Publish rechecks
+live account, session, grant, candidate, validation and base after waiting for
+the publication lock. Phase 5 import and rollback must reuse this
 publication path and assign fresh local IDs with source provenance.
 
 ## REST skill routes
@@ -435,8 +436,8 @@ The browser management surface is on the application port (`/management/**` and
 `/api/management/**`); port 9091 remains the health-only Actuator port. Local
 accounts use server-side form-login sessions and CSRF protection. Their roles
 are `viewer`, `editor`, and `admin`, with each higher role including lower-role
-permissions. This release exposes account, session and private draft/lease APIs;
-validation, publication and history arrive in PR 1.3.3. A management session
+permissions. This release exposes account, session, private draft/lease and
+configuration inspection, validation and publication APIs. A management session
 cannot call `/v1/**`; an execution JWT or observability API key cannot log in to
 management. Sessions are local to one process and do not survive restart.
 
@@ -526,6 +527,7 @@ request JSON. A browser tab creates a UUID `tabId` and keeps it only for that ta
 | `POST /api/management/editing/lease/release` | `{"tabId":"<uuid>","grantId":"<uuid>"}` | Releases ownership while retaining the eligible private draft. |
 | `PUT /api/management/editing/draft` | `tabId`, `grantId`, `expectedCandidateId`, complete `skillDocuments` and `restRoutesYaml` | Replaces exact authored content, rotates candidate ID, and clears validation. |
 | `DELETE /api/management/editing/draft` | Current `tabId`/`grantId` when holding the lease; otherwise an empty body | Discards this session's draft and lease. |
+| `POST /api/management/editing/draft/validate` | `tabId`, `grantId`, `expectedCandidateId` | Checks the complete frozen candidate and returns `draftId`, `candidateId`, `baseSnapshotId`, `applied: true` and `validation`; no activation or submission. |
 
 Lease acquisition and activity responses include `grantId`, `expiresAt` and the
 owning session's `draft`. A draft includes `draftId`, `candidateId`,
@@ -548,6 +550,55 @@ explicit Continue editing, no more than once per 30 seconds. Mouse movement,
 automatic validation/status polling and an open idle tab must not report
 activity. Phase 4 also owns the two-minute expiry warning; server deadlines
 remain authoritative.
+
+### Protected configuration API
+
+Management viewers, editors and admins can inspect literal authored snapshot
+content, including sensitive values in pending or failed submissions. Protect
+viewer accounts accordingly. Every response is private and `Cache-Control:
+no-store`; an execution JWT does not grant access. Mutations require a management
+session and CSRF token.
+
+| Method and path | Request | Result |
+| --- | --- | --- |
+| `GET /api/management/configuration/current` | None | `published` full runtime snapshot, `intendedId`, `intendedStatus`, and `mutationFault`. |
+| `GET /api/management/configuration/history` | None | Retained full submitted snapshots in ascending `submissionSequence`. |
+| `GET /api/management/configuration/history/{localId}` | None | Full retained snapshot or 404 after pruning. |
+| `POST /api/management/configuration/publish` | `{"tabId":"<uuid>","grantId":"<uuid>","expectedCandidateId":"<uuid>"}` | Publishes an exactly validated candidate, then returns its full snapshot. |
+
+A full snapshot contains `localId`, nullable `sourceId`, `submissionSequence`,
+`status`, and `configuration` with authored `skillDocuments` and `restRoutesYaml`.
+The framework's validation returns `successful` and issues with `severity`
+(`ERROR` or `WARNING`), `sourceLabel`, optional `skillName` and `location`, and
+`message`. Warning-only results can be published; an error cannot. A save,
+including identical content, rotates the candidate ID and clears its validation.
+Validation is advisory: Publish prepares and stages afresh. Neither validation
+nor inspection renews login or lease inactivity deadlines.
+
+The server checks the live account, session, tab, grant, base snapshot and exact
+validated candidate after the publication lock becomes available. Conflicts
+return 409 with `grant_conflict`, `candidate_conflict`, `base_conflict`,
+`validation_required`, `account_conflict`, `session_conflict`, `role_conflict`, or generic
+`editing_conflict`. Authentication and role/CSRF failures
+return 401 or 403. Malformed input returns 400. Missing or pruned history
+returns 404 with `history_not_found`. A configuration fault or storage failure returns 503. A
+publication failure after admission returns a `code`, nonsecret `error`, and
+runtime/intended IDs, intended status and mutation fault where available.
+Codes distinguish `preparation_failed`, `commit_failed`, `activation_failed`
+(revert succeeded), `revert_failed`, `outcome_recording_failed` (activation
+succeeded but bookkeeping is unknown), and `history_pruning_failed`.
+
+An HTTP disconnect does not cancel an accepted operation, but completion is not
+guaranteed across process crash. On reconnect, inspect current and history
+before considering another update. `published` is the configuration currently
+running, while `intendedId` is the SQLite restart selection. `PENDING` means
+the recorded outcome is unknown; do not infer success or failure from it. If
+`mutationFault` is present, configuration mutations stop while inspection,
+private-state cleanup and account administration remain available. Preserve
+the database and investigate the stage before retrying; the existing stopped
+full-database-backup recovery procedure applies when runtime and intended
+selection disagree. Phase 4 adds browser authoring and automatic validation
+presentation; Phase 5 adds transfer and rollback.
 
 ## Execution API
 

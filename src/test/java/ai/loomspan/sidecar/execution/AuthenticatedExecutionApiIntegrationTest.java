@@ -366,7 +366,7 @@ class AuthenticatedExecutionApiIntegrationTest {
             draft.replaceContent(new ai.loomspan.sidecar.storage.ManagedConfiguration(
                     original.configuration().skillDocuments(), newRoutes));
             assertThat(runtimeConfiguration.validate(draft).successful()).isTrue();
-            var published = runtimeConfiguration.publish(draft);
+            var published = runtimeConfiguration.publish(draft::validatedCandidate);
             assertThat(restGenerations.protectedIds()).contains(original.localId(), published.localId());
             FIXTURE.releaseModelBlock();
             var nested = poll(mapper.readTree(accepted.body()).path("id").asText(), token);
@@ -413,13 +413,13 @@ class AuthenticatedExecutionApiIntegrationTest {
             draft.replaceContent(new ai.loomspan.sidecar.storage.ManagedConfiguration(
                     old.configuration().skillDocuments(), newRoutes));
             assertThat(runtimeConfiguration.validate(draft).successful()).isTrue();
-            runtimeConfiguration.publish(draft);
+            runtimeConfiguration.publish(draft::validatedCandidate);
             for (int index = 0; index < 11; index++) {
                 var nextDraft = new ai.loomspan.sidecar.storage.ConfigurationDraft(snapshots.current());
                 nextDraft.replaceContent(new ai.loomspan.sidecar.storage.ManagedConfiguration(
                         old.configuration().skillDocuments(), newRoutes));
                 assertThat(runtimeConfiguration.validate(nextDraft).successful()).isTrue();
-                runtimeConfiguration.publish(nextDraft);
+                runtimeConfiguration.publish(nextDraft::validatedCandidate);
             }
             assertThat(snapshots.findByLocalId(old.localId())).isNotNull();
             var currentPublished = snapshots.current().localId();
@@ -440,7 +440,7 @@ class AuthenticatedExecutionApiIntegrationTest {
             finalDraft.replaceContent(new ai.loomspan.sidecar.storage.ManagedConfiguration(
                     old.configuration().skillDocuments(), newRoutes));
             assertThat(runtimeConfiguration.validate(finalDraft).successful()).isTrue();
-            runtimeConfiguration.publish(finalDraft);
+            runtimeConfiguration.publish(finalDraft::validatedCandidate);
             assertThat(snapshots.findByLocalId(old.localId())).isNull();
         } finally {
             CALLBACK.blockRelease.countDown();
@@ -460,7 +460,7 @@ class AuthenticatedExecutionApiIntegrationTest {
             draft.replaceContent(new ai.loomspan.sidecar.storage.ManagedConfiguration(List.of(),
                     ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_REST_ROUTES));
             assertThat(runtimeConfiguration.validate(draft).successful()).isTrue();
-            runtimeConfiguration.publish(draft);
+            runtimeConfiguration.publish(draft::validatedCandidate);
             assertThat(mapper.readTree(send("GET", "/v1/skills", token, null).body()).isEmpty()).isTrue();
             assertThat(send("POST", "/v1/skills/echoRest/executions", token, "{}").statusCode()).isEqualTo(404);
         } finally { restoreConfiguration(original); }
@@ -471,7 +471,7 @@ class AuthenticatedExecutionApiIntegrationTest {
         var restore = new ai.loomspan.sidecar.storage.ConfigurationDraft(snapshots.current());
         restore.replaceContent(original);
         if (!runtimeConfiguration.validate(restore).successful()) throw new AssertionError("Fixture restore validation failed");
-        runtimeConfiguration.publish(restore);
+        runtimeConfiguration.publish(restore::validatedCandidate);
     }
 
     @Test

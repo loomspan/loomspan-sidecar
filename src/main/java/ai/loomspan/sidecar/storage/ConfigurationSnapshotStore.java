@@ -3,6 +3,7 @@ package ai.loomspan.sidecar.storage;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.Objects;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -109,7 +110,11 @@ public final class ConfigurationSnapshotStore
 
     public ConfigurationSnapshot findByLocalId(UUID localId)
     {
-        return repository.findByLocalId(localId);
+        return transactions.execute(ignored -> repository.findByLocalId(localId));
+    }
+
+    public List<ConfigurationSnapshot> history() {
+        return Objects.requireNonNull(transactions.execute(ignored -> repository.history()));
     }
 
     public void updateStatus(UUID localId, SnapshotStatus status)

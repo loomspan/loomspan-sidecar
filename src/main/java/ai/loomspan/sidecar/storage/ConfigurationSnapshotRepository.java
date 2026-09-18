@@ -53,6 +53,11 @@ public final class ConfigurationSnapshotRepository
         return sequence == null ? null : requireBySequence(sequence);
     }
 
+    List<ConfigurationSnapshot> history() {
+        return jdbc.query("SELECT submission_sequence FROM configuration_snapshot ORDER BY submission_sequence",
+                (rs, row) -> rs.getLong(1)).stream().map(this::requireBySequence).toList();
+    }
+
     ConfigurationSnapshot requireBySequence(long sequence)
     {
         var rows = jdbc.query("SELECT s.local_id, s.source_id, s.document_count, s.rest_routes_yaml, t.status "

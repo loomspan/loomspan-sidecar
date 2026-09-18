@@ -92,7 +92,7 @@ class RestGenerationIntegrationTest {
                     draft.replaceContent(new ManagedConfiguration(a.configuration().skillDocuments(),
                             routes(second.getAddress().getPort())));
                     assertThat(service.validate(draft).successful()).isTrue();
-                    var b = service.publish(draft);
+                    var b = service.publish(draft::validatedCandidate);
                     assertThat(registry.protectedIds()).contains(a.localId(), b.localId());
                     assertThat(registry.require(oldGeneration).isClosed()).isFalse();
                     assertThat(admitted.invoke()).isEqualTo("first");

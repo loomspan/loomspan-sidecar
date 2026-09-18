@@ -21,7 +21,7 @@ public record RestRouteConfiguration(String location, Map<String, Target> target
     record Target(String name, URI baseUrl, Auth auth, String sslBundle,
                   Duration connectTimeout, Duration readTimeout, long maxResponseSize) {}
 
-    record Route(String skillName, String target, Method method, String path,
+    record Route(String skillName, String sourceName, String target, Method method, String path,
                  List<PathPart> parts, List<String> variables) {
         Route {
             parts = List.copyOf(parts);

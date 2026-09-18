@@ -102,7 +102,8 @@ class ManagementEditingHttpIntegrationTest {
             var frozen = entry.draft.freeze();
             assertThat(entry.draft.recordValidation(frozen, new ai.loomspan.sidecar.storage.ConfigurationValidationResult(false,
                     java.util.List.of(new ai.loomspan.sidecar.storage.ConfigurationValidationIssue(
-                            "literal.yaml", "private-validation-marker", null))))).isTrue();
+                            ai.loomspan.sidecar.storage.ConfigurationValidationIssue.Severity.ERROR,
+                            "literal.yaml", null, null, "private-validation-marker"))))).isTrue();
         }
         assertThat(a.get("/api/management/editing/draft").body()).contains(secret, "private-validation-marker");
         for (Browser other : new Browser[] {b, sameAccount, admin}) {

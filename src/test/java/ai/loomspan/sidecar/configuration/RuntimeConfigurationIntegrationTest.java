@@ -9,6 +9,7 @@ import ai.loomspan.sidecar.storage.ConfigurationDraft;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshot;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshotRepository;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshotStore;
+import ai.loomspan.sidecar.storage.ConfigurationValidationIssue;
 import ai.loomspan.sidecar.storage.ManagedConfiguration;
 import ai.loomspan.sidecar.storage.SnapshotStatus;
 import ai.loomspan.sidecar.storage.StorageConfiguration;
@@ -107,7 +108,7 @@ class RuntimeConfigurationIntegrationTest {
             var draft = new ConfigurationDraft(context.getBean(ConfigurationSnapshotStore.class).current());
             draft.replaceContent(new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES));
             assertThat(service.validate(draft).successful()).isTrue();
-            ConfigurationSnapshot replacement = service.publish(draft);
+            ConfigurationSnapshot replacement = service.publish(draft::validatedCandidate);
             assertThat(reloader.snapshot().skills()).isEmpty();
             assertThat(service.inspect().publishedId()).isEqualTo(replacement.localId());
             assertThat(context.getBean(ConfigurationSnapshotStore.class).current().status()).isEqualTo(SnapshotStatus.PUBLISHED);
@@ -126,13 +127,17 @@ class RuntimeConfigurationIntegrationTest {
             var store = context.getBean(ConfigurationSnapshotStore.class);
             var service = context.getBean(RuntimeConfigurationService.class);
             var before = store.current();
+            String generationBefore = context.getBean(SkillReloader.class).snapshot().generationId();
+            int historyBefore = store.history().size();
             var draft = new ConfigurationDraft(before);
             ManagedConfiguration content = new ManagedConfiguration(List.of(restDocument("echoRest")), routes("echoRest"));
             draft.replaceContent(content);
             assertThat(service.validate(draft).successful()).isTrue();
             assertThat(store.current().localId()).isEqualTo(before.localId());
+            assertThat(store.history()).hasSize(historyBefore);
+            assertThat(context.getBean(SkillReloader.class).snapshot().generationId()).isEqualTo(generationBefore);
             draft.replaceContent(content);
-            assertThatThrownBy(() -> service.publish(draft)).hasMessageContaining("requires successful validation");
+            assertThatThrownBy(() -> service.publish(draft::validatedCandidate)).hasMessageContaining("requires successful validation");
             assertThat(store.current().localId()).isEqualTo(before.localId());
             draft.replaceContent(new ManagedConfiguration(List.of(restDocument("echoRest")),
                     ConfigurationSnapshotStore.EMPTY_REST_ROUTES));
@@ -140,22 +145,37 @@ class RuntimeConfigurationIntegrationTest {
             assertThat(invalid.successful()).isFalse();
             assertThat(invalid.issues()).singleElement().satisfies(issue -> {
                 assertThat(issue.sourceLabel()).isEqualTo("rest-routes.yaml");
+                assertThat(issue.severity()).isEqualTo(ConfigurationValidationIssue.Severity.ERROR);
                 assertThat(issue.message()).contains("has no route");
                 assertThat(issue.location()).isEqualTo("routes.echoRest");
             });
             assertThat(store.current().localId()).isEqualTo(before.localId());
+            draft.replaceContent(new ManagedConfiguration(List.of(restDocument("one"), restDocument("two")),
+                    routes("one")));
+            var incompleteRoutes = service.validate(draft);
+            assertThat(incompleteRoutes.successful()).isFalse();
+            assertThat(incompleteRoutes.issues()).singleElement().satisfies(issue ->
+                    assertThat(issue.message()).contains("two", "has no route"));
+            draft.replaceContent(new ManagedConfiguration(List.of(), routes("orphan")));
+            var orphanRoute = service.validate(draft);
+            assertThat(orphanRoute.successful()).isFalse();
+            assertThat(orphanRoute.issues()).singleElement().satisfies(issue ->
+                    assertThat(issue.message()).contains("orphan", "unknown skill"));
             draft.replaceContent(new ManagedConfiguration(List.of(new SkillDocument("bad.yaml", "name: [")),
                     ConfigurationSnapshotStore.EMPTY_REST_ROUTES));
             var malformed = service.validate(draft);
             assertThat(malformed.successful()).isFalse();
-            assertThat(malformed.issues()).singleElement().satisfies(issue ->
-                    assertThat(issue.sourceLabel()).isEqualTo("bad.yaml"));
+            assertThat(malformed.issues()).singleElement().satisfies(issue -> {
+                assertThat(issue.sourceLabel()).isEqualTo("bad.yaml");
+                assertThat(issue.severity()).isEqualTo(ConfigurationValidationIssue.Severity.ERROR);
+            });
             draft.replaceContent(new ManagedConfiguration(List.of(new SkillDocument("missing-description.yaml",
                     "name: missingDescription\nrest: true\n")), ConfigurationSnapshotStore.EMPTY_REST_ROUTES));
             var missingDescription = service.validate(draft);
             assertThat(missingDescription.issues()).singleElement().satisfies(issue -> {
                 assertThat(issue.sourceLabel()).isEqualTo("missing-description.yaml");
                 assertThat(issue.location()).isEqualTo("description");
+                assertThat(issue.severity()).isEqualTo(ConfigurationValidationIssue.Severity.ERROR);
             });
             draft.replaceContent(new ManagedConfiguration(List.of(restDocument("echoRest")),
                     routes("echoRest").replace("http://127.0.0.1:9", "'${CALLBACK_URL}'")));
@@ -177,6 +197,8 @@ class RuntimeConfigurationIntegrationTest {
         var resources = org.mockito.Mockito.mock(ai.loomspan.sidecar.rest.GenerationRestResources.class);
         var executions = org.mockito.Mockito.mock(ai.loomspan.sidecar.execution.ExecutionCoordinator.class);
         org.mockito.Mockito.when(reloader.prepare(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(prepared);
+        org.mockito.Mockito.when(reloader.validate(org.mockito.ArgumentMatchers.anyCollection()))
+                .thenReturn(new ai.loomspan.api.SkillValidationResult(List.of(), List.of()));
         org.mockito.Mockito.when(resources.prepare(org.mockito.ArgumentMatchers.anyString()))
                 .thenThrow(new IllegalStateException("sensitive SSL configuration detail"));
         var service = new RuntimeConfigurationService(store, reloader, resources,
@@ -193,6 +215,36 @@ class RuntimeConfigurationIntegrationTest {
             assertThat(issue.message()).isEqualTo("REST client staging failed");
             assertThat(issue.message()).doesNotContain("sensitive SSL configuration detail");
         });
+    }
+
+    @Test
+    void warningOnlyFrameworkValidationPreservesIssueAndReleasesTemporaryResources() {
+        var store = org.mockito.Mockito.mock(ConfigurationSnapshotStore.class);
+        var reloader = org.mockito.Mockito.mock(SkillReloader.class);
+        var resources = org.mockito.Mockito.mock(ai.loomspan.sidecar.rest.GenerationRestResources.class);
+        var staged = org.mockito.Mockito.mock(ai.loomspan.sidecar.rest.GenerationRestResources.Resources.class);
+        var executions = org.mockito.Mockito.mock(ai.loomspan.sidecar.execution.ExecutionCoordinator.class);
+        org.mockito.Mockito.when(reloader.validate(org.mockito.ArgumentMatchers.anyCollection()))
+                .thenReturn(new ai.loomspan.api.SkillValidationResult(List.of(
+                        new ai.loomspan.api.SkillValidationIssue(ai.loomspan.api.SkillValidationIssue.Severity.WARNING,
+                                "warning.yaml", "checkedSkill", "description", "Needs review")), List.of()));
+        org.mockito.Mockito.when(resources.prepare(org.mockito.ArgumentMatchers.anyString())).thenReturn(staged);
+        org.mockito.Mockito.when(staged.routes()).thenReturn(new ai.loomspan.sidecar.rest.RestRouteConfiguration(
+                "rest-routes.yaml", java.util.Map.of(), java.util.Map.of()));
+        var service = new RuntimeConfigurationService(store, reloader, resources,
+                new ai.loomspan.sidecar.rest.RestRouteCatalogValidator(), executions,
+                new ai.loomspan.sidecar.management.ManagementEditingState());
+        var result = service.validate(new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES));
+        assertThat(result.successful()).isTrue();
+        assertThat(result.issues()).singleElement().satisfies(issue -> {
+            assertThat(issue.severity()).isEqualTo(ConfigurationValidationIssue.Severity.WARNING);
+            assertThat(issue.sourceLabel()).isEqualTo("warning.yaml");
+            assertThat(issue.skillName()).isEqualTo("checkedSkill");
+            assertThat(issue.location()).isEqualTo("description");
+        });
+        org.mockito.Mockito.verify(resources).release(staged);
+        org.mockito.Mockito.verify(reloader, org.mockito.Mockito.never())
+                .prepare(org.mockito.ArgumentMatchers.anyCollection());
     }
 
     @Test
@@ -227,7 +279,7 @@ class RuntimeConfigurationIntegrationTest {
                     catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new IllegalStateException(failure); }
                 }
             });
-            var publishing = workers.submit(() -> service.publish(candidate));
+            var publishing = workers.submit(() -> service.publish(candidate::validatedCandidate));
             assertThat(entered.await(3, TimeUnit.SECONDS)).isTrue();
             assertThat(store.current().localId()).isNotEqualTo(a.localId());
             var captured = service.withEditingState(false, snapshot -> snapshot);
@@ -262,7 +314,7 @@ class RuntimeConfigurationIntegrationTest {
                 @Override public void beforeStatus() { throw new IllegalStateException("injected status failure"); }
             });
             var publishing = workers.submit(() -> {
-                try { service.publish(draft); return false; }
+                try { service.publish(draft::validatedCandidate); return false; }
                 catch (IllegalStateException expected) { return true; }
             });
             assertThat(entered.await(3, TimeUnit.SECONDS)).isTrue();
@@ -291,7 +343,7 @@ class RuntimeConfigurationIntegrationTest {
             var faultSession = session("fault-editor-session");
             assertThatThrownBy(() -> editingService.acquire(faultSession, editor,
                     java.util.UUID.randomUUID().toString(), false))
-                    .isInstanceOf(ai.loomspan.sidecar.management.ManagementEditingService.Conflict.class);
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("mutations are stopped");
             assertThat(editingService.read(faultSession, editor)).isNull();
             editingService.discard(faultSession, editor, null, null);
         }
@@ -345,7 +397,7 @@ class RuntimeConfigurationIntegrationTest {
                     catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new IllegalStateException(failure); }
                 }
             });
-            var publishing = workers.submit(() -> service.publish(frozen));
+            var publishing = workers.submit(() -> service.publish(frozen::validatedCandidate));
             assertThat(entered.await(3, TimeUnit.SECONDS)).isTrue();
             editing.release(session, editor, tab, grant.grantId());
             assertThat(editing.read(session, editor).draftId()).isEqualTo(grant.draft().draftId());
@@ -394,7 +446,7 @@ class RuntimeConfigurationIntegrationTest {
                     @Override public void beforeRevert() { if (fault.equals("revert")) throw new IllegalStateException("injected"); }
                     @Override public void beforeStatus() { if (fault.equals("status")) throw new IllegalStateException("injected"); }
                 });
-                assertThatThrownBy(() -> service.publish(draft)).isInstanceOf(IllegalStateException.class);
+                assertThatThrownBy(() -> service.publish(draft::validatedCandidate)).isInstanceOf(IllegalStateException.class);
                 var inspection = service.inspect();
                 synchronized (editing) {
                     if (fault.equals("status")) {
@@ -436,7 +488,7 @@ class RuntimeConfigurationIntegrationTest {
                     assertThat(b.status()).isEqualTo(fault.equals("publish") ? SnapshotStatus.FAILED : SnapshotStatus.PENDING);
                 }
                 if (inspection.mutationFault() != null) {
-                    assertThatThrownBy(() -> service.publish(draft)).hasMessageContaining("mutations are stopped");
+                    assertThatThrownBy(() -> service.publish(draft::validatedCandidate)).hasMessageContaining("mutations are stopped");
                 }
                 if (fault.equals("revert")) {
                     new org.springframework.jdbc.core.JdbcTemplate(context.getBean(javax.sql.DataSource.class))
@@ -469,11 +521,11 @@ class RuntimeConfigurationIntegrationTest {
                     catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new IllegalStateException(failure); }
                 }
             });
-            var accepted = workers.submit(() -> service.publish(first));
+            var accepted = workers.submit(() -> service.publish(first::validatedCandidate));
             assertThat(entered.await(3, TimeUnit.SECONDS)).isTrue();
             first.replaceContent(new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES));
             var waiting = workers.submit(() -> {
-                try { service.publish(second); return "accepted"; }
+                try { service.publish(second::validatedCandidate); return "accepted"; }
                 catch (IllegalStateException failure) { return failure.getMessage(); }
             });
             assertThat(waiting.isDone()).isFalse();
@@ -537,7 +589,7 @@ class RuntimeConfigurationIntegrationTest {
         draft.replaceContent(new ManagedConfiguration(base.configuration().skillDocuments(),
                 routes("protectedRest").replace("127.0.0.1:9", "127.0.0.1:" + port)));
         assertThat(service.validate(draft).successful()).isTrue();
-        return service.publish(draft);
+        return service.publish(draft::validatedCandidate);
     }
 
     private int snapshotCount(org.springframework.context.ConfigurableApplicationContext context) {

@@ -65,7 +65,7 @@ class ExecutionConfigurationCorrelationIntegrationTest {
                 var draft = new ConfigurationDraft(a);
                 draft.replaceContent(new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES));
                 assertThat(service.validate(draft).successful()).isTrue();
-                service.publish(draft);
+                service.publish(draft::validatedCandidate);
                 assertThat(coordinator.find(id, owner).orElseThrow().configurationSnapshotId()).isEqualTo(a.localId());
             }
         }
@@ -112,7 +112,7 @@ class ExecutionConfigurationCorrelationIntegrationTest {
                 var draft = new ConfigurationDraft(a);
                 draft.replaceContent(new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES));
                 assertThat(service.validate(draft).successful()).isTrue();
-                coordinator.afterHandoff(admitted -> service.publish(draft));
+                coordinator.afterHandoff(admitted -> service.publish(draft::validatedCandidate));
                 var jwt = Jwt.withTokenValue("test-token").header("alg", "none")
                         .issuer("https://issuer.test").subject("owner")
                         .issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(300)).build();
