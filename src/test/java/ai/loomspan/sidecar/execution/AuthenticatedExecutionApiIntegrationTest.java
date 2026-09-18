@@ -26,6 +26,7 @@ import ai.loomspan.sidecar.support.JwtTestTokens;
 import ai.loomspan.sidecar.support.SidecarApplicationFixture;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -54,6 +55,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "loomspan-sidecar.executions.max-queued-input-size=32B"
 })
 class AuthenticatedExecutionApiIntegrationTest {
+    @TempDir static Path storageDirectory;
     private static final SidecarApplicationFixture FIXTURE = new SidecarApplicationFixture();
     private static final ConcurrentLinkedQueue<String> MODEL_RESPONSES = FIXTURE.modelResponses();
     private static final SidecarApplicationFixture.CallbackFixture CALLBACK = FIXTURE.callback();
@@ -66,6 +68,7 @@ class AuthenticatedExecutionApiIntegrationTest {
 
     @DynamicPropertySource
     static void modelProperties(DynamicPropertyRegistry properties) {
+        properties.add("loomspan-sidecar.storage.database-path", () -> storageDirectory.resolve("sidecar.db").toString());
         properties.add("loomspan.connections.fixture.driver", () -> "openai");
         properties.add("loomspan.connections.fixture.base-url",
                 () -> "http://127.0.0.1:" + FIXTURE.modelPort() + "/v1");

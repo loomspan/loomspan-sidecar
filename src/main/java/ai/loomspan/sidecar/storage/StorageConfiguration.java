@@ -1,6 +1,7 @@
 package ai.loomspan.sidecar.storage;
 
 import ai.loomspan.sidecar.config.SidecarStorageProperties;
+import ai.loomspan.sidecar.config.SidecarSnapshotProperties;
 import org.flywaydb.core.Flyway;
 import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteDataSource;
@@ -18,6 +19,7 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Set;
 
 @Configuration
 public class StorageConfiguration
@@ -48,10 +50,12 @@ public class StorageConfiguration
 
     @Bean
     ConfigurationSnapshotStore configurationSnapshotStore(ConfigurationSnapshotRepository repository,
-            DataSourceTransactionManager transactionManager)
+            DataSourceTransactionManager transactionManager, SidecarSnapshotProperties properties)
     {
-        var store = new ConfigurationSnapshotStore(repository, new TransactionTemplate(transactionManager));
+        var store = new ConfigurationSnapshotStore(repository, new TransactionTemplate(transactionManager),
+                properties.getMaxRetained());
         store.initialize();
+        store.prune(Set.of());
         return store;
     }
 

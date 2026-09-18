@@ -33,6 +33,7 @@ final class TestSkillInvocationHandoff {
             java.util.function.Function<Consumer<SkillExecutionView>, String> observedInvocation) {
         var captured = SecurityContextHolder.getContext().getAuthentication();
         return new AdmittedSkillInvocation() {
+            @Override public String generationId() { return "test-generation"; }
             @Override public String invoke() { return withCapturedAuthentication(invocation); }
             @Override public String invoke(Consumer<SkillExecutionView> observer) {
                 return withCapturedAuthentication(() -> observedInvocation.apply(observer));

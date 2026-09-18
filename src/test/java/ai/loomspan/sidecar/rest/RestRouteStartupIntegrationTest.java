@@ -50,6 +50,7 @@ class RestRouteStartupIntegrationTest {
         try (var context = new SpringApplicationBuilder(LoomspanSidecarApplication.class)
                 .web(WebApplicationType.NONE)
                 .run("--loomspan.skills.locations=" + skill.toUri(),
+                        "--loomspan-sidecar.storage.database-path=" + temporaryDirectory.resolve("sidecar.db"),
                         "--loomspan.observability.enabled=false",
                         "--loomspan-sidecar.rest-routes-location=" + routes.toUri(),
                         "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",

@@ -130,6 +130,24 @@ UUID; imported status will not prove publication there. Phase 5 defines the
 archive layout, integrity checks, and import/export operations. Flyway version
 and application version are not transfer compatibility rules.
 
+The current database pointer records **intended production**, not the framework
+generation that handled an execution or the source for an export. A publication
+attempt stores complete B as pending and switches the pointer from expected A
+to B in one transaction. A rejected attempt can atomically restore A and mark
+B failed; B remains inspectable. A successful activation records B published
+separately. On restart, Sidecar loads the committed pointer even if pending:
+pending does not establish failure or success, and older pending attempts
+remain unknown. An unreadable selection fails startup and requires a consistent
+backup restore. Phase 2 will activate the selection and gate dispatch.
+
+`loomspan-sidecar.snapshots.max-retained` is a positive snapshot count, default
+`10`. Startup prunes oldest eligible snapshots after a valid selected load.
+Pending and failed records count too. The selected snapshot and caller-supplied
+IDs needed by publication or live generations are protected and count toward
+the target; history may temporarily exceed it. An expired ID is absent on
+lookup. Phase 2 will provide live-generation protection and invoke pruning
+after completed update attempts; retirement alone does not delete history.
+
 The database directory, database file, and SQLite `-wal` and `-shm` auxiliary
 files must be writable by UID/GID `10001:10001`. Use one Sidecar instance per
 database on a persistent local filesystem with reliable locking. Do not share
@@ -137,9 +155,62 @@ one database across replicas or place it on a network filesystem. SQLite uses
 foreign keys, WAL journaling, `synchronous=FULL`, and a 5-second busy timeout on
 each connection. A competing writer can fail after that timeout; this is not a
 distributed transaction service. Keep WAL files with the database. Copying only
-the main database file while it is live is not a safe backup; operator backup
-and recovery procedures belong to PR 1.1.2. The Kubernetes sample expects a
+the main database file while it is live is not a safe backup. The Kubernetes sample expects a
 PVC named `loomspan-sidecar-data` that supports these permissions and locking.
+
+### Stopped-instance backup and recovery
+
+Stop the sole Sidecar instance and wait for process exit before either copy.
+For the quickstart use `docker compose -f examples/quickstart/compose.yaml stop sidecar`;
+for the Kubernetes sample use `kubectl scale deployment/example-with-loomspan-sidecar --replicas=0`
+and wait until its pod has terminated. On the host or maintenance container with
+the local persistent volume mounted, set `DATA_DIR` to the directory containing
+`sidecar.db` and `BACKUP_DIR` to a separate protected directory. Copy the main
+database and whichever WAL/SHM files exist while no process has it open:
+
+```sh
+set -eu
+DATA_DIR=/path/to/mounted/sidecar-data
+BACKUP_DIR=/path/to/protected/backup
+mkdir "$BACKUP_DIR" # use a new empty directory for each backup
+test -f "$DATA_DIR/sidecar.db"
+for suffix in '' -wal -shm; do
+  if [ -e "$DATA_DIR/sidecar.db$suffix" ]; then
+    cp -p "$DATA_DIR/sidecar.db$suffix" "$BACKUP_DIR/"
+  fi
+done
+```
+
+To recover an unreadable or invalid selected state, stop Sidecar again, choose
+a backup created while stopped, and replace the whole database set. Keep a
+separate copy of damaged files for investigation. Remove stale WAL/SHM companions
+before replacing and ensure the directory and restored files are writable by
+UID/GID `10001:10001`:
+
+```sh
+set -eu
+DATA_DIR=/path/to/mounted/sidecar-data
+BACKUP_DIR=/path/to/protected/backup
+test -f "$BACKUP_DIR/sidecar.db" # verify the backup before removing the current database
+mkdir -p "$DATA_DIR"
+rm -f "$DATA_DIR/sidecar.db" "$DATA_DIR/sidecar.db-wal" "$DATA_DIR/sidecar.db-shm"
+for suffix in '' -wal -shm; do
+  if [ -e "$BACKUP_DIR/sidecar.db$suffix" ]; then
+    cp -p "$BACKUP_DIR/sidecar.db$suffix" "$DATA_DIR/"
+  fi
+done
+chown 10001:10001 "$DATA_DIR" "$DATA_DIR"/sidecar.db*
+```
+
+Restart with `docker compose -f examples/quickstart/compose.yaml start sidecar`
+or `kubectl scale deployment/example-with-loomspan-sidecar --replicas=1`. Verify startup and
+readiness. Restore rolls current selection, statuses, and history back to the
+backup point. This full installation database backup includes authored YAML and
+literal sensitive values without redaction or v1 encryption. Account/session
+transfer is not introduced. Protect backup access accordingly. The database
+copy test verifies storage recovery; Phase 2 must separately verify runtime
+publication faults, startup dispatch gating, live-generation pruning races,
+and retirement before release.
 
 ## Mounted configuration
 
@@ -410,6 +481,7 @@ above that budget plus cleanup margin (the Kubernetes example uses 45 seconds).
 | --- | --- |
 | `loomspan-sidecar.rest-routes-location` | `file:/sidecar/rest-routes.yaml`; required readable unified route document; override at startup. |
 | `loomspan-sidecar.storage.database-path` | `/sidecar/data/sidecar.db`; writable persistent local database path and parent directory required at startup. |
+| `loomspan-sidecar.snapshots.max-retained` | `10`; positive count of stored snapshots, including pending and failed history; protected snapshots may exceed it. |
 | `loomspan-sidecar.auth.jwt.issuer-uri` | Required nonblank issuer; also used with an explicit local key or JWKS URL. |
 | `loomspan-sidecar.auth.jwt.audience` | Required nonblank audience. |
 | `loomspan-sidecar.auth.jwt.jwk-set-uri` | Optional explicit JWKS URL; mutually exclusive with the public-key location. |

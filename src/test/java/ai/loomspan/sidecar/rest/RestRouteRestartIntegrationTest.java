@@ -81,6 +81,7 @@ class RestRouteRestartIntegrationTest {
 
     private String[] properties(Path skill, Path routes) {
         return new String[] {"--loomspan.skills.locations=" + skill.toUri(),
+                "--loomspan-sidecar.storage.database-path=" + temporaryDirectory.resolve("sidecar.db"),
                 "--loomspan.observability.enabled=false",
                 "--loomspan-sidecar.rest-routes-location=" + routes.toUri(),
                 "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",

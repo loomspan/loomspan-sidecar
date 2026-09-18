@@ -75,6 +75,7 @@ class RestFailureEnvelopeIntegrationTest {
             try (var context = new SpringApplicationBuilder(LoomspanSidecarApplication.class).run(
                     "--server.port=0", "--management.server.port=0", "--loomspan.observability.enabled=false",
                     "--loomspan.skills.locations=" + directory.toUri() + "*.yml",
+                    "--loomspan-sidecar.storage.database-path=" + directory.resolve("sidecar.db"),
                     "--loomspan-sidecar.rest-routes-location=" + file.toUri(),
                     "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
                     "--loomspan-sidecar.auth.jwt.audience=sidecar",

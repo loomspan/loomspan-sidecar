@@ -9,6 +9,8 @@ loomspan:
 loomspan-sidecar:
   storage:
     database-path: /sidecar/data/sidecar.db
+  snapshots:
+    max-retained: 10
   rest-routes-location: "file:/sidecar/rest-routes.yaml"
   auth:
     jwt:

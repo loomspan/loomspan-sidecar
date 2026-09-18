@@ -201,6 +201,7 @@ class RestRouteValidationIntegrationTest {
     private String[] arguments(Path routes) {
         return new String[] {
                 "--loomspan.skills.locations=" + directory.toUri() + "*.yml",
+                "--loomspan-sidecar.storage.database-path=" + directory.resolve("sidecar.db"),
                 "--loomspan.observability.enabled=false",
                 "--loomspan.connections.fixture.driver=openai",
                 "--loomspan.connections.fixture.base-url=http://127.0.0.1:9/v1",

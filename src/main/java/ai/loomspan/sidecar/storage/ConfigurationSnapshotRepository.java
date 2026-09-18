@@ -97,13 +97,42 @@ public final class ConfigurationSnapshotRepository
         }
     }
 
+    Long sequenceFor(UUID localId)
+    {
+        return jdbc.query("SELECT submission_sequence FROM configuration_snapshot WHERE local_id = :id",
+                new MapSqlParameterSource("id", localId.toString()), rs -> rs.next() ? rs.getLong(1) : null);
+    }
+
+    void switchCurrent(long expectedSequence, long nextSequence)
+    {
+        int changed = jdbc.update("UPDATE configuration_store_state SET current_snapshot_sequence = :next "
+                + "WHERE singleton = 1 AND initialized = 1 AND current_snapshot_sequence = :expected",
+                new MapSqlParameterSource().addValue("next", nextSequence).addValue("expected", expectedSequence));
+        if (changed != 1)
+        {
+            throw new IllegalStateException("Current configuration snapshot changed unexpectedly");
+        }
+    }
+
+    List<SnapshotId> snapshotIdsOldestFirst()
+    {
+        return jdbc.query("SELECT submission_sequence, local_id FROM configuration_snapshot ORDER BY submission_sequence",
+                (rs, row) -> new SnapshotId(rs.getLong(1), UUID.fromString(rs.getString(2))));
+    }
+
+    void deleteBySequence(long sequence)
+    {
+        jdbc.update("DELETE FROM configuration_snapshot WHERE submission_sequence = :sequence",
+                new MapSqlParameterSource("sequence", sequence));
+    }
+
     State state()
     {
         var rows = jdbc.query("SELECT initialized, current_snapshot_sequence FROM configuration_store_state WHERE singleton = 1",
                 (rs, row) -> new State(rs.getInt(1) == 1, rs.getObject(2) == null ? null : rs.getLong(2)));
         if (rows.size() != 1)
         {
-            throw new IllegalStateException("Missing configuration store state");
+            throw new IllegalStateException("Cannot load configuration store state; stop Sidecar and restore a consistent full database backup");
         }
         return rows.getFirst();
     }
@@ -126,6 +155,7 @@ public final class ConfigurationSnapshotRepository
     }
 
     record State(boolean initialized, Long currentSequence) {}
+    record SnapshotId(long sequence, UUID localId) {}
     private record Header(UUID localId, UUID sourceId, int documentCount, String restYaml, String status) {}
     private record DocumentRow(int ordinal, SkillDocument document) {}
 }

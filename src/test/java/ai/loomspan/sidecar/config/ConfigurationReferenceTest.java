@@ -17,6 +17,7 @@ class ConfigurationReferenceTest {
         Set<String> expected = new LinkedHashSet<>();
         add(expected, "loomspan-sidecar.", RestRoutesProperties.class);
         add(expected, "loomspan-sidecar.storage.", SidecarStorageProperties.class);
+        add(expected, "loomspan-sidecar.snapshots.", SidecarSnapshotProperties.class);
         add(expected, "loomspan-sidecar.auth.jwt.", SidecarJwtProperties.class);
         add(expected, "loomspan-sidecar.executions.", SidecarExecutionProperties.class);
 
@@ -34,6 +35,7 @@ class ConfigurationReferenceTest {
         String dockerfile = Files.readString(Path.of("Dockerfile"));
         assertThat(defaults).contains("file:/sidecar/skills/**/*.yaml", "file:/sidecar/rest-routes.yaml", "port: 9091");
         assertThat(defaults).contains("database-path: /sidecar/data/sidecar.db");
+        assertThat(defaults).contains("max-retained: 10");
         assertThat(compose).contains("./sidecar:/sidecar:ro", "LOOMSPAN_SIDECAR_AUTH_JWT_AUDIENCE",
                 "${QUICKSTART_HOST_PORT:-8081}:8081", "${SIDECAR_API_PORT:-8080}:8080",
                 "${SIDECAR_MANAGEMENT_PORT:-9091}:9091", "sidecar-data:/sidecar/data");
@@ -56,6 +58,8 @@ class ConfigurationReferenceTest {
                 .contains(new RestRoutesProperties().getRestRoutesLocation(), "readable", "startup");
         assertThat(rows.get("loomspan-sidecar.storage.database-path"))
                 .contains(new SidecarStorageProperties().getDatabasePath(), "writable", "persistent", "startup");
+        assertThat(rows.get("loomspan-sidecar.snapshots.max-retained"))
+                .contains("`" + new SidecarSnapshotProperties().getMaxRetained() + "`", "positive", "snapshot");
         assertThat(rows.get("loomspan-sidecar.auth.jwt.issuer-uri")).contains("nonblank", "explicit local key or JWKS");
         assertThat(rows.get("loomspan-sidecar.auth.jwt.audience")).contains("nonblank");
         assertThat(rows.get("loomspan-sidecar.auth.jwt.jwk-set-uri")).contains("mutually exclusive");

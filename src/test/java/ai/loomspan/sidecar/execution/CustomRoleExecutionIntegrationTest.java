@@ -6,9 +6,11 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
+import java.nio.file.Path;
 
 import ai.loomspan.sidecar.support.JwtTestTokens;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -29,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "loomspan-sidecar.auth.jwt.role-prefix=APP_"
 })
 class CustomRoleExecutionIntegrationTest {
+    @TempDir static Path storageDirectory;
     private static final com.sun.net.httpserver.HttpServer CALLBACK = callbackServer();
     private static final java.nio.file.Path ROUTES = routeFile();
     @LocalServerPort int port;
@@ -37,6 +40,7 @@ class CustomRoleExecutionIntegrationTest {
 
     @DynamicPropertySource
     static void restProperties(DynamicPropertyRegistry properties) {
+        properties.add("loomspan-sidecar.storage.database-path", () -> storageDirectory.resolve("sidecar.db").toString());
         properties.add("loomspan-sidecar.rest-routes-location", () -> ROUTES.toUri().toString());
     }
 

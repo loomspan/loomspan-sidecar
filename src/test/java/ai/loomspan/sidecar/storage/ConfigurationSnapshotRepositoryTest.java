@@ -32,7 +32,7 @@ class ConfigurationSnapshotRepositoryTest
                 + "    auth: {mode: static, headers: {X-Secret: literal-secret-sentinel}}\nroutes: {}\n";
         var configuration = new ManagedConfiguration(List.of(new SkillDocument("a.yaml", skills),
                 new SkillDocument("B.yml", "name: callback\nrest: true\n")), rest);
-        ConfigurationSnapshot written = first.store.submit(configuration, source);
+        ConfigurationSnapshot written = first.store.submit(configuration, source, first.store.current().localId());
 
         StoreFixture reopened = open(file);
         ConfigurationSnapshot read = reopened.store.findByLocalId(written.localId());
@@ -70,8 +70,8 @@ class ConfigurationSnapshotRepositoryTest
         var configuration = new ManagedConfiguration(mutable, "targets: {}\nroutes: {}\n");
         mutable.clear();
         UUID source = UUID.randomUUID();
-        var one = fixture.store.submit(configuration, source);
-        var two = fixture.store.submit(configuration, source);
+        var one = fixture.store.submit(configuration, source, fixture.store.current().localId());
+        var two = fixture.store.submit(configuration, source, one.localId());
         fixture.store.updateStatus(one.localId(), SnapshotStatus.FAILED);
 
         assertThat(one.localId()).isNotEqualTo(two.localId());
@@ -90,6 +90,24 @@ class ConfigurationSnapshotRepositoryTest
                 + "WHERE snapshot_sequence = ?", one.submissionSequence())).isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> jdbc.update("UPDATE configuration_snapshot_status SET status = 'unknown' "
                 + "WHERE snapshot_sequence = ?", one.submissionSequence())).isInstanceOf(RuntimeException.class);
+    }
+
+    @Test
+    void statusRecordingDoesNotChangeSelectionOrOlderPendingHistory()
+    {
+        StoreFixture fixture = open(directory.resolve("status-recording.db"));
+        var initial = fixture.store.current();
+        var a = fixture.store.submit(new ManagedConfiguration(List.of(new SkillDocument("a", "name: A")),
+                "routes: {a: true}"), null, initial.localId());
+        var b = fixture.store.submit(new ManagedConfiguration(List.of(new SkillDocument("b", "name: B")),
+                "routes: {b: true}"), null, a.localId());
+        fixture.store.updateStatus(b.localId(), SnapshotStatus.PUBLISHED);
+        assertThat(fixture.store.current().localId()).isEqualTo(b.localId());
+        assertThat(fixture.store.current().configuration()).isEqualTo(b.configuration());
+        assertThat(fixture.store.current().status()).isEqualTo(SnapshotStatus.PUBLISHED);
+        assertThat(fixture.store.findByLocalId(a.localId()).status()).isEqualTo(SnapshotStatus.PENDING);
+        assertThatThrownBy(() -> fixture.store.updateStatus(UUID.randomUUID(), SnapshotStatus.FAILED))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     private StoreFixture open(Path path)

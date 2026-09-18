@@ -74,6 +74,7 @@ class RestHandlerLifecycleIntegrationTest {
         }).run(
                         "--server.port=0", "--management.server.port=0",
                         "--loomspan.skills.locations=" + skill.toUri(),
+                        "--loomspan-sidecar.storage.database-path=" + temporaryDirectory.resolve("sidecar.db"),
                         "--loomspan.observability.enabled=false",
                         "--loomspan.shutdown.timeout=3s",
                         "--loomspan-sidecar.executions.max-concurrent=1",
@@ -150,6 +151,7 @@ class RestHandlerLifecycleIntegrationTest {
         var context = application(managementAndAsync).run(
                         "--server.port=0", "--management.server.port=0",
                         "--loomspan.skills.locations=" + skill.toUri(),
+                        "--loomspan-sidecar.storage.database-path=" + temporaryDirectory.resolve("sidecar.db"),
                         "--loomspan.observability.enabled=false",
                         "--loomspan.shutdown.timeout=200ms",
                         "--spring.lifecycle.timeout-per-shutdown-phase=50ms",

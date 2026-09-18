@@ -8,8 +8,13 @@ import java.util.List;
 
 import ai.loomspan.sidecar.support.JwtTestTokens;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+
+import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -24,6 +29,13 @@ import static org.assertj.core.api.Assertions.assertThat;
         "loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem"
 })
 class ConsoleSecurityIntegrationTest {
+    @TempDir static Path storageDirectory;
+
+    @DynamicPropertySource
+    static void storageProperties(DynamicPropertyRegistry properties) {
+        properties.add("loomspan-sidecar.storage.database-path", () -> storageDirectory.resolve("sidecar.db").toString());
+    }
+
     @LocalServerPort int port;
     private final HttpClient client = HttpClient.newHttpClient();
 

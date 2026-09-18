@@ -2,6 +2,7 @@ package ai.loomspan.sidecar.management;
 
 import ai.loomspan.sidecar.execution.ExecutionCoordinator;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.actuate.endpoint.web.WebEndpointsSupplier;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -9,11 +10,14 @@ import org.springframework.boot.test.web.server.LocalManagementPort;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.event.ContextClosedEvent;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -28,6 +32,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 })
 class ManagementEndpointIntegrationTest
 {
+    @TempDir static Path storageDirectory;
+
+    @DynamicPropertySource
+    static void storageProperties(DynamicPropertyRegistry properties)
+    {
+        properties.add("loomspan-sidecar.storage.database-path", () -> storageDirectory.resolve("sidecar.db").toString());
+    }
+
     @LocalServerPort
     int applicationPort;
 

@@ -137,6 +137,7 @@ class JwtStartupIntegrationTest {
                 "--server.port=0", "--management.server.port=0",
                 "--loomspan.observability.enabled=false",
                 "--loomspan.skills.locations=" + temporaryDirectory.toUri() + "missing/**/*.yaml",
+                "--loomspan-sidecar.storage.database-path=" + temporaryDirectory.resolve("sidecar.db"),
                 "--loomspan-sidecar.rest-routes-location=classpath:fixtures/rest-routes/empty.yaml"));
         jwt.forEach((name, value) -> arguments.add("--loomspan-sidecar.auth.jwt." + name + "=" + value));
         return new SpringApplicationBuilder(LoomspanSidecarApplication.class)
