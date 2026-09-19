@@ -652,9 +652,47 @@ running when export begins. An active empty configuration yields an empty skill
 list and the authored empty REST document. If no runtime snapshot exists, export
 is unavailable. The intended database pointer, retained history, private drafts,
 accounts, sessions, leases, environment values, URL allowlists, SMTP/model
-connections, and SSL bundles are excluded. Import and rollback are not offered
-yet. For full installation recovery, use the stopped-instance database backup
-procedure above.
+connections, and SSL bundles are excluded. Editors and administrators can import
+this bundle through **Import configuration** or the management API. For full
+installation recovery, use the stopped-instance database backup procedure above.
+
+Import completely replaces authored skills, routes, and targets. It does not
+transfer source history or status. Review uploads one `bundle` file to
+`POST /api/management/configuration/import/review`; the response includes source
+identity, producer versions, skill document and validated skill counts, route
+count, destination validation feedback, a review ID, the runtime-published ID,
+and the current lease owner and grant, if any. Confirmation uploads the exact
+same ZIP to `POST /api/management/configuration/import/confirm` with `reviewId`,
+`expectedPublishedId`, and `expectedGrantId` when a lease exists. The console
+requires a separate confirmation action. Management editor/admin authorization
+and CSRF apply to both endpoints; viewers may still export and inspect.
+
+Review does not publish. Confirmation rechecks the exact bytes, destination
+validation, runtime snapshot, and editing grant. A replacement lease or runtime
+publication requires refreshed confirmation; renewal of the same grant does
+not. Rejected confirmations preserve private drafts. An accepted import prepares
+and stages again before clearing **all** private drafts and breaking the lease.
+That cutover precedes database submission, so later commit or activation failure
+does not restore drafts. Every submission receives a new destination UUID; the
+source UUID is provenance only. Destination accounts and installation settings
+remain untouched.
+
+The destination must configure the REST URL variable allowlist, corresponding
+process environment values, and any SSL bundles required by the authored
+routes. Whole-value `${NAME}` base URLs resolve through this destination's exact
+allowlist and environment; absent, undeclared, blank, or invalid bindings reject
+before cutover. Literal URLs are supported. Protect ZIPs as sensitive data.
+
+The inclusive format limits are 100 MiB compressed, 512 MiB expanded, and
+10,000 ZIP entries. Uploads spool to temporary files and are removed after each
+request; no import job or durable uploaded bundle is retained. After a known
+preparation, commit, activation, pointer-reversion, or bookkeeping failure,
+inspect current runtime and local history before another attempt. A disconnected
+browser has an unknown outcome; do not retry blindly. `PENDING` also means the
+recorded outcome is unknown. A reversion failure stops configuration mutations
+for operator recovery. A bookkeeping failure after activation does not undo the
+running import. Restart follows the committed intended pointer, and admitted
+execution continues with its original generation.
 
 The ZIP contains exactly `manifest.json`, `rest.json`, and one YAML file per
 skill under `skills/`. All entry names are fixed or generated, never taken from
@@ -730,8 +768,8 @@ present, acquisition, save, editing activity renewal, validation, and
 publication are blocked; inspection, release or discard of private editing
 state, and administrator account management remain available. Follow the
 protected recovery-guidance link and the stopped-instance procedure above when
-operator intervention is required. Transfer and rollback controls remain
-outside this console workflow.
+operator intervention is required. Import is available to editors and
+administrators; rollback controls remain outside this console workflow.
 
 The server checks the live account, session, tab, grant, base snapshot and exact
 validated candidate after the publication lock becomes available. Conflicts
@@ -756,7 +794,7 @@ private-state cleanup and account administration remain available. Preserve
 the database and investigate the stage before retrying; the existing stopped
 full-database-backup recovery procedure applies when runtime and intended
 selection disagree. The browser authoring, automatic validation, and retained
-history workflow use these same contracts; Phase 5 adds transfer and rollback.
+history workflow use these same contracts. Rollback remains separate work.
 
 ## Execution API
 

@@ -4,6 +4,8 @@ import ai.loomspan.sidecar.configuration.RuntimeConfigurationService;
 import ai.loomspan.sidecar.bundle.ConfigurationBundleV1;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshot;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.ServletException;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -21,7 +23,10 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("/api/management/configuration")
@@ -29,13 +34,17 @@ public final class ManagementConfigurationController {
     public record Publish(String tabId, UUID grantId, UUID expectedCandidateId) {}
     public record Problem(String code, String error, UUID publishedId, UUID intendedId,
             String intendedStatus, String mutationFault) {}
+    public record ImportProblem(String code, String error, ManagementConfigurationImportService.Observation observation) {}
 
     private final RuntimeConfigurationService runtime;
     private final ManagementEditingService editing;
+    private final ManagementConfigurationImportService imports;
 
-    public ManagementConfigurationController(RuntimeConfigurationService runtime, ManagementEditingService editing) {
+    public ManagementConfigurationController(RuntimeConfigurationService runtime, ManagementEditingService editing,
+            ManagementConfigurationImportService imports) {
         this.runtime = runtime;
         this.editing = editing;
+        this.imports = imports;
     }
 
     @GetMapping("/current")
@@ -77,9 +86,18 @@ public final class ManagementConfigurationController {
     }
 
     @ExceptionHandler(ConfigurationBundleV1.BundleTooLarge.class)
-    ResponseEntity<Map<String, String>> exportTooLarge() {
-        return ResponseEntity.status(413).body(Map.of("code", "export_too_large",
-                "error", "Runtime configuration exceeds format 1 bundle limits"));
+    ResponseEntity<Map<String, String>> bundleTooLarge(HttpServletRequest request) {
+        boolean imported = request.getRequestURI().contains("/import/");
+        return ResponseEntity.status(413).header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .body(Map.of("code", imported ? "import_too_large" : "export_too_large",
+                        "error", imported ? "Uploaded bundle exceeds format 1 limits"
+                                : "Runtime configuration exceeds format 1 bundle limits"));
+    }
+
+    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
+    ResponseEntity<Map<String, String>> multipartTooLarge() {
+        return ResponseEntity.status(413).header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .body(Map.of("code", "import_too_large", "error", "Uploaded bundle exceeds format 1 limits"));
     }
 
     @GetMapping("/history")
@@ -96,6 +114,58 @@ public final class ManagementConfigurationController {
     public ConfigurationSnapshot publish(@RequestBody Publish body, Authentication auth, HttpServletRequest request) {
         return editing.publish(request.getSession(false), ManagementController.principal(auth),
                 body.tabId(), body.grantId(), body.expectedCandidateId());
+    }
+
+    @PostMapping(value = "/import/review", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ManagementConfigurationImportService.Review review(@RequestPart("bundle") MultipartFile bundle,
+            HttpServletRequest request, HttpServletResponse response) throws IOException, ServletException {
+        response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
+        requireParts(request, "bundle");
+        return imports.review(request.getSession(false), bundle);
+    }
+
+    @PostMapping(value = "/import/confirm", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ConfigurationSnapshot confirm(@RequestPart("bundle") MultipartFile bundle,
+            @RequestParam("reviewId") UUID reviewId, @RequestParam("expectedPublishedId") UUID publishedId,
+            @RequestParam(value = "expectedGrantId", required = false) UUID grantId,
+            Authentication auth, HttpServletRequest request, HttpServletResponse response)
+            throws IOException, ServletException {
+        response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
+        requireParts(request, "bundle", "reviewId", "expectedPublishedId", "expectedGrantId");
+        return imports.confirm(request.getSession(false), ManagementController.principal(auth), bundle,
+                reviewId, publishedId, grantId);
+    }
+
+    private static void requireParts(HttpServletRequest request, String... allowed) throws IOException, ServletException {
+        var names = java.util.Set.of(allowed);
+        var seen = new java.util.HashSet<String>();
+        for (var part : request.getParts()) {
+            if (!names.contains(part.getName()) || !seen.add(part.getName())
+                    || ("bundle".equals(part.getName()) != (part.getSubmittedFileName() != null)))
+                throw new ManagementConfigurationImportService.InvalidUpload();
+        }
+        if (!seen.contains("bundle")) throw new ManagementConfigurationImportService.InvalidUpload();
+    }
+
+    @ExceptionHandler(ManagementConfigurationImportService.Conflict.class)
+    ResponseEntity<ImportProblem> importConflict(ManagementConfigurationImportService.Conflict conflict) {
+        var observation = conflict.code().equals("account_conflict") || conflict.code().equals("session_conflict")
+                ? null : conflict.observation() == null ? imports.observation() : conflict.observation();
+        return ResponseEntity.status(409).header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .body(new ImportProblem(conflict.code(), "Import review or confirmation is no longer current",
+                        observation));
+    }
+
+    @ExceptionHandler(ManagementConfigurationImportService.InvalidUpload.class)
+    ResponseEntity<Map<String, String>> invalidUpload() {
+        return ResponseEntity.badRequest().header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .body(Map.of("code", "invalid_upload", "error", "Exactly one valid bundle upload is required"));
+    }
+
+    @ExceptionHandler(ConfigurationBundleV1.InvalidBundle.class)
+    ResponseEntity<Map<String, String>> invalidBundle() {
+        return ResponseEntity.badRequest().header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .body(Map.of("code", "invalid_bundle", "error", "Bundle format or content is invalid"));
     }
 
     @ExceptionHandler(ManagementEditingService.Conflict.class)

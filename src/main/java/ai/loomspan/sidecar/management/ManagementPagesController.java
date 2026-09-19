@@ -129,7 +129,7 @@ public class ManagementPagesController {
     @GetMapping(value = "/management/configuration/recovery", produces = MediaType.TEXT_HTML_VALUE)
     String recovery(Authentication auth, HttpServletRequest request) {
         return console("Configuration recovery guidance", ManagementController.principal(auth), request,
-                "<section data-console='recovery'><p>This page is read-only. It does not retry, cancel, roll back, import, export, or repair a publication.</p>"
+                "<section data-console='recovery'><p>This page is read-only. It does not retry, cancel, roll back, import, export, or repair a publication. A disconnected import may already have completed: inspect current runtime and retained history before another attempt.</p>"
                 + "<h2>When a mutation fault is present</h2><p>Configuration acquisition, save, activity renewal, validation, and publication are blocked. Configuration inspection, release or discard of private editing state, and administrator account management remain available.</p>"
                 + "<h2>Offline operator recovery</h2><ol><li>Stop the sole Sidecar instance before changing storage.</li>"
                 + "<li>Preserve a consistent copy of the complete SQLite database set, including its journal or WAL files.</li>"
@@ -158,6 +158,21 @@ public class ManagementPagesController {
                 + "<button id='editor-publish' type='button' disabled>Publish validated draft</button>"
                 + "<div id='editor-outcome' role='status' aria-live='polite'></div></section>"
                 + "<script src='/management/assets/editor.js' defer></script>");
+    }
+    @GetMapping(value = "/management/configuration/import", produces = MediaType.TEXT_HTML_VALUE)
+    String importPage(Authentication auth, HttpServletRequest request) {
+        return console("Import configuration", ManagementController.principal(auth), request,
+                "<section data-console='import'><p>Choose a format-1 current-configuration bundle exported from this or another Sidecar.</p>"
+                + "<label>Configuration bundle <input id='import-file' type='file' accept='.zip,application/zip'></label>"
+                + "<button id='import-review' type='button'>Review on this destination</button>"
+                + "<p id='import-status' role='status' aria-live='polite'>Choose a bundle to review.</p>"
+                + "<div id='import-summary' hidden><h2>Review</h2><dl id='import-details'></dl>"
+                + "<h3>Validation feedback</h3><ul id='import-issues'></ul>"
+                + "<p id='import-warning' class='warning'>Confirming discards every private draft and breaks the editing lease, including another editor’s lease. The imported content completely replaces the running configuration.</p>"
+                + "<button id='import-confirm' type='button' disabled>Confirm and publish import</button></div>"
+                + "<div id='import-outcome' role='status' aria-live='polite'></div>"
+                + "<p><a href='/management/configuration/current'>Current runtime</a> · <a href='/management/configuration/history'>History</a> · <a href='/management/configuration/recovery'>Recovery guidance</a></p></section>"
+                + "<script src='/management/assets/import.js' defer></script>");
     }
     @GetMapping(value = "/management/password/change", produces = MediaType.TEXT_HTML_VALUE)
     String change(Authentication auth, HttpServletRequest request) {
@@ -191,7 +206,8 @@ public class ManagementPagesController {
     private static String console(String title, ManagementUserDetailsService.Principal user, HttpServletRequest request, String body) {
         String nav = "<nav aria-label='Management'><a href='/management/home'>Home</a> <a href='/management/configuration/current'>Current configuration</a>"
                 + " <a href='/management/configuration/history'>History</a>"
-                + " <a href='/management/configuration/edit'>Edit configuration</a>"
+                + ("viewer".equals(user.role()) ? "" : " <a href='/management/configuration/edit'>Edit configuration</a>"
+                        + " <a href='/management/configuration/import'>Import configuration</a>")
                 + ("admin".equals(user.role()) ? " <a href='/management/accounts'>Accounts</a>" : "")
                 + " <a href='/management/password/change'>Change password</a></nav>";
         return page(title, nav + "<p>Signed in as " + escape(user.email()) + " (" + escape(user.role()) + ").</p>"

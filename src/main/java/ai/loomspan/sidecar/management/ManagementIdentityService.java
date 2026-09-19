@@ -1,5 +1,6 @@
 package ai.loomspan.sidecar.management;
 
+import ai.loomspan.sidecar.configuration.RuntimeConfigurationService;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
@@ -31,6 +32,7 @@ public class ManagementIdentityService {
     private final Clock clock;
     private final Supplier<String> setupCredential;
     private final ManagementEditingState editing;
+    private RuntimeConfigurationService runtime;
     private final SecureRandom random = new SecureRandom();
     private final Pbkdf2PasswordEncoder encoder = new Pbkdf2PasswordEncoder("", 16, 310_000,
             Pbkdf2PasswordEncoder.SecretKeyFactoryAlgorithm.PBKDF2WithHmacSHA256);
@@ -43,6 +45,15 @@ public class ManagementIdentityService {
         this.clock = clock;
         this.setupCredential = setupCredential;
         this.editing = editing;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void runtime(RuntimeConfigurationService runtime) { this.runtime = runtime; }
+
+    private void withEditingLock(Runnable action) {
+        Runnable locked = () -> { synchronized (editing) { action.run(); } };
+        if (runtime == null) locked.run();
+        else runtime.withEditingTransition(locked);
     }
 
     @Configuration(proxyBeanMethods = false)
@@ -128,7 +139,7 @@ public class ManagementIdentityService {
     public void redeem(String purpose, String token, String password) {
         ManagementPolicy.password(password);
         String digest = digest(token);
-        synchronized (editing) {
+        withEditingLock(() -> {
             long changed = tx.execute(status -> {
                 var entry = accounts.token(digest);
                 if (entry == null || !entry.purpose().equals(purpose) || entry.consumedAt() != null
@@ -143,12 +154,12 @@ public class ManagementIdentityService {
                 return account.id();
             });
             editing.clearAccount(changed);
-        }
+        });
     }
 
     public void change(long id, String current, String replacement) {
         ManagementPolicy.password(replacement);
-        synchronized (editing) {
+        withEditingLock(() -> {
             tx.executeWithoutResult(status -> {
                 Account account = accounts.byId(id);
                 if (account == null || !account.active() || !matches(current, account.passwordHash())) throw new Rejected();
@@ -156,18 +167,18 @@ public class ManagementIdentityService {
                 accounts.consumeTokens(id, clock.millis());
             });
             editing.clearAccount(id);
-        }
+        });
     }
 
     public void alter(long id, String role, boolean enabled) {
         validRole(role);
-        synchronized (editing) {
+        withEditingLock(() -> {
             tx.executeWithoutResult(status -> {
                 if (accounts.byId(id) == null || !accounts.alter(id, role, enabled)) throw new Rejected();
                 if (!enabled) accounts.consumeTokens(id, clock.millis());
             });
             editing.clearAccount(id);
-        }
+        });
     }
 
     public boolean matches(String raw, String stored) {

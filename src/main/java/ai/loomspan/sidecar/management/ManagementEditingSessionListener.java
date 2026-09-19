@@ -1,5 +1,6 @@
 package ai.loomspan.sidecar.management;
 
+import ai.loomspan.sidecar.configuration.RuntimeConfigurationService;
 import jakarta.servlet.http.HttpSessionEvent;
 import jakarta.servlet.http.HttpSessionListener;
 import org.springframework.stereotype.Component;
@@ -8,10 +9,16 @@ import org.springframework.stereotype.Component;
 @Component
 public final class ManagementEditingSessionListener implements HttpSessionListener {
     private final ManagementEditingState editing;
+    private final RuntimeConfigurationService runtime;
 
-    public ManagementEditingSessionListener(ManagementEditingState editing) { this.editing = editing; }
+    public ManagementEditingSessionListener(ManagementEditingState editing,
+            RuntimeConfigurationService runtime) {
+        this.editing = editing; this.runtime = runtime;
+    }
 
     @Override public void sessionDestroyed(HttpSessionEvent event) {
-        synchronized (editing) { editing.clearSession(event.getSession().getId()); }
+        runtime.withEditingTransition(() -> {
+            synchronized (editing) { editing.clearSession(event.getSession().getId()); }
+        });
     }
 }

@@ -20,7 +20,7 @@ class ManagementConfigurationExportControllerTest {
         var runtime = mock(RuntimeConfigurationService.class);
         when(runtime.publishedSnapshot()).thenThrow(new IllegalStateException("unavailable"));
         var mvc = MockMvcBuilders.standaloneSetup(new ManagementConfigurationController(
-                runtime, mock(ManagementEditingService.class))).build();
+                runtime, mock(ManagementEditingService.class), mock(ManagementConfigurationImportService.class))).build();
         mvc.perform(get("/api/management/configuration/export"))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.code").value("export_unavailable"))
@@ -34,7 +34,7 @@ class ManagementConfigurationExportControllerTest {
         when(runtime.publishedSnapshot()).thenReturn(new ConfigurationSnapshot(UUID.randomUUID(), null, 1,
                 new ManagedConfiguration(skills, "targets: {}\nroutes: {}\n"), SnapshotStatus.PUBLISHED));
         var mvc = MockMvcBuilders.standaloneSetup(new ManagementConfigurationController(
-                runtime, mock(ManagementEditingService.class))).build();
+                runtime, mock(ManagementEditingService.class), mock(ManagementConfigurationImportService.class))).build();
         mvc.perform(get("/api/management/configuration/export"))
                 .andExpect(status().isPayloadTooLarge())
                 .andExpect(jsonPath("$.code").value("export_too_large"));

@@ -160,21 +160,65 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
             if (predecessor == null || !predecessor.equals(candidate.baseSnapshotId()))
                 throw new IllegalStateException("Draft is based on a stale runtime snapshot");
 
+            return publishCandidate(candidate.configuration(), null, predecessor, false);
+        } finally {
+            publication.unlock();
+        }
+    }
+
+    public static final class ImportConflict extends RuntimeException {}
+
+    /** A confirmed import owns both gates until its outcome is known. */
+    public ConfigurationSnapshot importConfiguration(ManagedConfiguration configuration, UUID sourceId,
+            UUID expectedPublishedId, UUID expectedGrantId, java.util.function.LongSupplier nowMillis) {
+        return importConfiguration(configuration, sourceId, expectedPublishedId, expectedGrantId, nowMillis, () -> {});
+    }
+
+    public ConfigurationSnapshot importConfiguration(ManagedConfiguration configuration, UUID sourceId,
+            UUID expectedPublishedId, UUID expectedGrantId, java.util.function.LongSupplier nowMillis,
+            Runnable admission) {
+        publication.lock();
+        try {
+            transition.lock();
+            try {
+                requireHealthy();
+                admission.run();
+                UUID predecessor = published == null ? null : published.localId();
+                synchronized (editing) {
+                    if (editing.lease != null && nowMillis.getAsLong() >= editing.lease.expiresAt) editing.lease = null;
+                    UUID grant = editing.lease == null ? null : editing.lease.grantId;
+                    if (!java.util.Objects.equals(predecessor, expectedPublishedId)
+                            || !java.util.Objects.equals(grant, expectedGrantId)) throw new ImportConflict();
+                }
+                if (predecessor == null) throw new IllegalStateException("Runtime configuration is unavailable");
+                return publishCandidate(configuration, sourceId, predecessor, true);
+            } finally { transition.unlock(); }
+        } finally { publication.unlock(); }
+    }
+
+    private ConfigurationSnapshot publishCandidate(ManagedConfiguration configuration, UUID sourceId,
+            UUID predecessor, boolean importCutover) {
+
             PreparedSkillUpdate prepared;
             GenerationRestResources.Resources staged;
             try {
                 hooks.beforePreparation();
-                prepared = prepare(candidate.configuration());
-                staged = stage(prepared, candidate.configuration());
+                prepared = prepare(configuration);
+                staged = stage(prepared, configuration);
             } catch (RuntimeException failure) {
                 throw new PublicationFailure("preparation_failed", "Configuration preparation failed before activation");
             }
             String generation = prepared.generationId();
+            try { resources.stage(generation, staged, null); }
+            catch (RuntimeException failure) {
+                resources.release(staged);
+                throw new PublicationFailure("preparation_failed", "Configuration preparation failed before activation");
+            }
             ConfigurationSnapshot submitted;
             try {
-                resources.stage(generation, staged, null);
+                if (importCutover) synchronized (editing) { editing.clearAll(); }
                 hooks.beforeCommit();
-                submitted = store.submit(candidate.configuration(), null, predecessor);
+                submitted = store.submit(configuration, sourceId, predecessor);
             } catch (RuntimeException failure) {
                 resources.discard(generation);
                 pruneAfterAttempt();
@@ -230,9 +274,6 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                     statusRecorded ? "history_pruning_failed" : "outcome_recording_failed", mutationFault);
             return new ConfigurationSnapshot(submitted.localId(), submitted.sourceId(),
                     submitted.submissionSequence(), submitted.configuration(), SnapshotStatus.PUBLISHED);
-        } finally {
-            publication.unlock();
-        }
     }
 
     public Inspection inspect() {
@@ -321,7 +362,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
         store.prune(protectedIds);
     }
 
-    /** Editing operations and the actual framework switch share only this short gate. */
+    /** Editing operations share the transition gate with framework switches and confirmed imports. */
     public <T> T withEditingState(boolean mutation, Function<ConfigurationSnapshot, T> operation) {
         transition.lock();
         try {
@@ -331,6 +372,13 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
         } finally {
             transition.unlock();
         }
+    }
+
+    /** Serialize session and account invalidation with confirmed import cutover. */
+    public void withEditingTransition(Runnable operation) {
+        transition.lock();
+        try { operation.run(); }
+        finally { transition.unlock(); }
     }
 
     private void requireHealthy() {

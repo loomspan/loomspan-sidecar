@@ -31,6 +31,12 @@ loomspan-sidecar:
     diagnostics: NEVER
 
 spring:
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      # Multipart framing and small confirmation fields fit outside the ZIP bound.
+      max-request-size: 101MB
+      file-size-threshold: 0B
   mail:
     host: ${LOOMSPAN_SIDECAR_SMTP_HOST:}
     port: ${LOOMSPAN_SIDECAR_SMTP_PORT:587}

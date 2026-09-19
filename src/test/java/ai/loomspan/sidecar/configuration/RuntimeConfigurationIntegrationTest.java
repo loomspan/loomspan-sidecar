@@ -460,6 +460,130 @@ class RuntimeConfigurationIntegrationTest {
     }
 
     @Test
+    void importHoldsEditingGateFromConfirmationThroughPublication() throws Exception {
+        try (var context = start(directory.resolve("import-gate.db"));
+                var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var service = context.getBean(RuntimeConfigurationService.class);
+            var editing = context.getBean(ai.loomspan.sidecar.management.ManagementEditingService.class);
+            var editor = editor(context, "import-gate@example.test");
+            var base = service.publishedSnapshot();
+            var entered = new CountDownLatch(1);
+            var release = new CountDownLatch(1);
+            service.hooks(new RuntimeConfigurationService.Hooks() {
+                @Override public void beforePreparation() {
+                    entered.countDown();
+                    try { if (!release.await(8, TimeUnit.SECONDS)) throw new IllegalStateException("test timeout"); }
+                    catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new IllegalStateException(failure); }
+                }
+            });
+            try {
+                var imported = workers.submit(() -> service.importConfiguration(base.configuration(),
+                        java.util.UUID.randomUUID(), base.localId(), null, System::currentTimeMillis));
+                assertThat(entered.await(3, TimeUnit.SECONDS)).isTrue();
+                var competing = workers.submit(() -> editing.acquire(session("import-competing"), editor,
+                        java.util.UUID.randomUUID().toString(), false));
+                var listener = new ai.loomspan.sidecar.management.ManagementEditingSessionListener(
+                        context.getBean(ai.loomspan.sidecar.management.ManagementEditingState.class), service);
+                var invalidation = workers.submit(() -> listener.sessionDestroyed(
+                        new jakarta.servlet.http.HttpSessionEvent(session("import-expired"))));
+                try {
+                    assertThatThrownBy(() -> competing.get(150, TimeUnit.MILLISECONDS))
+                            .isInstanceOf(java.util.concurrent.TimeoutException.class);
+                    assertThatThrownBy(() -> invalidation.get(150, TimeUnit.MILLISECONDS))
+                            .isInstanceOf(java.util.concurrent.TimeoutException.class);
+                } finally { release.countDown(); }
+                var newSnapshot = imported.get(5, TimeUnit.SECONDS);
+                assertThat(newSnapshot.sourceId()).isNotNull();
+                assertThat(newSnapshot.localId()).isNotEqualTo(base.localId());
+                assertThat(competing.get(5, TimeUnit.SECONDS).draft().baseSnapshotId()).isEqualTo(newSnapshot.localId());
+                invalidation.get(5, TimeUnit.SECONDS);
+            } finally { release.countDown(); service.hooks(new RuntimeConfigurationService.Hooks() {}); }
+        }
+    }
+
+    @Test
+    void bundleTransfersCompleteAuthoredContentBetweenInstancesWithLocalProvenance() throws Exception {
+        Path bundle;
+        ConfigurationSnapshot source;
+        try (var a = start(directory.resolve("import-source.db"))) {
+            var runtimeA = a.getBean(RuntimeConfigurationService.class);
+            source = runtimeA.publish(validDraft(runtimeA, runtimeA.publishedSnapshot(), "echoRest")::validatedCandidate);
+            bundle = ConfigurationBundleV1.write(source);
+        }
+        try {
+            var imported = ConfigurationBundleV1.read(bundle);
+            try (var b = start(directory.resolve("import-destination.db"))) {
+                var runtimeB = b.getBean(RuntimeConfigurationService.class);
+                var storeB = b.getBean(ConfigurationSnapshotStore.class);
+                var initial = runtimeB.publishedSnapshot();
+                assertThat(initial.localId()).isNotEqualTo(source.localId());
+                for (int i = 0; i < 2; i++) {
+                    var before = runtimeB.publishedSnapshot();
+                    var local = runtimeB.importConfiguration(imported.configuration(), imported.sourceSnapshotId(),
+                            before.localId(), null, System::currentTimeMillis);
+                    assertThat(local.localId()).isNotEqualTo(source.localId()).isNotEqualTo(before.localId());
+                    assertThat(local.sourceId()).isEqualTo(source.localId());
+                    assertThat(local.configuration()).isEqualTo(source.configuration());
+                    assertThat(runtimeB.inspect().publishedId()).isEqualTo(local.localId());
+                    assertThat(storeB.current().localId()).isEqualTo(local.localId());
+                }
+                assertThat(storeB.history()).hasSize(3);
+                assertThat(storeB.history()).noneMatch(snapshot -> snapshot.localId().equals(source.localId()));
+            }
+        } finally { java.nio.file.Files.deleteIfExists(bundle); }
+    }
+
+    @Test
+    void importReversionAndBookkeepingFaultsKeepDatabaseFirstRestartAuthority() {
+        for (String fault : List.of("revert", "status")) {
+            Path path = directory.resolve("import-" + fault + ".db");
+            java.util.UUID intended;
+            try (var context = start(path)) {
+                var service = context.getBean(RuntimeConfigurationService.class);
+                var store = context.getBean(ConfigurationSnapshotStore.class);
+                var state = context.getBean(ai.loomspan.sidecar.management.ManagementEditingState.class);
+                var initial = service.publishedSnapshot();
+                synchronized (state) {
+                    state.drafts.put("import-fault", new ai.loomspan.sidecar.management.ManagementEditingState.Entry(
+                            1, new ConfigurationDraft(initial)));
+                    state.lease = new ai.loomspan.sidecar.management.ManagementEditingState.Lease(
+                            "import-fault", java.util.UUID.randomUUID().toString(), System.currentTimeMillis() + 900_000);
+                }
+                var grant = state.lease.grantId;
+                service.hooks(new RuntimeConfigurationService.Hooks() {
+                    @Override public void beforeFrameworkPublish() {
+                        if (fault.equals("revert")) throw new IllegalStateException("test activation fault");
+                    }
+                    @Override public void beforeRevert() {
+                        if (fault.equals("revert")) throw new IllegalStateException("test revert fault");
+                    }
+                    @Override public void beforeStatus() {
+                        if (fault.equals("status")) throw new IllegalStateException("test status fault");
+                    }
+                });
+                assertThatThrownBy(() -> service.importConfiguration(new ManagedConfiguration(List.of(),
+                        "targets: {}\nroutes: {}\n# imported\n"), java.util.UUID.randomUUID(),
+                        initial.localId(), grant, System::currentTimeMillis))
+                        .isInstanceOf(RuntimeConfigurationService.PublicationFailure.class);
+                var inspected = service.inspect();
+                intended = inspected.intendedId();
+                assertThat(inspected.intendedStatus()).isEqualTo(SnapshotStatus.PENDING);
+                assertThat(inspected.mutationFault()).isNotBlank();
+                assertThat(store.current().localId()).isEqualTo(intended);
+                synchronized (state) {
+                    assertThat(state.drafts).isEmpty();
+                    assertThat(state.lease).isNull();
+                }
+                if (fault.equals("revert")) assertThat(inspected.publishedId()).isEqualTo(initial.localId());
+                else assertThat(inspected.publishedId()).isEqualTo(intended);
+            }
+            try (var restarted = start(path)) {
+                assertThat(restarted.getBean(RuntimeConfigurationService.class).inspect().publishedId()).isEqualTo(intended);
+            }
+        }
+    }
+
+    @Test
     void publicationFaultsKeepRuntimePointerAndMutationGateTruthful() {
         for (String fault : List.of("commit", "publish", "revert", "status")) {
             Path path = directory.resolve(fault + ".db");
