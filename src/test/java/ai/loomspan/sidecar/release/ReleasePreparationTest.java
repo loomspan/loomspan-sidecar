@@ -18,14 +18,17 @@ class ReleasePreparationTest {
 
         assertThat(pom).contains("<id>release</id>", "requireReleaseVersion", "requireReleaseDeps",
                 "1\\.0\\.0-beta\\.5");
-        assertThat(ci).contains("docker build", "verify-image.py").doesNotContain("push: true", "docker/login-action");
+        assertThat(ci).contains("docker build", "verify-image.py", "verify-production.py",
+                "com.microsoft.playwright.CLI").doesNotContain("push: true", "docker/login-action",
+                "--verify-kubernetes");
         assertThat(release).contains("tags: [\"v*\"]", "--tag \"${GITHUB_REF_NAME}\"", "if: startsWith(github.ref",
                 "permissions:\n  contents: read", "permissions:\n      contents: write\n      packages: write",
                 "group: release-${{ github.ref }}", "cancel-in-progress: false",
                 "api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}",
                 "Could not establish whether release", "docker manifest inspect",
                 "manifest unknown|no such manifest", "Could not establish whether image tag", "refusing to overwrite",
-                "push: true", "docker/login-action", "prepare-release.py", "softprops/action-gh-release");
+                "push: true", "docker/login-action", "prepare-release.py", "softprops/action-gh-release",
+                "verify-production.py", "com.microsoft.playwright.CLI");
         assertThat(script).contains("SNAPSHOT", "1.0.0-beta.5", ".sha256", "zipfile.ZipFile");
         assertThat(imageVerifier).contains("DEFAULT_COMMAND_TIMEOUT_SECONDS", "CLEANUP_TIMEOUT_SECONDS",
                 "timeout=DEFAULT_COMMAND_TIMEOUT_SECONDS", "except subprocess.TimeoutExpired",

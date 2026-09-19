@@ -32,9 +32,11 @@ class ConfigurationReferenceTest {
 
         String defaults = Files.readString(Path.of("src/main/resources/application.yml"));
         String compose = Files.readString(Path.of("examples/quickstart/compose.yaml"));
-        String kubernetes = Files.readString(Path.of("examples/kubernetes/deployment.yaml"));
+        String production = Files.readString(Path.of("examples/production/compose.yaml"));
+        String productionEnv = Files.readString(Path.of("examples/production/production.env.example"));
         String dockerfile = Files.readString(Path.of("Dockerfile"));
         assertThat(defaults).contains("classpath:/sidecar-empty-skills/*.yaml", "url-variables: []", "port: 9091");
+        assertThat(defaults).contains("mail.smtp.starttls.required: ${LOOMSPAN_SIDECAR_SMTP_STARTTLS_REQUIRED:false}");
         assertThat(defaults).contains("database-path: /sidecar/data/sidecar.db");
         assertThat(defaults).contains("max-retained: 10");
         assertThat(defaults).contains("session-idle-timeout: 30m", "edit-lease-timeout: 15m", "mail-from:", "external-base-url:",
@@ -42,12 +44,19 @@ class ConfigurationReferenceTest {
         assertThat(defaults).contains("http-only: true", "same-site: lax",
                 "secure: ${LOOMSPAN_SIDECAR_SECURE_COOKIE:true}");
         assertThat(compose).contains("./sidecar/keys:/sidecar/keys:ro", "LOOMSPAN_SIDECAR_AUTH_JWT_AUDIENCE",
-                "${QUICKSTART_HOST_PORT:-8081}:8081", "${SIDECAR_API_PORT:-8080}:8080",
-                "${SIDECAR_MANAGEMENT_PORT:-9091}:9091", "sidecar-data:/sidecar/data");
-        assertThat(kubernetes).contains("/sidecar/keys", "readOnly: true", "secretKeyRef:")
-                .doesNotContain("/sidecar/skills/", "/sidecar/rest-routes.yaml");
-        assertThat(kubernetes).contains("mountPath: /sidecar/data", "claimName: loomspan-sidecar-data", "fsGroup: 10001");
-        assertThat(dockerfile).contains("mkdir -p /sidecar/data", "chown loomspan:loomspan /sidecar/data");
+                "127.0.0.1:${QUICKSTART_HOST_PORT:-8081}:8081", "127.0.0.1:${SIDECAR_API_PORT:-8080}:8080",
+                "127.0.0.1:${SIDECAR_MANAGEMENT_PORT:-9091}:9091", "sidecar-data:/sidecar/data");
+        assertThat(production).contains("user: \"10001:10001\"", "sidecar-data:/sidecar/data",
+                "SERVER_SSL_CERTIFICATE:", "SERVER_SSL_CERTIFICATE_PRIVATE_KEY:",
+                "MANAGEMENT_SERVER_SSL_ENABLED: \"false\"",
+                "LOOMSPAN_SIDECAR_SECURE_COOKIE: \"true\"", "LOOMSPAN_SIDECAR_SMTP_STARTTLS_REQUIRED: ${SMTP_STARTTLS:-true}", "stop_grace_period: 45s",
+                "LOOMSPAN_SIDECAR_URL_VARIABLES:", "/sidecar/tls:ro", "/sidecar/keys/public.pem:ro")
+                .doesNotContain("9091:9091", "/sidecar/skills/", "/sidecar/rest-routes.yaml");
+        assertThat(productionEnv).contains("JWT_ISSUER_URI=", "MODEL_BASE_URL=", "SMTP_HOST=",
+                "EXTERNAL_BASE_URL=https://", "URL_VARIABLES=TARGET_URL", "TARGET_URL=https://");
+        assertThat(Files.exists(Path.of("examples/kubernetes/deployment.yaml"))).isFalse();
+        assertThat(dockerfile).contains("mkdir -p /sidecar/data", "chown loomspan:loomspan /sidecar/data")
+                .doesNotContain("VOLUME [\"/sidecar\"]");
     }
 
     @Test

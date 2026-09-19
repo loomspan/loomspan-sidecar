@@ -10,7 +10,7 @@ services:
       timeout: 1s
       retries: 15
     ports:
-      - "${QUICKSTART_HOST_PORT:-8081}:8081"
+      - "127.0.0.1:${QUICKSTART_HOST_PORT:-8081}:8081"
 
   sidecar:
     image: ${SIDECAR_IMAGE:-loomspan-sidecar:sc5-local}
@@ -43,8 +43,8 @@ services:
       - ./sidecar/keys:/sidecar/keys:ro
       - sidecar-data:/sidecar/data
     ports:
-      - "${SIDECAR_API_PORT:-8080}:8080"
-      - "${SIDECAR_MANAGEMENT_PORT:-9091}:9091"
+      - "127.0.0.1:${SIDECAR_API_PORT:-8080}:8080"
+      - "127.0.0.1:${SIDECAR_MANAGEMENT_PORT:-9091}:9091"
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:9091/actuator/health/readiness"]
       interval: 2s

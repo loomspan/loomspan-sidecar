@@ -1,0 +1,46 @@
+services:
+  sidecar:
+    image: ${SIDECAR_IMAGE:?Set SIDECAR_IMAGE to the locally built Sidecar image}
+    user: "10001:10001"
+    environment:
+      SERVER_SSL_CERTIFICATE: file:/sidecar/tls/fullchain.pem
+      SERVER_SSL_CERTIFICATE_PRIVATE_KEY: file:/sidecar/tls/privkey.pem
+      MANAGEMENT_SERVER_SSL_ENABLED: "false"
+      LOOMSPAN_SIDECAR_SECURE_COOKIE: "true"
+      LOOMSPAN_SIDECAR_AUTH_JWT_ISSUER_URI: ${JWT_ISSUER_URI:?Set JWT_ISSUER_URI}
+      LOOMSPAN_SIDECAR_AUTH_JWT_AUDIENCE: ${JWT_AUDIENCE:?Set JWT_AUDIENCE}
+      LOOMSPAN_SIDECAR_AUTH_JWT_PUBLIC_KEY_LOCATION: file:/sidecar/keys/public.pem
+      LOOMSPAN_CONNECTIONS_PRIMARY_DRIVER: ${MODEL_DRIVER:?Set MODEL_DRIVER}
+      LOOMSPAN_CONNECTIONS_PRIMARY_BASE_URL: ${MODEL_BASE_URL:?Set MODEL_BASE_URL}
+      LOOMSPAN_CONNECTIONS_PRIMARY_API_KEY: ${MODEL_API_KEY:?Set MODEL_API_KEY}
+      LOOMSPAN_MODELS_PRIMARY_CONNECTION: primary
+      LOOMSPAN_MODELS_PRIMARY_PROVIDER_MODEL: ${MODEL_NAME:?Set MODEL_NAME}
+      LOOMSPAN_SIDECAR_SETUP_TOKEN: ${SETUP_TOKEN:-}
+      LOOMSPAN_SIDECAR_MAIL_FROM: ${SMTP_FROM:?Set SMTP_FROM}
+      LOOMSPAN_SIDECAR_EXTERNAL_BASE_URL: ${EXTERNAL_BASE_URL:?Set EXTERNAL_BASE_URL}
+      LOOMSPAN_SIDECAR_SMTP_HOST: ${SMTP_HOST:?Set SMTP_HOST}
+      LOOMSPAN_SIDECAR_SMTP_PORT: ${SMTP_PORT:?Set SMTP_PORT}
+      LOOMSPAN_SIDECAR_SMTP_USERNAME: ${SMTP_USERNAME:-}
+      LOOMSPAN_SIDECAR_SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      LOOMSPAN_SIDECAR_SMTP_AUTH: ${SMTP_AUTH:-true}
+      LOOMSPAN_SIDECAR_SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
+      LOOMSPAN_SIDECAR_SMTP_STARTTLS_REQUIRED: ${SMTP_STARTTLS:-true}
+      LOOMSPAN_SIDECAR_URL_VARIABLES: ${URL_VARIABLES:-}
+      TARGET_URL: ${TARGET_URL:-}
+      LOOMSPAN_SHUTDOWN_TIMEOUT: 30s
+    volumes:
+      - sidecar-data:/sidecar/data
+      - ${TLS_DIR:?Set TLS_DIR}:/sidecar/tls:ro
+      - ${JWT_PUBLIC_KEY_FILE:?Set JWT_PUBLIC_KEY_FILE}:/sidecar/keys/public.pem:ro
+    ports:
+      - "${HTTPS_BIND_ADDRESS:-127.0.0.1}:${HTTPS_PORT:-8443}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:9091/actuator/health/readiness"]
+      interval: 10s
+      timeout: 2s
+      start_period: 30s
+      retries: 6
+    stop_grace_period: 45s
+
+volumes:
+  sidecar-data:

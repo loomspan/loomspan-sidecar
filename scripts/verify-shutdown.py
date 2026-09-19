@@ -51,7 +51,11 @@ def verify(args, cutoff):
             "host": {"entrypoint": ["python", "/host/verification.py"], "volumes": [
                 {"type": "bind", "source": str(ROOT / "scripts/fixtures/shutdown-host.py"),
                  "target": "/host/verification.py", "read_only": True}]},
-            "sidecar": {"environment": {"LOOMSPAN_SHUTDOWN_TIMEOUT": "3s"}, "volumes": [
+            "sidecar": {"environment": {"LOOMSPAN_SHUTDOWN_TIMEOUT": "3s",
+                                    "LOOMSPAN_MODELS_PRIMARY_CONNECTION": "local",
+                                    "LOOMSPAN_MODELS_PRIMARY_PROVIDER_MODEL": "deterministic-planner",
+                                    "LOOMSPAN_SIDECAR_URL_VARIABLES": "TARGET_URL",
+                                    "TARGET_URL": "http://host:8081"}, "volumes": [
                 {"type": "bind", "source": str(data), "target": "/sidecar/data"}]}
         }}))
         compose = ["docker", "compose", "-p", project, "-f", str(ROOT / "examples/quickstart/compose.yaml"),

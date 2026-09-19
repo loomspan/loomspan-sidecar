@@ -25,7 +25,14 @@ documentation lookups in that directory. Then rerun affected Sidecar checks:
 On POSIX systems use `./mvnw`. Tests use temporary local files and loopback-only
 configuration; they do not need a model provider account.
 
-## Container and deterministic quick start
+## Production Compose deployment
+
+The supported v1 deployment is the single-instance [production Compose guide](examples/production/README.md).
+It serves the console and JWT execution API over HTTPS, keeps the health port
+inside the container, and persists SQLite in one local Docker volume. Kubernetes
+deployment support is deferred pending customer requirements.
+
+## Development-only HTTP quick start
 
 Build the executable JAR first, then the runtime-only image. The Docker build
 never resolves Maven dependencies or checks out framework source:
@@ -36,13 +43,13 @@ docker build --tag loomspan-sidecar:sc5-local .
 ```
 
 The image uses UID/GID `10001:10001`, exposes application port 8080 and
-management port 9091, and starts Java with
+internal Actuator health port 9091, and starts Java with
 `-XX:MaxRAMPercentage=75.0 -XX:InitialRAMPercentage=25.0
 -XX:+ExitOnOutOfMemoryError`. Replace `JAVA_TOOL_OPTIONS` when deployment-specific
 heap or GC settings are needed. The Java entry point is exec-form so container
 SIGTERM reaches Spring directly.
 
-The Compose example runs an example-only issuer, a deterministic model stub,
+This loopback HTTP Compose example runs an example-only issuer, a deterministic model stub,
 and Sidecar with a persistent local SQLite volume. A new volume activates an
 empty snapshot. The checked-in skill and route YAML are authored examples for
 later management publication; they are not mounted as an alternate runtime
@@ -59,10 +66,10 @@ docker compose -f examples/quickstart/compose.yaml down
 ```
 
 The image smoke check verifies the empty database selection, JWT protection,
-readiness/liveness probes, bounded process exit, and Kubernetes example structure:
+readiness/liveness probes, and bounded process exit:
 
 ```powershell
-python scripts/verify-image.py --image loomspan-sidecar:sc5-local --verify-kubernetes
+python scripts/verify-image.py --image loomspan-sidecar:sc5-local
 ```
 
 The Compose and verifier host ports default to `8080`, `8081`, and `9091`.
@@ -70,7 +77,7 @@ When those host ports are already in use, leave the container ports unchanged
 and run the same verification on isolated alternatives, for example:
 
 ```powershell
-python scripts/verify-image.py --image loomspan-sidecar:sc5-local --verify-kubernetes `
+python scripts/verify-image.py --image loomspan-sidecar:sc5-local `
   --api-port 18080 --host-port 18081 --management-port 19091
 ```
 
@@ -191,8 +198,8 @@ one database across replicas or place it on a network filesystem. SQLite uses
 foreign keys, WAL journaling, `synchronous=FULL`, and a 5-second busy timeout on
 each connection. A competing writer can fail after that timeout; this is not a
 distributed transaction service. Keep WAL files with the database. Copying only
-the main database file while it is live is not a safe backup. The Kubernetes sample expects a
-PVC named `loomspan-sidecar-data` that supports these permissions and locking.
+the main database file while it is live is not a safe backup. The production
+Compose guide prepares a single local volume with these permissions and locking.
 
 ### Stopped-instance backup and recovery
 
@@ -204,9 +211,9 @@ server; it cannot recover accounts, settings, or a damaged database. Configurati
 ZIP import also cannot bypass a mutation fault.
 
 Stop the sole Sidecar instance and wait for process exit before either copy.
-For the quickstart use `docker compose -f examples/quickstart/compose.yaml stop sidecar`;
-for the Kubernetes sample use `kubectl scale deployment/example-with-loomspan-sidecar --replicas=0`
-and wait until its pod has terminated. On the host or maintenance container with
+For production use `docker compose --project-name production --env-file examples/production/production.env -f examples/production/compose.yaml stop sidecar`; for the development quickstart
+use `docker compose -f examples/quickstart/compose.yaml stop sidecar`.
+On the host or maintenance container with
 the local persistent volume mounted, set `DATA_DIR` to the directory containing
 `sidecar.db` and `BACKUP_DIR` to a separate protected directory. Copy the main
 database and whichever WAL/SHM files exist while no process has it open:
@@ -250,8 +257,8 @@ for suffix in -wal -shm; do
 done
 ```
 
-Restart with `docker compose -f examples/quickstart/compose.yaml start sidecar`
-or `kubectl scale deployment/example-with-loomspan-sidecar --replicas=1`. Verify startup and
+Restart with `docker compose --project-name production --env-file examples/production/production.env -f examples/production/compose.yaml start sidecar` (or the quickstart Compose
+file for a development volume). Verify startup and
 readiness. Restore rolls current selection, statuses, and history back to the
 backup point. This full installation database backup includes authored YAML,
 management account records, and literal sensitive values without redaction or
@@ -912,8 +919,8 @@ Invalid selected content prevents startup and readiness until corrected through
 a stopped database restore. REST clients stay
 available for framework-owned admitted work until normal completion or the single
 `loomspan.shutdown.timeout` cutoff, then close without a second drain period. SC5
-uses the framework's 30-second default; configure orchestrator termination grace
-above that budget plus cleanup margin (the Kubernetes example uses 45 seconds).
+uses the framework's 30-second default; the production Compose file gives the
+process a 45-second termination grace for that budget and cleanup.
 
 ## Sidecar configuration reference
 
@@ -951,12 +958,6 @@ packaged empty source; framework shutdown remains
 `loomspan.shutdown.timeout`; inbound server and outbound mTLS configuration
 remains under standard `server.ssl.*` and `spring.ssl.bundle.*` namespaces. The
 image honors those standard Boot environment and command-line overrides.
-
-The Kubernetes example at `examples/kubernetes/deployment.yaml` keeps the
-application and Sidecar in one pod, expects a prepopulated persistent SQLite
-volume, sources credentials from Secrets, uses port 9091 for all
-management probes, and leaves resource requests/limits for the operator to size
-from actual model concurrency and diagnostic retention.
 
 ## Dependency and release boundary
 

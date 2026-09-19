@@ -45,6 +45,7 @@ spring:
     properties:
       mail.smtp.auth: ${LOOMSPAN_SIDECAR_SMTP_AUTH:false}
       mail.smtp.starttls.enable: ${LOOMSPAN_SIDECAR_SMTP_STARTTLS:true}
+      mail.smtp.starttls.required: ${LOOMSPAN_SIDECAR_SMTP_STARTTLS_REQUIRED:false}
       mail.smtp.connectiontimeout: 5000
       mail.smtp.timeout: 5000
       mail.smtp.writetimeout: 5000

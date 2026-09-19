@@ -22,6 +22,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
+import org.springframework.mail.SimpleMailMessage;
 import org.springframework.transaction.support.TransactionTemplate;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -29,6 +30,24 @@ import static org.mockito.Mockito.*;
 
 class ManagementMailIntegrationTest {
     @TempDir Path directory;
+
+    @Test void requiredStartTlsRejectsPlaintextSmtp() throws Exception {
+        try (var smtp = new LocalSmtp()) {
+            var sender = new JavaMailSenderImpl();
+            sender.setHost("127.0.0.1"); sender.setPort(smtp.port());
+            sender.getJavaMailProperties().put("mail.smtp.starttls.enable", "true");
+            sender.getJavaMailProperties().put("mail.smtp.starttls.required", "true");
+            sender.getJavaMailProperties().put("mail.smtp.connectiontimeout", "1000");
+            sender.getJavaMailProperties().put("mail.smtp.timeout", "1000");
+            var message = new SimpleMailMessage();
+            message.setFrom("operator@example.test");
+            message.setTo("admin@example.test");
+            message.setSubject("test");
+            message.setText("test");
+            assertThatThrownBy(() -> sender.send(message)).isInstanceOf(org.springframework.mail.MailException.class);
+            assertThat(smtp.messages()).isEmpty();
+        }
+    }
 
     @Test void failedInitialMailKeepsReservationRetryable() throws Exception {
         var settings = new SidecarManagementProperties();

@@ -33,11 +33,15 @@ jobs:
           loomspan="$(./mvnw -q -DforceStdout help:evaluate -Dexpression=loomspan.version)"
           python scripts/prepare-release.py --validate-only --project-version "$version" --loomspan-version "$loomspan" --tag "${GITHUB_REF_NAME}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Install Chromium for browser integration checks
+        run: |
+          ./mvnw -B -ntp test-compile org.codehaus.mojo:exec-maven-plugin:3.6.2:java -Dexec.mainClass=com.microsoft.playwright.CLI -Dexec.classpathScope=test -Dexec.args="install --with-deps chromium"
       - name: Verify application and image
         run: |
           ./mvnw -B -ntp -Prelease verify
           docker build --tag loomspan-sidecar:release-candidate .
-          python scripts/verify-image.py --image loomspan-sidecar:release-candidate --verify-kubernetes
+          python scripts/verify-image.py --image loomspan-sidecar:release-candidate
+          python scripts/verify-production.py --image loomspan-sidecar:release-candidate
       - name: Prepare JAR archive and checksums
         run: |
           python scripts/prepare-release.py --project-version "${{ steps.version.outputs.version }}" --loomspan-version 1.0.0-beta.5 --tag "${GITHUB_REF_NAME}"

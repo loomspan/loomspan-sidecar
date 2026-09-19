@@ -10,7 +10,6 @@ WORKDIR /app
 COPY target/loomspan-sidecar-*.jar /app/loomspan-sidecar.jar
 
 ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0 -XX:InitialRAMPercentage=25.0 -XX:+ExitOnOutOfMemoryError"
-VOLUME ["/sidecar"]
 EXPOSE 8080 9091
 USER 10001:10001
 ENTRYPOINT ["java", "-jar", "/app/loomspan-sidecar.jar"]

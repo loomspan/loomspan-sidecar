@@ -2,3 +2,5 @@ target/
 *.log
 __pycache__/
 *.pyc
+examples/production/production.env
+examples/production/secrets/

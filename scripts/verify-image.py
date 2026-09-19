@@ -65,22 +65,9 @@ def wait_for(url, expected=200, seconds=60):
     raise AssertionError(f"{url} did not return {expected} within {seconds}s")
 
 
-def verify_kubernetes():
-    text = (ROOT / "examples/kubernetes/deployment.yaml").read_text()
-    required = ["name: application", "name: loomspan-sidecar", "readOnly: true",
-                "/sidecar/keys", "mountPath: /sidecar/data",
-                "secretKeyRef:", "port: management", "containerPort: 9091",
-                "startupProbe:", "readinessProbe:", "livenessProbe:"]
-    for value in required:
-        assert value in text, f"Kubernetes example is missing {value!r}"
-    grace = int(text.split("terminationGracePeriodSeconds:", 1)[1].splitlines()[0].strip())
-    assert grace > 30, "termination grace must exceed the default framework shutdown budget"
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--image", required=True)
-    parser.add_argument("--verify-kubernetes", action="store_true")
     parser.add_argument("--api-port", type=int, default=8080)
     parser.add_argument("--host-port", type=int, default=8081)
     parser.add_argument("--management-port", type=int, default=9091)
@@ -88,7 +75,6 @@ def main():
     ports = (args.api_port, args.host_port, args.management_port)
     if any(port < 1 or port > 65535 for port in ports) or len(set(ports)) != len(ports):
         parser.error("host ports must be distinct values from 1 through 65535")
-    if args.verify_kubernetes: verify_kubernetes()
 
     inspect = json.loads(run("docker", "image", "inspect", args.image, capture=True).stdout)[0]
     assert inspect["Config"]["User"] == "10001:10001"
@@ -105,6 +91,11 @@ def main():
     host_url = f"http://127.0.0.1:{args.host_port}"
     management_url = f"http://127.0.0.1:{args.management_port}"
     try:
+        rendered = json.loads(run("docker", "compose", "-p", project, "-f", str(compose),
+                                  "config", "--format", "json", env=environment, capture=True).stdout)
+        for service in rendered["services"].values():
+            assert all(binding.get("host_ip") == "127.0.0.1" for binding in service.get("ports", [])), \
+                "Development HTTP ports must bind only to loopback"
         run("docker", "compose", "-p", project, "-f", str(compose), "up", "-d", "--build", env=environment)
         wait_for(management_url + "/actuator/health/readiness")
         liveness = wait_for(management_url + "/actuator/health/liveness")
