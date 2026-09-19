@@ -92,7 +92,7 @@ public class ManagementPagesController {
     String home(Authentication auth, HttpServletRequest request) {
         var user = ManagementController.principal(auth);
         return console("Management", user, request,
-                "<p>View the configuration currently running in this Sidecar. Account actions and configuration access require a management login.</p>");
+                "<p>View the configuration currently running in this Sidecar or inspect retained submitted history. Account actions and configuration access require a management login.</p>");
     }
     @GetMapping(value = "/management/accounts", produces = MediaType.TEXT_HTML_VALUE)
     String accounts(Authentication auth, HttpServletRequest request) {
@@ -108,7 +108,32 @@ public class ManagementPagesController {
     String current(Authentication auth, HttpServletRequest request) {
         return console("Current configuration", ManagementController.principal(auth), request,
                 "<section data-console='current'><p id='current-status' role='status' aria-live='polite'>Loading runtime snapshot…</p>"
+                + "<p><a href='/management/configuration/history'>Inspect retained history</a></p>"
                 + "<button id='current-refresh' type='button'>Refresh configuration</button><div id='current-content'></div></section>");
+    }
+    @GetMapping(value = "/management/configuration/history", produces = MediaType.TEXT_HTML_VALUE)
+    String history(Authentication auth, HttpServletRequest request) {
+        return console("Configuration history", ManagementController.principal(auth), request,
+                "<section data-console='history'><p>Retained submissions are shared with every management role and may contain authored secrets. Private unsubmitted drafts are not history.</p>"
+                + "<p id='history-status' role='status' aria-live='polite' tabindex='-1'>Loading retained submissions…</p>"
+                + "<div class='history-actions'><button id='history-refresh' type='button'>Refresh retained history</button>"
+                + "<a href='/management/configuration/current'>View current configuration</a>"
+                + "<a href='/management/configuration/recovery'>Operator recovery guidance</a></div>"
+                + "<div id='history-current' class='history-current'></div>"
+                + "<div class='history-layout'><section aria-labelledby='history-list-heading'><h2 id='history-list-heading'>Retained submissions</h2>"
+                + "<div id='history-list'></div></section><section aria-labelledby='history-detail-heading'><h2 id='history-detail-heading'>Snapshot detail</h2>"
+                + "<div id='history-detail'><p>Select a retained submission to load its exact content.</p></div></section></div></section>");
+    }
+    @GetMapping(value = "/management/configuration/recovery", produces = MediaType.TEXT_HTML_VALUE)
+    String recovery(Authentication auth, HttpServletRequest request) {
+        return console("Configuration recovery guidance", ManagementController.principal(auth), request,
+                "<section data-console='recovery'><p>This page is read-only. It does not retry, cancel, roll back, import, export, or repair a publication.</p>"
+                + "<h2>When a mutation fault is present</h2><p>Configuration acquisition, save, activity renewal, validation, and publication are blocked. Configuration inspection, release or discard of private editing state, and administrator account management remain available.</p>"
+                + "<h2>Offline operator recovery</h2><ol><li>Stop the sole Sidecar instance before changing storage.</li>"
+                + "<li>Preserve a consistent copy of the complete SQLite database set, including its journal or WAL files.</li>"
+                + "<li>If the intended selection is correct, repair the storage problem and restart so the intended snapshot is loaded.</li>"
+                + "<li>If runtime and intended snapshots differ and the prior runtime must be recovered, restore a known-good full database backup made while Sidecar was stopped, then restart.</li></ol>"
+                + "<p>Never treat the intended pointer as proof of what is currently executing. Review <a href='/management/configuration/current'>current runtime state</a> and <a href='/management/configuration/history'>retained history</a> before intervention.</p></section>");
     }
     @GetMapping(value = "/management/configuration/edit", produces = MediaType.TEXT_HTML_VALUE)
     String edit(Authentication auth, HttpServletRequest request) {
@@ -163,6 +188,7 @@ public class ManagementPagesController {
     }
     private static String console(String title, ManagementUserDetailsService.Principal user, HttpServletRequest request, String body) {
         String nav = "<nav aria-label='Management'><a href='/management/home'>Home</a> <a href='/management/configuration/current'>Current configuration</a>"
+                + " <a href='/management/configuration/history'>History</a>"
                 + " <a href='/management/configuration/edit'>Edit configuration</a>"
                 + ("admin".equals(user.role()) ? " <a href='/management/accounts'>Accounts</a>" : "")
                 + " <a href='/management/password/change'>Change password</a></nav>";

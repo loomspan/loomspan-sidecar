@@ -196,6 +196,10 @@ PVC named `loomspan-sidecar-data` that supports these permissions and locking.
 
 ### Stopped-instance backup and recovery
 
+The protected console links this procedure from **Configuration recovery
+guidance**. That page is explanatory and read-only: it does not execute SQL,
+retry or cancel publication, or provide import, export, or rollback controls.
+
 Stop the sole Sidecar instance and wait for process exit before either copy.
 For the quickstart use `docker compose -f examples/quickstart/compose.yaml stop sidecar`;
 for the Kubernetes sample use `kubectl scale deployment/example-with-loomspan-sidecar --replicas=0`
@@ -635,6 +639,45 @@ including identical content, rotates the candidate ID and clears its validation.
 Validation is advisory: Publish prepares and stages afresh. Neither validation
 nor inspection renews login or lease inactivity deadlines.
 
+### Console history and outcome inspection
+
+After signing in, every viewer, editor, and administrator can open **History**
+from the shared management navigation. The list follows the server's
+authoritative oldest-first submission order and shows each durable local UUID,
+optional source UUID, submission sequence, recorded status, and whether its
+UUID matches the separately inspected runtime-published snapshot. Selecting a
+row loads that exact UUID through the detail API before displaying complete
+skill and REST YAML. Authored placeholders, markup-like text, and literal
+sensitive values are preserved and rendered as text; protect all management
+accounts accordingly.
+
+Submitted history is global to authenticated management users. A saved or
+validated but unsubmitted draft remains private to its server session—even for
+an administrator—and never appears in history. Logout, idle expiry, restart,
+or another browser session may lose access to that private draft without losing
+an accepted submission. After a disconnect or new login, inspect **Current
+configuration** and **History**; inspection does not recover a draft, retry a
+publication, or offer cancellation.
+
+`PENDING` always means the recorded outcome is unknown, including when that
+snapshot is currently running. `PUBLISHED` and `FAILED` are recorded bookkeeping
+states; the console does not reconstruct an unstored failure stage. Runtime
+identity and the intended SQLite restart selection are displayed separately.
+Equality does not upgrade a pending record, while a mismatch means a restart
+will follow the intended selection and does not itself prove an earlier
+operation's outcome.
+
+Retention can remove an ID between list and detail reads. The console then
+clears any prior detail, reports that the snapshot expired, refreshes current
+state and the retained list, and offers the Current configuration link. It does
+not pin history or create a durable publication job. When a mutation fault is
+present, acquisition, save, editing activity renewal, validation, and
+publication are blocked; inspection, release or discard of private editing
+state, and administrator account management remain available. Follow the
+protected recovery-guidance link and the stopped-instance procedure above when
+operator intervention is required. Transfer and rollback controls remain
+outside this console workflow.
+
 The server checks the live account, session, tab, grant, base snapshot and exact
 validated candidate after the publication lock becomes available. Conflicts
 return 409 with `grant_conflict`, `candidate_conflict`, `base_conflict`,
@@ -657,8 +700,8 @@ the recorded outcome is unknown; do not infer success or failure from it. If
 private-state cleanup and account administration remain available. Preserve
 the database and investigate the stage before retrying; the existing stopped
 full-database-backup recovery procedure applies when runtime and intended
-selection disagree. Phase 4 adds browser authoring and automatic validation
-presentation; Phase 5 adds transfer and rollback.
+selection disagree. The browser authoring, automatic validation, and retained
+history workflow use these same contracts; Phase 5 adds transfer and rollback.
 
 ## Execution API
 

@@ -80,16 +80,46 @@ class ManagementHttpIntegrationTest {
                 + encode(PASSWORD) + "&_csrf=" + encode(csrf)).statusCode()).isEqualTo(302);
         var current = viewer.get("/management/configuration/current");
         assertThat(current.statusCode()).isEqualTo(200);
-        assertThat(current.body()).contains("Current configuration", "/management/assets/console.js");
+        assertThat(current.body()).contains("Current configuration", "/management/assets/console.js",
+                "/management/configuration/history");
         assertThat(current.headers().firstValue("Cache-Control")).hasValue("no-store");
         assertThat(current.headers().firstValue("Referrer-Policy")).hasValue("no-referrer");
         assertThat(viewer.get("/management/accounts").statusCode()).isEqualTo(403);
         assertThat(viewer.get("/api/management/configuration/current").statusCode()).isEqualTo(200);
+        var history = viewer.get("/management/configuration/history");
+        assertThat(history.statusCode()).isEqualTo(200);
+        assertThat(history.body()).contains("data-console='history'", "id='history-list'", "id='history-detail'",
+                "/management/configuration/recovery").doesNotContain("sourceName", "restRoutesYaml");
+        assertThat(history.headers().firstValue("Cache-Control")).hasValue("no-store");
+        assertThat(history.headers().firstValue("Referrer-Policy")).hasValue("no-referrer");
+        var recovery = viewer.get("/management/configuration/recovery");
+        assertThat(recovery.statusCode()).isEqualTo(200);
+        assertThat(recovery.body()).contains("read-only", "Stop the sole Sidecar instance", "complete SQLite database set",
+                "known-good full database backup").doesNotContain("action='/api/management/configuration",
+                        "action='/management/configuration", "live SQL");
+        assertThat(recovery.body().split("<form", -1)).hasSize(2); // The shared sign-out form is the only form.
+        assertThat(anonymous.get("/management/configuration/history").statusCode()).isEqualTo(302);
+        assertThat(anonymous.get("/management/configuration/recovery").statusCode()).isEqualTo(302);
         assertThat(viewer.get("/management/assets/console.js").statusCode()).isEqualTo(200);
         assertThat(viewer.get("/management/assets/console.css").statusCode()).isEqualTo(200);
         assertThat(anonymous.get("/management/assets/console.js").statusCode()).isEqualTo(200);
         assertThat(anonymous.get("/management/assets/console.css").headers().firstValue("Referrer-Policy"))
                 .hasValue("no-referrer");
+    }
+
+    @Test void everyManagementRoleCanOpenHistoryAndRecovery() throws Exception {
+        for (String role : List.of("viewer", "editor", "admin")) {
+            String email = "history-" + role + "@example.test";
+            seed(email, role);
+            var browser = new Browser();
+            String token = csrf(browser.get("/management/login").body());
+            assertThat(browser.postForm("/management/login", "email=" + encode(email) + "&password="
+                    + encode(PASSWORD) + "&_csrf=" + encode(token)).statusCode()).isEqualTo(302);
+            assertThat(browser.get("/management/home").body()).contains("/management/configuration/history");
+            assertThat(browser.get("/management/configuration/edit").body()).contains("/management/configuration/history");
+            assertThat(browser.get("/management/configuration/history").statusCode()).isEqualTo(200);
+            assertThat(browser.get("/management/configuration/recovery").statusCode()).isEqualTo(200);
+        }
     }
     @Test void editorShellContainsNoAuthoredValuesAndSessionExposesConfiguredTimeouts() throws Exception {
         seed("shell-viewer@example.test", "viewer");
@@ -195,6 +225,8 @@ class ManagementHttpIntegrationTest {
         assertThat(browser.get("/api/management/session").statusCode()).isEqualTo(200);
         assertThat(browser.get("/management/configuration/current").statusCode()).isEqualTo(200);
         assertThat(browser.get("/api/management/configuration/current").statusCode()).isEqualTo(200);
+        assertThat(browser.get("/management/configuration/history").statusCode()).isEqualTo(200);
+        assertThat(browser.get("/api/management/configuration/history").statusCode()).isEqualTo(200);
         String csrf = jsonCsrf(browser.get("/api/management/session").body());
         assertThat(browser.postJson("/api/management/session/activity", "{}", csrf).statusCode()).isEqualTo(204);
         clock.advance(Duration.ofMinutes(29));
