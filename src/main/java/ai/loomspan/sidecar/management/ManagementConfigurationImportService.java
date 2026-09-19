@@ -121,7 +121,8 @@ public final class ManagementConfigurationImportService {
         return new Conflict("confirmation_stale", current);
     }
 
-    private void admission(HttpSession session, ManagementUserDetailsService.Principal user) {
+    void admission(HttpSession session, ManagementUserDetailsService.Principal user) {
+        if (session == null) throw new Conflict("session_conflict");
         try {
             session.getCreationTime();
             Long activity = (Long) session.getAttribute(ManagementSessionGuard.ACTIVITY);

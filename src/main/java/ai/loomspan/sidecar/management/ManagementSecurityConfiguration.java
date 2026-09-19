@@ -57,6 +57,7 @@ public class ManagementSecurityConfiguration {
                         .requestMatchers("/management/accounts").hasAuthority("MGT_ADMIN")
                         .requestMatchers("/management/configuration/import",
                                 "/api/management/configuration/import/**").hasAuthority("MGT_EDITOR")
+                        .requestMatchers("/api/management/configuration/rollback/**").hasAuthority("MGT_EDITOR")
                         .requestMatchers("/api/management/accounts", "/api/management/accounts/**").hasAuthority("MGT_ADMIN")
                         .requestMatchers("/api/management/editing/lease/takeover").hasAuthority("MGT_ADMIN")
                         .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/management/editing", "/api/management/editing/draft").authenticated()

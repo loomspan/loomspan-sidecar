@@ -39,12 +39,14 @@ public final class ManagementConfigurationController {
     private final RuntimeConfigurationService runtime;
     private final ManagementEditingService editing;
     private final ManagementConfigurationImportService imports;
+    private final ManagementConfigurationRollbackService rollbacks;
 
     public ManagementConfigurationController(RuntimeConfigurationService runtime, ManagementEditingService editing,
-            ManagementConfigurationImportService imports) {
+            ManagementConfigurationImportService imports, ManagementConfigurationRollbackService rollbacks) {
         this.runtime = runtime;
         this.editing = editing;
         this.imports = imports;
+        this.rollbacks = rollbacks;
     }
 
     @GetMapping("/current")
@@ -108,6 +110,30 @@ public final class ManagementConfigurationController {
         var snapshot = runtime.history(id);
         return snapshot == null ? ResponseEntity.status(404).body(Map.of("code", "history_not_found",
                 "error", "Snapshot is unknown or no longer retained")) : ResponseEntity.ok(snapshot);
+    }
+
+    public record RollbackConfirm(UUID sourceId, UUID reviewId, UUID expectedPublishedId, UUID expectedGrantId) {}
+
+    @PostMapping("/rollback/{id}/review")
+    public ManagementConfigurationRollbackService.Review rollbackReview(@PathVariable("id") UUID id,
+            Authentication auth, HttpServletRequest request, HttpServletResponse response) {
+        response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
+        return rollbacks.review(request.getSession(false), ManagementController.principal(auth), id);
+    }
+
+    @PostMapping("/rollback/confirm")
+    public ConfigurationSnapshot rollbackConfirm(@RequestBody RollbackConfirm body, Authentication auth,
+            HttpServletRequest request, HttpServletResponse response) {
+        response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
+        return rollbacks.confirm(request.getSession(false), ManagementController.principal(auth),
+                body.sourceId(), body.reviewId(), body.expectedPublishedId(), body.expectedGrantId());
+    }
+
+    @ExceptionHandler(ManagementConfigurationRollbackService.Conflict.class)
+    ResponseEntity<ImportProblem> rollbackConflict(ManagementConfigurationRollbackService.Conflict conflict) {
+        return ResponseEntity.status(409).header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .body(new ImportProblem(conflict.code(), "Rollback source or confirmation is no longer current",
+                        conflict.observation()));
     }
 
     @PostMapping("/publish")
@@ -177,7 +203,8 @@ public final class ManagementConfigurationController {
     @ExceptionHandler(RuntimeConfigurationService.PublicationFailure.class)
     ResponseEntity<Problem> publicationFailure(RuntimeConfigurationService.PublicationFailure failure) {
         var state = runtime.inspect();
-        return ResponseEntity.status(503).body(new Problem(failure.code(), failure.getMessage(),
+        return ResponseEntity.status(503).header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .body(new Problem(failure.code(), failure.getMessage(),
                 state.publishedId(), state.intendedId(),
                 state.intendedStatus() == null ? null : state.intendedStatus().name(), state.mutationFault()));
     }

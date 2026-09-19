@@ -35,6 +35,88 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class RuntimeConfigurationIntegrationTest {
     @TempDir Path directory;
 
+    @Test void rollbackPublishesFreshContentFromRecordedStatusesAndPreservesSources() {
+        try (var context = start(directory.resolve("rollback-statuses.db"))) {
+            var service = context.getBean(RuntimeConfigurationService.class);
+            var store = context.getBean(ConfigurationSnapshotStore.class);
+            var reloader = context.getBean(SkillReloader.class);
+            var source = service.publishedSnapshot();
+            for (SnapshotStatus status : List.of(SnapshotStatus.PUBLISHED, SnapshotStatus.FAILED, SnapshotStatus.PENDING)) {
+                if (status != SnapshotStatus.PUBLISHED) {
+                    var retained = store.submit(new ManagedConfiguration(List.of(),
+                            "targets: {}\nroutes: {}\n# source-" + status + "\n"), null, source.localId());
+                    store.revert(retained.localId(), source.localId());
+                    if (status == SnapshotStatus.PENDING) store.updateStatus(retained.localId(), SnapshotStatus.PENDING);
+                    source = store.findByLocalId(retained.localId());
+                }
+                var original = source;
+                String generation = reloader.snapshot().generationId();
+                var published = service.rollbackConfiguration(original.localId(), service.inspect().publishedId(), null,
+                        System::currentTimeMillis, () -> {});
+                assertThat(published.localId()).isNotEqualTo(original.localId());
+                assertThat(published.sourceId()).isEqualTo(original.localId());
+                assertThat(published.configuration()).isEqualTo(original.configuration());
+                assertThat(published.status()).isEqualTo(SnapshotStatus.PUBLISHED);
+                assertThat(reloader.snapshot().generationId()).isNotEqualTo(generation);
+                assertThat(store.findByLocalId(original.localId()).status()).isEqualTo(status);
+                source = published;
+            }
+        }
+    }
+
+    @Test void rollbackHoldsEditingTransitionUntilPublicationCompletes() throws Exception {
+        try (var context = start(directory.resolve("rollback-gates.db"));
+                var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var service = context.getBean(RuntimeConfigurationService.class);
+            var source = service.publishedSnapshot();
+            var entered = new CountDownLatch(1);
+            var release = new CountDownLatch(1);
+            service.hooks(new RuntimeConfigurationService.Hooks() {
+                @Override public void beforePreparation() {
+                    entered.countDown();
+                    try { if (!release.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("test timeout"); }
+                    catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new IllegalStateException(failure); }
+                }
+            });
+            var rollback = workers.submit(() -> service.rollbackConfiguration(source.localId(), source.localId(), null,
+                    System::currentTimeMillis, () -> {}));
+            try {
+                assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+                var editing = workers.submit(() -> service.withEditingState(true, base -> base.localId()));
+                assertThat(editing.isDone()).isFalse();
+                release.countDown();
+                assertThat(editing.get(10, TimeUnit.SECONDS)).isEqualTo(rollback.get(10, TimeUnit.SECONDS).localId());
+            } finally { release.countDown(); service.hooks(new RuntimeConfigurationService.Hooks() {}); }
+        }
+    }
+
+    @Test void rollbackFailureBeforeAndAfterCutoverUsesExistingPointerPolicy() {
+        try (var context = start(directory.resolve("rollback-failure.db"))) {
+            var service = context.getBean(RuntimeConfigurationService.class);
+            var store = context.getBean(ConfigurationSnapshotStore.class);
+            var a = service.publishedSnapshot();
+            var source = store.submit(new ManagedConfiguration(List.of(), "targets: {}\nroutes: {}\n# B\n"), null, a.localId());
+            store.revert(source.localId(), a.localId());
+            service.hooks(new RuntimeConfigurationService.Hooks() {
+                @Override public void beforePreparation() { throw new IllegalStateException("injected"); }
+            });
+            assertThatThrownBy(() -> service.rollbackConfiguration(source.localId(), a.localId(), null,
+                    System::currentTimeMillis, () -> {})).isInstanceOf(RuntimeConfigurationService.PublicationFailure.class)
+                    .hasMessageContaining("preparation failed");
+            assertThat(service.inspect().publishedId()).isEqualTo(a.localId());
+            service.hooks(new RuntimeConfigurationService.Hooks() {
+                @Override public void beforeFrameworkPublish() { throw new IllegalStateException("injected"); }
+            });
+            assertThatThrownBy(() -> service.rollbackConfiguration(source.localId(), a.localId(), null,
+                    System::currentTimeMillis, () -> {})).isInstanceOf(RuntimeConfigurationService.PublicationFailure.class)
+                    .hasMessageContaining("intended selection reverted");
+            assertThat(service.inspect().publishedId()).isEqualTo(a.localId());
+            assertThat(service.inspect().intendedId()).isEqualTo(a.localId());
+            assertThat(store.history().get(store.history().size() - 1).status()).isEqualTo(SnapshotStatus.FAILED);
+            service.hooks(new RuntimeConfigurationService.Hooks() {});
+        }
+    }
+
     @Test
     void newDatabaseActivatesPublishedEmptySelectionAndOpensDispatch() {
         try (var context = start(directory.resolve("new.db"))) {

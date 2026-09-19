@@ -67,6 +67,182 @@ class ManagementConfigurationHttpIntegrationTest {
 
     @BeforeEach void clearEditing() { synchronized (editing) { editing.clearAll(); } }
 
+    @Test void editorReviewsAndConfirmsRetainedFailedSnapshotAsFreshPublication() throws Exception {
+        String email = "rollback-" + UUID.randomUUID() + "@example.test";
+        seed(email, "editor");
+        Browser editor = login(email);
+        var original = runtime.publishedSnapshot();
+        var failed = store.submit(new ManagedConfiguration(java.util.List.of(),
+                "targets: {}\nroutes: {}\n# retained rollback source\n"), null, original.localId());
+        store.revert(failed.localId(), original.localId());
+        JsonNode review = ok(editor.post("/api/management/configuration/rollback/" + failed.localId() + "/review", "{}"));
+        assertThat(review.path("sourceStatus").asText()).isEqualTo("FAILED");
+        assertThat(review.path("validation").path("successful").asBoolean()).isTrue();
+        JsonNode accepted = ok(editor.post("/api/management/configuration/rollback/confirm", rollbackBody(review)));
+        assertThat(accepted.path("localId").asText()).isNotEqualTo(failed.localId().toString());
+        assertThat(accepted.path("sourceId").asText()).isEqualTo(failed.localId().toString());
+        assertThat(accepted.path("configuration").path("restRoutesYaml").asText()).contains("retained rollback source");
+        assertThat(store.findByLocalId(failed.localId()).status()).isEqualTo(SnapshotStatus.FAILED);
+        assertThat(store.findByLocalId(failed.localId()).configuration()).isEqualTo(failed.configuration());
+        assertThat(runtime.inspect().publishedId().toString()).isEqualTo(accepted.path("localId").asText());
+    }
+
+    @Test void rollbackRequiresEditorCsrfAndFreshSourceGrantAndRuntime() throws Exception {
+        String editorEmail = "rollback-editor-" + UUID.randomUUID() + "@example.test";
+        String viewerEmail = "rollback-viewer-" + UUID.randomUUID() + "@example.test";
+        String ownerEmail = "rollback-owner-" + UUID.randomUUID() + "@example.test";
+        seed(editorEmail, "editor"); seed(viewerEmail, "viewer"); seed(ownerEmail, "editor");
+        Browser editor = login(editorEmail), viewer = login(viewerEmail), owner = login(ownerEmail);
+        UUID source = runtime.inspect().publishedId();
+        String path = "/api/management/configuration/rollback/" + source + "/review";
+        assertThat(viewer.post(path, "{}").statusCode()).isEqualTo(403);
+        assertThat(editor.postWithoutCsrf(path, "{}").statusCode()).isEqualTo(403);
+        JsonNode review = ok(editor.post(path, "{}"));
+        String body = rollbackBody(review);
+        assertThat(viewer.post("/api/management/configuration/rollback/confirm", body).statusCode()).isEqualTo(403);
+        assertThat(editor.postWithoutCsrf("/api/management/configuration/rollback/confirm", body).statusCode()).isEqualTo(403);
+        assertThat(editor.post("/api/management/configuration/rollback/confirm", body.replace(source.toString(), UUID.randomUUID().toString()))
+                .statusCode()).isEqualTo(409);
+        String tab = UUID.randomUUID().toString();
+        JsonNode grant = ok(owner.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
+        var stale = editor.post("/api/management/configuration/rollback/confirm", body);
+        assertThat(stale.statusCode()).isEqualTo(409);
+        assertThat(json.readTree(stale.body()).path("observation").path("grantId").asText())
+                .isEqualTo(grant.path("grantId").asText());
+        assertThat(owner.get("/api/management/editing/draft").statusCode()).isEqualTo(200);
+        JsonNode fresh = ok(editor.post(path, "{}"));
+        assertThat(fresh.path("observation").path("leaseOwner").asText()).isEqualTo(ownerEmail);
+        ok(editor.post("/api/management/configuration/rollback/confirm", rollbackBody(fresh)));
+        assertThat(owner.get("/api/management/editing/draft").statusCode()).isEqualTo(404);
+        assertThat(editor.post("/api/management/configuration/rollback/" + UUID.randomUUID() + "/review", "{}")
+                .statusCode()).isEqualTo(409);
+    }
+
+    @Test void rollbackRejectsPrunedSourceAndChangedRuntimeBeforeCutover() throws Exception {
+        String email = "rollback-pruned-" + UUID.randomUUID() + "@example.test";
+        seed(email, "editor");
+        Browser editor = login(email);
+        var a = runtime.publishedSnapshot();
+        var source = store.submit(new ManagedConfiguration(java.util.List.of(),
+                "targets: {}\nroutes: {}\n# pruned-source\n"), null, a.localId());
+        store.revert(source.localId(), a.localId());
+        String path = "/api/management/configuration/rollback/" + source.localId() + "/review";
+        JsonNode review = ok(editor.post(path, "{}"));
+        for (int i = 0; i < 12; i++) {
+            var later = store.submit(new ManagedConfiguration(java.util.List.of(),
+                    "targets: {}\nroutes: {}\n# retained-" + i + "\n"), null, a.localId());
+            store.revert(later.localId(), a.localId());
+        }
+        store.prune(java.util.Set.of(a.localId()));
+        assertThat(store.findByLocalId(source.localId())).isNull();
+        int count = store.history().size();
+        var missing = editor.post("/api/management/configuration/rollback/confirm", rollbackBody(review));
+        assertThat(missing.statusCode()).isEqualTo(409);
+        assertThat(json.readTree(missing.body()).path("code").asText()).isEqualTo("source_not_found");
+        assertThat(store.history()).hasSize(count);
+        assertThat(runtime.inspect().publishedId()).isEqualTo(a.localId());
+
+        JsonNode fresh = ok(editor.post("/api/management/configuration/rollback/" + a.localId() + "/review", "{}"));
+        var draft = new ai.loomspan.sidecar.storage.ConfigurationDraft(a);
+        draft.replaceContent(new ManagedConfiguration(java.util.List.of(), "targets: {}\nroutes: {}\n# changed runtime\n"));
+        var frozen = draft.freeze();
+        draft.recordValidation(frozen, runtime.validate(frozen.configuration()));
+        var changed = runtime.publish(draft::validatedCandidate);
+        var stale = editor.post("/api/management/configuration/rollback/confirm", rollbackBody(fresh));
+        assertThat(stale.statusCode()).isEqualTo(409);
+        assertThat(json.readTree(stale.body()).path("code").asText()).isEqualTo("confirmation_stale");
+        assertThat(runtime.inspect().publishedId()).isEqualTo(changed.localId());
+    }
+
+    @Test
+    @DirtiesContext(methodMode = DirtiesContext.MethodMode.AFTER_METHOD)
+    void rollbackFailureStagesPreserveOrDiscardDraftsAndReportRuntimeTruth() throws Exception {
+        String requesterEmail = "rollback-fault-" + UUID.randomUUID() + "@example.test";
+        String ownerEmail = "rollback-fault-owner-" + UUID.randomUUID() + "@example.test";
+        seed(requesterEmail, "editor"); seed(ownerEmail, "editor");
+        Browser requester = login(requesterEmail), owner = login(ownerEmail);
+        UUID source = runtime.inspect().publishedId();
+        String reviewPath = "/api/management/configuration/rollback/" + source + "/review";
+        String confirmPath = "/api/management/configuration/rollback/confirm";
+        String tab = UUID.randomUUID().toString();
+        ok(owner.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
+        JsonNode preflight = ok(requester.post(reviewPath, "{}"));
+        runtime.hooks(new RuntimeConfigurationService.Hooks() {
+            @Override public void beforePreparation() { throw new IllegalStateException("injected"); }
+        });
+        try {
+            var failure = requester.post(confirmPath, rollbackBody(preflight));
+            assertThat(failure.statusCode()).isEqualTo(503);
+            assertThat(json.readTree(failure.body()).path("code").asText()).isEqualTo("preparation_failed");
+            assertThat(owner.get("/api/management/editing/draft").statusCode()).isEqualTo(200);
+            assertThat(runtime.inspect().publishedId()).isEqualTo(source);
+        } finally { runtime.hooks(new RuntimeConfigurationService.Hooks() {}); }
+
+        JsonNode commitReview = ok(requester.post(reviewPath, "{}"));
+        runtime.hooks(new RuntimeConfigurationService.Hooks() {
+            @Override public void beforeCommit() { throw new IllegalStateException("injected"); }
+        });
+        try {
+            var failure = requester.post(confirmPath, rollbackBody(commitReview));
+            assertThat(failure.statusCode()).isEqualTo(503);
+            assertThat(json.readTree(failure.body()).path("code").asText()).isEqualTo("commit_failed");
+            assertThat(owner.get("/api/management/editing/draft").statusCode()).isEqualTo(404);
+            assertThat(runtime.inspect().publishedId()).isEqualTo(source);
+        } finally { runtime.hooks(new RuntimeConfigurationService.Hooks() {}); }
+
+        JsonNode outcomeReview = ok(requester.post(reviewPath, "{}"));
+        runtime.hooks(new RuntimeConfigurationService.Hooks() {
+            @Override public void beforeStatus() { throw new IllegalStateException("injected"); }
+        });
+        try {
+            var failure = requester.post(confirmPath, rollbackBody(outcomeReview));
+            assertThat(failure.statusCode()).isEqualTo(503);
+            JsonNode problem = json.readTree(failure.body());
+            assertThat(problem.path("code").asText()).isEqualTo("outcome_recording_failed");
+            assertThat(problem.path("publishedId").asText()).isEqualTo(problem.path("intendedId").asText());
+            assertThat(problem.path("intendedStatus").asText()).isEqualTo("PENDING");
+            assertThat(problem.path("mutationFault").asText()).isNotBlank();
+            assertThat(requester.post(reviewPath, "{}").statusCode()).isEqualTo(503);
+        } finally { runtime.hooks(new RuntimeConfigurationService.Hooks() {}); }
+    }
+
+    @Test void acceptedRollbackContinuesAfterClientDisconnect() throws Exception {
+        String email = "rollback-disconnect-" + UUID.randomUUID() + "@example.test";
+        seed(email, "editor");
+        Browser editor = login(email);
+        UUID before = runtime.inspect().publishedId();
+        JsonNode review = ok(editor.post("/api/management/configuration/rollback/" + before + "/review", "{}"));
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        runtime.hooks(new RuntimeConfigurationService.Hooks() {
+            @Override public void beforeFrameworkPublish() {
+                entered.countDown();
+                try { if (!release.await(8, TimeUnit.SECONDS)) throw new IllegalStateException("test timeout"); }
+                catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new IllegalStateException(failure); }
+            }
+        });
+        try {
+            var request = editor.postAsync("/api/management/configuration/rollback/confirm", rollbackBody(review));
+            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+            request.cancel(true);
+            release.countDown();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (runtime.publishedSnapshot().localId().equals(before) && System.nanoTime() < deadline)
+                Thread.sleep(10);
+            assertThat(runtime.publishedSnapshot().localId()).isNotEqualTo(before);
+            assertThat(runtime.publishedSnapshot().sourceId()).isEqualTo(before);
+            assertThat(store.current().localId()).isEqualTo(runtime.publishedSnapshot().localId());
+        } finally { release.countDown(); runtime.hooks(new RuntimeConfigurationService.Hooks() {}); }
+    }
+
+    private static String rollbackBody(JsonNode review) {
+        var observation = review.path("observation");
+        return "{\"sourceId\":\"" + review.path("sourceId").asText() + "\",\"reviewId\":\""
+                + review.path("reviewId").asText() + "\",\"expectedPublishedId\":\""
+                + observation.path("publishedId").asText() + "\",\"expectedGrantId\":"
+                + (observation.path("grantId").isNull() ? "null" : "\"" + observation.path("grantId").asText() + "\"") + "}";
+    }
+
     @Test void editorReviewsFormatOneBundleWithoutMutation() throws Exception {
         String email = "import-review-" + UUID.randomUUID() + "@example.test";
         seed(email, "editor");

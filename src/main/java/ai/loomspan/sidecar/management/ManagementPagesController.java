@@ -115,7 +115,15 @@ public class ManagementPagesController {
     }
     @GetMapping(value = "/management/configuration/history", produces = MediaType.TEXT_HTML_VALUE)
     String history(Authentication auth, HttpServletRequest request) {
-        return console("Configuration history", ManagementController.principal(auth), request,
+        var user = ManagementController.principal(auth);
+        String rollback = "viewer".equals(user.role()) ? "" :
+                "<div id='history-rollback'><button id='rollback-review' type='button' disabled>Review rollback</button>"
+                + "<p id='rollback-status' role='status' aria-live='polite' tabindex='-1'>Select a retained snapshot to review.</p>"
+                + "<div id='rollback-summary' hidden><h3>Rollback review</h3><dl id='rollback-details'></dl>"
+                + "<h4>Destination validation</h4><ul id='rollback-issues'></ul>"
+                + "<p class='warning'>Confirming discards every private draft and breaks the editing lease, including another editor’s lease. The retained source status does not establish destination validity.</p>"
+                + "<button id='rollback-confirm' type='button' disabled>Confirm and publish rollback</button></div></div>";
+        return console("Configuration history", user, request,
                 "<section data-console='history'><p>Retained submissions are shared with every management role and may contain authored secrets. Private unsubmitted drafts are not history.</p>"
                 + "<p id='history-status' role='status' aria-live='polite' tabindex='-1'>Loading retained submissions…</p>"
                 + "<div class='history-actions'><button id='history-refresh' type='button'>Refresh retained history</button>"
@@ -124,17 +132,19 @@ public class ManagementPagesController {
                 + "<div id='history-current' class='history-current'></div>"
                 + "<div class='history-layout'><section aria-labelledby='history-list-heading'><h2 id='history-list-heading'>Retained submissions</h2>"
                 + "<div id='history-list'></div></section><section aria-labelledby='history-detail-heading'><h2 id='history-detail-heading'>Snapshot detail</h2>"
-                + "<div id='history-detail'><p>Select a retained submission to load its exact content.</p></div></section></div></section>");
+                + "<div id='history-detail'><p>Select a retained submission to load its exact content.</p></div>"
+                + rollback + "</section></div></section>");
     }
     @GetMapping(value = "/management/configuration/recovery", produces = MediaType.TEXT_HTML_VALUE)
     String recovery(Authentication auth, HttpServletRequest request) {
         return console("Configuration recovery guidance", ManagementController.principal(auth), request,
-                "<section data-console='recovery'><p>This page is read-only. It does not retry, cancel, roll back, import, export, or repair a publication. A disconnected import may already have completed: inspect current runtime and retained history before another attempt.</p>"
+                "<section data-console='recovery'><p>This page is read-only. It does not retry, cancel, roll back, import, export, or repair a publication. A disconnected import or rollback may already have completed: inspect current runtime and retained history before another attempt.</p>"
                 + "<h2>When a mutation fault is present</h2><p>Configuration acquisition, save, activity renewal, validation, and publication are blocked. Configuration inspection, release or discard of private editing state, and administrator account management remain available.</p>"
                 + "<h2>Offline operator recovery</h2><ol><li>Stop the sole Sidecar instance before changing storage.</li>"
-                + "<li>Preserve a consistent copy of the complete SQLite database set, including its journal or WAL files.</li>"
+                + "<li>Preserve a consistent stopped copy of the complete SQLite database set, including the main file and any -wal/-shm companions. Protect it: it contains management accounts and sensitive authored values.</li>"
                 + "<li>If the intended selection is correct, repair the storage problem and restart so the intended snapshot is loaded.</li>"
-                + "<li>If runtime and intended snapshots differ and the prior runtime must be recovered, restore a known-good full database backup made while Sidecar was stopped, then restart.</li></ol>"
+                + "<li>If runtime and intended snapshots differ and the prior runtime must be recovered, restore a known-good full database backup made while Sidecar was stopped. Remove stale destination companions, set writable ownership for UID/GID 10001:10001, then restart.</li></ol>"
+                + "<p>Startup activates the committed pointer from the restored backup. Verify readiness, sign in with a restored account, and inspect current configuration and history. ZIP import and local retained-history rollback cannot bypass a mutation fault or restore accounts.</p>"
                 + "<p>Never treat the intended pointer as proof of what is currently executing. Review <a href='/management/configuration/current'>current runtime state</a> and <a href='/management/configuration/history'>retained history</a> before intervention.</p></section>");
     }
     @GetMapping(value = "/management/configuration/edit", produces = MediaType.TEXT_HTML_VALUE)

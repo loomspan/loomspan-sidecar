@@ -167,11 +167,38 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     }
 
     public static final class ImportConflict extends RuntimeException {}
+    public static final class SourceMissing extends RuntimeException {}
+    public static final class SourceValidationChanged extends RuntimeException {}
 
     /** A confirmed import owns both gates until its outcome is known. */
     public ConfigurationSnapshot importConfiguration(ManagedConfiguration configuration, UUID sourceId,
             UUID expectedPublishedId, UUID expectedGrantId, java.util.function.LongSupplier nowMillis) {
         return importConfiguration(configuration, sourceId, expectedPublishedId, expectedGrantId, nowMillis, () -> {});
+    }
+
+    /** Resolve the exact retained source only after acquiring both publication gates. */
+    public ConfigurationSnapshot rollbackConfiguration(UUID sourceId, UUID expectedPublishedId, UUID expectedGrantId,
+            java.util.function.LongSupplier nowMillis, Runnable admission) {
+        publication.lock();
+        try {
+            transition.lock();
+            try {
+                requireHealthy();
+                admission.run();
+                UUID predecessor = published == null ? null : published.localId();
+                synchronized (editing) {
+                    if (editing.lease != null && nowMillis.getAsLong() >= editing.lease.expiresAt) editing.lease = null;
+                    UUID grant = editing.lease == null ? null : editing.lease.grantId;
+                    if (!java.util.Objects.equals(predecessor, expectedPublishedId)
+                            || !java.util.Objects.equals(grant, expectedGrantId)) throw new ImportConflict();
+                }
+                if (predecessor == null) throw new IllegalStateException("Runtime configuration is unavailable");
+                ConfigurationSnapshot source = store.findByLocalId(sourceId);
+                if (source == null) throw new SourceMissing();
+                if (!validate(source.configuration()).successful()) throw new SourceValidationChanged();
+                return publishCandidate(source.configuration(), source.localId(), predecessor, true);
+            } finally { transition.unlock(); }
+        } finally { publication.unlock(); }
     }
 
     public ConfigurationSnapshot importConfiguration(ManagedConfiguration configuration, UUID sourceId,

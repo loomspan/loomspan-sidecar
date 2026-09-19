@@ -199,6 +199,9 @@ PVC named `loomspan-sidecar-data` that supports these permissions and locking.
 The protected console links this procedure from **Configuration recovery
 guidance**. That page is explanatory and read-only: it does not execute SQL,
 retry or cancel publication, or provide import, export, or rollback controls.
+Local retained-history rollback publishes from one snapshot still held by this
+server; it cannot recover accounts, settings, or a damaged database. Configuration
+ZIP import also cannot bypass a mutation fault.
 
 Stop the sole Sidecar instance and wait for process exit before either copy.
 For the quickstart use `docker compose -f examples/quickstart/compose.yaml stop sidecar`;
@@ -239,18 +242,29 @@ for suffix in '' -wal -shm; do
     cp -p "$BACKUP_DIR/sidecar.db$suffix" "$DATA_DIR/"
   fi
 done
-chown 10001:10001 "$DATA_DIR" "$DATA_DIR"/sidecar.db*
+chown 10001:10001 "$DATA_DIR" "$DATA_DIR/sidecar.db"
+for suffix in -wal -shm; do
+  if [ -e "$DATA_DIR/sidecar.db$suffix" ]; then
+    chown 10001:10001 "$DATA_DIR/sidecar.db$suffix"
+  fi
+done
 ```
 
 Restart with `docker compose -f examples/quickstart/compose.yaml start sidecar`
 or `kubectl scale deployment/example-with-loomspan-sidecar --replicas=1`. Verify startup and
 readiness. Restore rolls current selection, statuses, and history back to the
-backup point. This full installation database backup includes authored YAML and
-literal sensitive values without redaction or v1 encryption. The
+backup point. This full installation database backup includes authored YAML,
+management account records, and literal sensitive values without redaction or
+v1 encryption. In-memory editing drafts and sessions do not survive a restart.
+Startup activates the backup's committed pointer, including a pending selected
+record. Sign in using a restored
+management account and inspect **Current configuration** and **History** to
+confirm the runtime snapshot and intended restart selection. The
 configuration-only bundle described below excludes accounts and sessions;
 the stopped-instance backup remains the full installation recovery artifact.
 Protect backup access accordingly. The database
-copy test verifies both storage and runtime recovery. For an outcome-bookkeeping
+copy test verifies populated configuration and management identity recovery,
+including stale destination companion removal. For an outcome-bookkeeping
 fault, stop the sole instance, preserve a consistent full database-set copy,
 correct the storage problem, and restart if the committed intended selection is
 wanted. An unreverted A/B publication failure restarts onto B, not A. To recover
@@ -287,8 +301,8 @@ changes require restart; a complete snapshot publication changes skills and
 REST routes without restart. Successful framework publication invalidates
 prior-base drafts and leases under the runtime transition gate. Publish rechecks
 live account, session, grant, candidate, validation and base after waiting for
-the publication lock. Phase 5 import and rollback must reuse this
-publication path and assign fresh local IDs with source provenance.
+the publication lock. Import and rollback reuse this publication path and
+assign fresh local IDs with source provenance.
 
 ## REST skill routes
 
@@ -631,6 +645,8 @@ session and CSRF token.
 | `GET /api/management/configuration/export` | None | Format 1 ZIP of the captured runtime-published configuration; authenticated viewer, editor, or admin. 413 when the v1 size limits are exceeded; 503 when runtime state is unavailable. |
 | `GET /api/management/configuration/history` | None | Retained full submitted snapshots in ascending `submissionSequence`. |
 | `GET /api/management/configuration/history/{localId}` | None | Full retained snapshot or 404 after pruning. |
+| `POST /api/management/configuration/rollback/{localId}/review` | Empty JSON body; editor/admin session and CSRF | Exact retained source status/summary, destination validation, review ID, runtime and lease observation; 409 if source is absent. |
+| `POST /api/management/configuration/rollback/confirm` | `sourceId`, `reviewId`, `expectedPublishedId`, nullable `expectedGrantId`; editor/admin session and CSRF | Publishes source content as a fresh local snapshot with source provenance, or returns conflict/failure. |
 | `POST /api/management/configuration/publish` | `{"tabId":"<uuid>","grantId":"<uuid>","expectedCandidateId":"<uuid>"}` | Publishes an exactly validated candidate, then returns its full snapshot. |
 
 A full snapshot contains `localId`, nullable `sourceId`, `submissionSequence`,
@@ -744,6 +760,21 @@ skill and REST YAML. Authored placeholders, markup-like text, and literal
 sensitive values are preserved and rendered as text; protect all management
 accounts accordingly.
 
+Editors and administrators can select any retained snapshot, including one
+recorded as failed, pending, or current, then choose **Review rollback**. Review
+shows the source's recorded status, summary, destination validation, running
+snapshot, and lease owner. Source status is historical and does not establish
+destination validity. Separate confirmation rereads that exact retained source
+under the publication gate and publishes a fresh local snapshot whose `sourceId`
+records provenance. The original content and status remain historical. Review
+and confirmation do not require lease ownership. Confirmation checks the same
+source, session, runtime snapshot, and lease grant or absence. Renewal keeps a
+grant; replacement requires another review. Invalid content or failed preparation
+preserves drafts. Accepted cutover clears all private drafts and the lease even
+if commit or activation later fails. A missing source returns 409 and requires
+refreshed history. A disconnected confirmation has an unknown outcome: inspect
+Current configuration and History before retrying.
+
 Submitted history is global to authenticated management users. A saved or
 validated but unsubmitted draft remains private to its server session—even for
 an administrator—and never appears in history. Logout, idle expiry, restart,
@@ -768,8 +799,11 @@ present, acquisition, save, editing activity renewal, validation, and
 publication are blocked; inspection, release or discard of private editing
 state, and administrator account management remain available. Follow the
 protected recovery-guidance link and the stopped-instance procedure above when
-operator intervention is required. Import is available to editors and
-administrators; rollback controls remain outside this console workflow.
+operator intervention is required. Import and rollback are available to editors
+and administrators only while mutations are healthy. Retention defaults to ten
+snapshots, including failed attempts and current production, with protection
+for the selected snapshot and live generations. Older rollback sources can be
+pruned; local history is not a guaranteed recovery archive.
 
 The server checks the live account, session, tab, grant, base snapshot and exact
 validated candidate after the publication lock becomes available. Conflicts
@@ -794,7 +828,7 @@ private-state cleanup and account administration remain available. Preserve
 the database and investigate the stage before retrying; the existing stopped
 full-database-backup recovery procedure applies when runtime and intended
 selection disagree. The browser authoring, automatic validation, and retained
-history workflow use these same contracts. Rollback remains separate work.
+history and rollback workflows use these same contracts.
 
 ## Execution API
 

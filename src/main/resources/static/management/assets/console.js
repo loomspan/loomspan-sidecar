@@ -127,6 +127,39 @@
   let historyDetailRevision = 0;
   let currentRevision = 0;
   let historyCurrent = null;
+  let selectedHistoryId = null;
+  let rollbackReview = null;
+  const rollbackButton = document.getElementById('rollback-review');
+  const clearRollback = () => {
+    rollbackReview = null;
+    if (!rollbackButton) return;
+    rollbackButton.disabled = !selectedHistoryId;
+    document.getElementById('rollback-confirm').disabled = true;
+    document.getElementById('rollback-summary').hidden = true;
+    document.getElementById('rollback-details').replaceChildren();
+    document.getElementById('rollback-issues').replaceChildren();
+    status('rollback-status', selectedHistoryId ? 'Review the selected snapshot before confirming.' : 'Select a retained snapshot to review.');
+  };
+  const showRollbackReview = data => {
+    const details = document.getElementById('rollback-details');
+    const issues = document.getElementById('rollback-issues');
+    details.replaceChildren(); issues.replaceChildren();
+    for (const [name, value] of Object.entries({ 'Source snapshot': data.sourceId,
+      'Source recorded status': recordedStatus(data.sourceStatus), 'Submission sequence': data.submissionSequence,
+      'Skill documents': data.skillDocuments, 'Validated skills': data.validatedSkills, 'REST routes': data.routes,
+      'Runtime-published snapshot': data.observation.publishedId, 'Editing grant': data.observation.grantId,
+      'Lease owner': data.observation.leaseOwner })) {
+      details.append(el('dt', name), el('dd', value ?? 'None'));
+    }
+    for (const issue of data.validation.issues) issues.append(el('li',
+      [issue.severity, issue.sourceLabel, issue.skillName, issue.location, issue.message].filter(Boolean).join(' · ')));
+    if (!data.validation.issues.length) issues.append(el('li', 'No validation issues.'));
+    document.getElementById('rollback-summary').hidden = false;
+    rollbackReview = data.reviewId && data.validation.successful ? data : null;
+    document.getElementById('rollback-confirm').disabled = !rollbackReview;
+    status('rollback-status', rollbackReview ? 'Review passed. Read the draft-loss warning before confirming.'
+      : 'Destination validation failed. A rollback cannot be confirmed.', !rollbackReview);
+  };
   const renderHistoryList = snapshots => {
     const root = document.getElementById('history-list');
     root.replaceChildren();
@@ -150,6 +183,8 @@
   };
   const loadHistoryDetail = async id => {
     const revision = ++historyDetailRevision;
+    selectedHistoryId = id;
+    clearRollback();
     const root = document.getElementById('history-detail');
     root.replaceChildren(el('p', 'Loading exact snapshot detail…'));
     try {
@@ -163,6 +198,8 @@
       if (revision !== historyDetailRevision) return;
       root.replaceChildren();
       if (error.code === 'history_not_found') {
+        selectedHistoryId = null;
+        clearRollback();
         root.append(el('p', 'This snapshot expired from retained history. Its former content is not displayed. Refresh retained history or inspect the current configuration.'));
         const refreshed = await loadHistory(false);
         if (refreshed !== null) {
@@ -201,6 +238,70 @@
         status('history-status', error.message, true);
       }
       return false;
+    }
+  };
+  const refreshRollbackState = async () => {
+    await loadHistory(false);
+    if (selectedHistoryId) await loadHistoryDetail(selectedHistoryId);
+  };
+  const reviewRollback = async () => {
+    const id = selectedHistoryId;
+    if (!id || !rollbackButton) return;
+    clearRollback();
+    status('rollback-status', 'Validating retained source against this destination…');
+    try {
+      const result = await api('/configuration/rollback/' + encodeURIComponent(id) + '/review', 'POST');
+      if (selectedHistoryId !== id) return;
+      showRollbackReview(result);
+    } catch (error) {
+      if (selectedHistoryId !== id) return;
+      if (error.code === 'source_not_found') {
+        selectedHistoryId = null; clearRollback();
+        await loadHistory(false);
+        status('rollback-status', 'Source no longer retained. History and current state were refreshed.', true);
+      } else status('rollback-status', error.message, true);
+      document.getElementById('rollback-status').focus();
+    }
+  };
+  const confirmRollback = async () => {
+    const accepted = rollbackReview;
+    if (!accepted || selectedHistoryId !== accepted.sourceId) return;
+    rollbackReview = null;
+    document.getElementById('rollback-confirm').disabled = true;
+    status('rollback-status', 'Publishing a new local snapshot from the retained source…');
+    let outcome = null;
+    try {
+      const snapshot = await api('/configuration/rollback/confirm', 'POST', {
+        sourceId: accepted.sourceId, reviewId: accepted.reviewId,
+        expectedPublishedId: accepted.observation.publishedId, expectedGrantId: accepted.observation.grantId
+      });
+      outcome = ['Rollback published as new local snapshot ' + snapshot.localId + '.', false];
+    } catch (error) {
+      if (error.message === 'Access denied' || error.message === 'Session expired') {
+        outcome = ['Management session or rollback access ended. Sign in again.', true];
+      } else if (error.code === 'confirmation_stale') {
+        outcome = ['Runtime or editing grant changed. Review the selected source again before confirming.', true];
+      } else if (error.code === 'source_not_found') {
+        selectedHistoryId = null; clearRollback();
+        outcome = ['Source is no longer retained. History and current state were refreshed.', true];
+      } else if (error.status) {
+        const detail = {
+          outcome_recording_failed: 'Rollback activated, but outcome recording failed and configuration mutations stopped.',
+          history_pruning_failed: 'Rollback activated, but history pruning failed and configuration mutations stopped.',
+          revert_failed: 'Rollback activation failed and the intended pointer could not be restored; configuration mutations stopped.',
+          activation_failed: 'Rollback activation failed; the intended pointer was restored.',
+          commit_failed: 'Rollback commit failed before runtime activation.',
+          preparation_failed: 'Rollback preparation failed before drafts were discarded.'
+        }[error.code];
+        outcome = [(detail || 'Rollback did not return success (' + (error.code || error.status) + ').')
+          + ' Inspect current runtime and history before another attempt.', true];
+      } else {
+        outcome = ['Connection lost; rollback outcome is unknown. Inspect current runtime and history. Do not retry blindly.', true];
+      }
+    } finally {
+      await refreshRollbackState();
+      if (outcome) status('rollback-status', ...outcome);
+      document.getElementById('rollback-status')?.focus();
     }
   };
   const loadCurrent = async () => {
@@ -301,9 +402,13 @@
     if (historyRoot) {
       document.getElementById('history-refresh').addEventListener('click', () => {
         historyDetailRevision++;
+        selectedHistoryId = null;
+        clearRollback();
         document.getElementById('history-detail').replaceChildren(el('p', 'Select a retained submission to load its exact content.'));
         loadHistory();
       });
+      rollbackButton?.addEventListener('click', reviewRollback);
+      document.getElementById('rollback-confirm')?.addEventListener('click', confirmRollback);
       loadHistory();
     }
     if (accountsRoot) {

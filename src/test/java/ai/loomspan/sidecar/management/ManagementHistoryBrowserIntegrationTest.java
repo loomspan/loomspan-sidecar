@@ -115,6 +115,41 @@ class ManagementHistoryBrowserIntegrationTest {
         }
     }
 
+    @Test void editorReviewsAndConfirmsRollbackFromHistoryWhileViewerCannot() {
+        var source = publish(new ManagedConfiguration(List.of(), "targets: {}\nroutes: {}\n# rollback-browser-source\n"));
+        publish(new ManagedConfiguration(List.of(), "targets: {}\nroutes: {}\n# newer-runtime\n"));
+        String editorEmail = seed("editor"), viewerEmail = seed("viewer");
+        try (Playwright playwright = Playwright.create(); Browser browser = playwright.chromium().launch();
+                BrowserContext editorContext = browser.newContext(); BrowserContext viewerContext = browser.newContext()) {
+            Page viewer = login(viewerContext, viewerEmail);
+            viewer.navigate(url("/management/configuration/history"));
+            assertThat(viewer.locator("#rollback-review, #rollback-confirm").count()).isZero();
+
+            Page editor = login(editorContext, editorEmail);
+            editor.navigate(url("/management/configuration/history"));
+            editor.locator("#history-list button").filter(
+                    new com.microsoft.playwright.Locator.FilterOptions().setHasText(source.localId().toString())).click();
+            editor.locator("#history-detail").getByText("rollback-browser-source",
+                    new com.microsoft.playwright.Locator.GetByTextOptions().setExact(false)).waitFor();
+            editor.locator("#rollback-review").focus();
+            editor.locator("#rollback-review").press("Enter");
+            editor.locator("#rollback-status").getByText("Review passed",
+                    new com.microsoft.playwright.Locator.GetByTextOptions().setExact(false)).waitFor();
+            assertThat(editor.locator("#rollback-summary").textContent())
+                    .contains("PUBLISHED", "Runtime-published snapshot", "Lease owner", "discards every private draft");
+            editor.locator("#history-list button").last().click();
+            assertThat(editor.locator("#rollback-confirm").isDisabled()).isTrue();
+            editor.locator("#history-list button").filter(
+                    new com.microsoft.playwright.Locator.FilterOptions().setHasText(source.localId().toString())).click();
+            editor.locator("#rollback-review").click();
+            editor.locator("#rollback-confirm").click();
+            editor.locator("#rollback-status").getByText("published as new local snapshot",
+                    new com.microsoft.playwright.Locator.GetByTextOptions().setExact(false)).waitFor();
+            assertThat(runtime.publishedSnapshot().sourceId()).isEqualTo(source.localId());
+            assertThat(runtime.publishedSnapshot().configuration()).isEqualTo(source.configuration());
+        }
+    }
+
     @Test void allRolesReachHistoryAndInspectionDoesNotPublishOrPoll() {
         for (String role : List.of("viewer", "editor", "admin")) {
             String email = seed(role);
@@ -130,11 +165,53 @@ class ManagementHistoryBrowserIntegrationTest {
                 page.navigate(url("/management/configuration/history"));
                 page.locator("#history-status").getByText("Retained submissions loaded", new com.microsoft.playwright.Locator.GetByTextOptions().setExact(false)).waitFor();
                 assertThat(page.locator("#history-list button").count()).isPositive();
+                assertThat(page.locator("#rollback-review").count()).isEqualTo("viewer".equals(role) ? 0 : 1);
                 assertThat(page.locator("a[href='/management/configuration/recovery']").count()).isPositive();
                 page.waitForTimeout(250);
                 assertThat(publications).hasValue(0);
                 assertThat(activity).hasValue(0);
             }
+        }
+    }
+
+    @Test void rollbackBrowserReportsStaleMissingAndDisconnectedOutcomes() {
+        String email = seed("editor");
+        try (Playwright playwright = Playwright.create(); Browser browser = playwright.chromium().launch();
+                BrowserContext context = browser.newContext()) {
+            Page page = login(context, email);
+            page.navigate(url("/management/configuration/history"));
+            page.locator("#history-list button").last().click();
+            page.locator("#rollback-review").click();
+            page.locator("#rollback-confirm").waitFor();
+            String confirm = "**/api/management/configuration/rollback/confirm";
+            page.route(confirm, route -> route.fulfill(new com.microsoft.playwright.Route.FulfillOptions()
+                    .setStatus(409).setContentType("application/json")
+                    .setBody("{\"code\":\"confirmation_stale\",\"error\":\"stale\"}")));
+            page.locator("#rollback-confirm").click();
+            page.locator("#rollback-status").getByText("Review the selected source again",
+                    new com.microsoft.playwright.Locator.GetByTextOptions().setExact(false)).waitFor();
+            assertThat(page.locator("#rollback-confirm").isDisabled()).isTrue();
+            page.unroute(confirm);
+
+            page.locator("#rollback-review").click();
+            page.locator("#rollback-status").getByText("Review passed",
+                    new com.microsoft.playwright.Locator.GetByTextOptions().setExact(false)).waitFor();
+            page.route(confirm, route -> route.abort());
+            page.locator("#rollback-confirm").click();
+            page.locator("#rollback-status").getByText("outcome is unknown",
+                    new com.microsoft.playwright.Locator.GetByTextOptions().setExact(false)).waitFor();
+            assertThat(page.locator("#history-current").textContent()).contains("Runtime-published local ID");
+            page.unroute(confirm);
+
+            page.route("**/api/management/configuration/rollback/*/review", route -> route.fulfill(
+                    new com.microsoft.playwright.Route.FulfillOptions().setStatus(409)
+                            .setContentType("application/json")
+                            .setBody("{\"code\":\"source_not_found\",\"error\":\"missing\"}")));
+            page.locator("#rollback-review").click();
+            page.locator("#rollback-status").getByText("no longer retained",
+                    new com.microsoft.playwright.Locator.GetByTextOptions().setExact(false)).waitFor();
+            assertThat(page.locator("#rollback-review").isDisabled()).isTrue();
+            assertThat(page.locator("#history-list button").count()).isPositive();
         }
     }
 

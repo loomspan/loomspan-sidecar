@@ -99,8 +99,18 @@ class RuntimeConfigurationRecoveryIntegrationTest {
     @Test
     void stoppedFullDatabaseBackupRestoresPriorSelectionAndHistory() throws Exception {
         Path original = directory.resolve("original.db");
-        var setup = open(original);
-        var a = setup.current();
+        ConfigurationSnapshot a;
+        String email = "restored-admin@example.test";
+        try (var context = start(original)) {
+            var service = context.getBean(RuntimeConfigurationService.class);
+            a = service.publish(validDraft(service, service.publishedSnapshot(), "backed-up configuration")::validatedCandidate);
+            var encoder = new org.springframework.security.crypto.password.Pbkdf2PasswordEncoder("", 16, 310_000,
+                    org.springframework.security.crypto.password.Pbkdf2PasswordEncoder.SecretKeyFactoryAlgorithm.PBKDF2WithHmacSHA256);
+            context.getBean(org.springframework.jdbc.core.JdbcTemplate.class).update(
+                    "INSERT INTO management_account(email,role,enabled,password_hash,created_at) VALUES (?,?,1,?,?)",
+                    email, "admin", "{pbkdf2@SpringSecurity_v5_8}" + encoder.encode("Long Password 123!"),
+                    System.currentTimeMillis());
+        }
         Path backup = directory.resolve("backup.db");
         copyDatabaseSet(original, backup);
         try (var context = start(original)) {
@@ -110,12 +120,28 @@ class RuntimeConfigurationRecoveryIntegrationTest {
             assertThat(context.getBean(ConfigurationSnapshotStore.class).current().localId()).isNotEqualTo(a.localId());
         }
         Path restored = directory.resolve("restored.db");
+        Files.writeString(Path.of(restored + "-wal"), "stale companion");
+        Files.writeString(Path.of(restored + "-shm"), "stale companion");
         copyDatabaseSet(backup, restored);
+        assertThat(Files.exists(Path.of(restored + "-wal")))
+                .isEqualTo(Files.exists(Path.of(backup + "-wal")));
+        assertThat(Files.exists(Path.of(restored + "-shm")))
+                .isEqualTo(Files.exists(Path.of(backup + "-shm")));
+        assertThat(Files.isWritable(restored)).isTrue();
+        assertThat(Files.isWritable(restored.getParent())).isTrue();
         try (var context = start(restored)) {
             var store = context.getBean(ConfigurationSnapshotStore.class);
             assertThat(store.current().localId()).isEqualTo(a.localId());
             assertThat(context.getBean(RuntimeConfigurationService.class).inspect().publishedId()).isEqualTo(a.localId());
             assertThat(store.current().status()).isEqualTo(SnapshotStatus.PUBLISHED);
+            assertThat(context.getBean(RuntimeConfigurationService.class).current().published().configuration())
+                    .isEqualTo(a.configuration());
+            assertThat(store.history()).anySatisfy(snapshot -> assertThat(snapshot.localId()).isEqualTo(a.localId()));
+            var account = context.getBean(ai.loomspan.sidecar.management.ManagementIdentityService.class).account(email);
+            assertThat(account).isNotNull();
+            assertThat(account.active()).isTrue();
+            assertThat(context.getBean(ai.loomspan.sidecar.management.ManagementIdentityService.class)
+                    .matches("Long Password 123!", account.passwordHash())).isTrue();
         }
     }
 
@@ -169,6 +195,9 @@ class RuntimeConfigurationRecoveryIntegrationTest {
     }
 
     private void copyDatabaseSet(Path source, Path destination) throws Exception {
+        Files.deleteIfExists(destination);
+        Files.deleteIfExists(Path.of(destination + "-wal"));
+        Files.deleteIfExists(Path.of(destination + "-shm"));
         for (String suffix : List.of("", "-wal", "-shm")) {
             Path candidate = Path.of(source + suffix);
             if (Files.exists(candidate)) Files.copy(candidate, Path.of(destination + suffix), StandardCopyOption.REPLACE_EXISTING);
