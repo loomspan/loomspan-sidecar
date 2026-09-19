@@ -38,6 +38,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "management.server.port=0", "server.servlet.session.cookie.secure=false",
         "loomspan-sidecar.management.session-idle-timeout=30m",
+        "loomspan-sidecar.management.edit-lease-timeout=7m",
         "loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
         "loomspan-sidecar.auth.jwt.audience=sidecar",
         "loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem"
@@ -89,6 +90,22 @@ class ManagementHttpIntegrationTest {
         assertThat(anonymous.get("/management/assets/console.js").statusCode()).isEqualTo(200);
         assertThat(anonymous.get("/management/assets/console.css").headers().firstValue("Referrer-Policy"))
                 .hasValue("no-referrer");
+    }
+    @Test void editorShellContainsNoAuthoredValuesAndSessionExposesConfiguredTimeouts() throws Exception {
+        seed("shell-viewer@example.test", "viewer");
+        var browser = new Browser();
+        assertThat(browser.get("/management/configuration/edit").statusCode()).isEqualTo(302);
+        String csrf = csrf(browser.get("/management/login").body());
+        browser.postForm("/management/login", "email=shell-viewer%40example.test&password="
+                + encode(PASSWORD) + "&_csrf=" + encode(csrf));
+        var page = browser.get("/management/configuration/edit");
+        assertThat(page.statusCode()).isEqualTo(200);
+        assertThat(page.body()).contains("id='editor-skills'", "id='editor-rest'", "/management/assets/editor.js")
+                .doesNotContain("sourceName", "restRoutesYaml");
+        assertThat(page.headers().firstValue("Cache-Control")).hasValue("no-store");
+        assertThat(browser.get("/management/assets/editor.js").statusCode()).isEqualTo(200);
+        assertThat(browser.get("/api/management/session").body())
+                .contains("\"sessionIdleTimeoutSeconds\":1800", "\"editLeaseTimeoutSeconds\":420");
     }
 
     @Test void accountPageUsesAdminAuthorityAndPasswordFormsExplainExactPolicy() throws Exception {

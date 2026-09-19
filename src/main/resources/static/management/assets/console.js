@@ -2,6 +2,8 @@
   'use strict';
   const accountsRoot = document.querySelector('[data-console="accounts"]');
   const currentRoot = document.querySelector('[data-console="current"]');
+  // The editor owns its activity cadence so a lease report also renews login once.
+  if (document.querySelector('[data-console="editor"]')) return;
   let csrfToken = null;
   let lastActivity = 0;
   const el = (tag, content, className) => {

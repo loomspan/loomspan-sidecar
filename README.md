@@ -481,7 +481,8 @@ no frontend service is needed. Open `/management/login` to sign in. The landing
 page explains an available, reserved, or locked first-administrator setup state;
 `/management/setup` accepts the one-time credential only until activation.
 Authenticated users reach `/management/home`,
-`/management/configuration/current`, and `/management/password/change`.
+`/management/configuration/current`, `/management/configuration/edit`, and
+`/management/password/change`.
 Administrators also reach `/management/accounts` to invite accounts, change
 roles, disable or re-enable accounts, and resend a pending password link. The
 public `/management/forgot` and `/management/password/{set,reset}` forms support
@@ -509,11 +510,49 @@ Role changes, disables, resets and password changes invalidate affected sessions
 sign in again before continuing. Viewer/editor/admin checks and CSRF are enforced
 by the server even if a stale browser page still shows an action.
 
+The edit page displays the runtime configuration to every management role.
+Editors and admins can acquire the sole editing lease and change complete YAML
+skill documents (with diagnostic source labels) and the complete REST
+targets/routes YAML. Add or remove a skill document with the adjacent controls;
+REST targets and routes remain one text document. URL placeholders such as
+`${REST_BASE_URL}` are kept as authored text. Java skills, deployment settings,
+model connections and destination bindings are outside this editor.
+
+Edits save automatically to a session-private draft after a short pause. The
+lower-left status says Unsaved, Saving, Saved to private draft, or Save failed;
+Saved means the server acknowledged the current text, **not** that it is live or
+recoverable after logout. A failed save retains text on the open page. Retry
+save explicitly, or make a new edit after the failure. Validation runs separately
+after an acknowledged save. Valid, Validation errors and Out of date appear
+without interrupting typing; expand Validation details to inspect labelled
+issues. Warnings alone still permit publication. Publish becomes available only
+for the current saved, successfully validated candidate. Publication switches
+the runtime catalog without a restart and clears old-base drafts on success.
+
+Only the tab that acquired the lease can write. Release preserves this session's
+draft; reacquire to resume. Discard removes it. Admin takeover starts that admin
+from runtime configuration and does not expose another session's draft. A lost
+lease leaves still-valid local text in the open tab but stops writes. The page
+stores no draft or grant in browser storage: logout, session expiry, account
+changes, discard and a changed runtime base can invalidate edits. The page
+shows the configured login and lease idle limits and warns two minutes before
+lease expiry. Only typing, paste, clicks, scrolling and Continue editing send
+an activity report, at most once per 30 seconds. Background save, validation,
+status reads and mouse movement do not renew deadlines.
+
+If Publish is rejected, inspect the displayed runtime, intended and fault
+state before making another explicit decision. An activation failure may leave
+the old runtime active; bookkeeping failure can occur after the new runtime
+became active. A connection loss leaves the outcome unknown and never triggers
+an automatic second Publish. The current page remains available to inspect
+the runtime when configuration mutations are faulted.
+
 JSON clients obtain a CSRF token from a session page or the authenticated
 `GET /api/management/session` response and send it as `X-CSRF-TOKEN` on unsafe
 requests. The login page and all other forms include a hidden CSRF value. The
 session endpoint returns `id`, normalized `email`, `role`, effective
-`permissions`, and `csrfToken`. `POST /api/management/session/activity` records
+`permissions`, `csrfToken`, `sessionIdleTimeoutSeconds`, and
+`editLeaseTimeoutSeconds`. `POST /api/management/session/activity` records
 an intentional user action and extends the default 30-minute idle deadline only
 when at least 30 seconds have passed since the previous accepted report;
 polling the session endpoint does not. `POST /api/management/logout` ends the
@@ -541,7 +580,7 @@ request JSON. A browser tab creates a UUID `tabId` and keeps it only for that ta
 
 | Method and path | Request | Result |
 | --- | --- | --- |
-| `GET /api/management/editing` | None | `held`, `mine`, `expiresAt`; no foreign draft or grant details. |
+| `GET /api/management/editing` | None | `held`, `mine`, `expiresAt`, and `mineTabId` only for this session's lease; no foreign draft or grant details. |
 | `GET /api/management/editing/draft` | None | This session's draft or 404. |
 | `POST /api/management/editing/lease` | `{"tabId":"<uuid>"}` | Acquires the sole lease and creates or resumes this session's draft. |
 | `POST /api/management/editing/lease/takeover` | `{"tabId":"<uuid>"}` | Admin only; revokes the old grant and starts the admin's fresh draft from runtime production. |
@@ -567,11 +606,10 @@ issues a fresh grant. Logout, login expiry, account version changes, session
 destruction, successful publication and restart clear affected editing state.
 Configuration fault state permits status, private inspection, release and
 discard, while blocking acquisition, save and activity renewal. The browser
-work in Phase 4 must send reports only for typing, paste, clicks, scrolling or
-explicit Continue editing, no more than once per 30 seconds. Mouse movement,
-automatic validation/status polling and an open idle tab must not report
-activity. Phase 4 also owns the two-minute expiry warning; server deadlines
-remain authoritative.
+sends reports only for typing, paste, clicks, scrolling or explicit Continue
+editing, no more than once per 30 seconds. Mouse movement, automatic
+validation/status polling and an open idle tab do not report activity. The edit
+page warns two minutes before lease expiry; server deadlines remain authoritative.
 
 ### Protected configuration API
 

@@ -96,6 +96,7 @@ class ManagementEditingHttpIntegrationTest {
                 + "\"}],\"restRoutesYaml\":\"routes: {}\\n" + secret + "\"}";
         assertThat(a.put("/api/management/editing/draft", save).statusCode()).isEqualTo(200);
         assertThat(runtime.inspect().publishedId()).isEqualTo(runningBeforeSave);
+        assertThat(body(a.get("/api/management/editing")).path("mineTabId").asText()).isEqualTo(tab);
         synchronized (editing) {
             var entry = editing.drafts.values().stream().filter(value -> value.accountId == identity.account("private-a@example.test").id())
                     .findFirst().orElseThrow();
@@ -111,7 +112,7 @@ class ManagementEditingHttpIntegrationTest {
             var status = other.get("/api/management/editing");
             assertThat(status.statusCode()).isEqualTo(200);
             assertThat(status.body()).contains("\"held\":true", "\"mine\":false")
-                    .doesNotContain(secret, candidate, grant.path("grantId").asText(), "private-validation-marker");
+                    .doesNotContain(secret, candidate, grant.path("grantId").asText(), "private-validation-marker", tab);
             assertThat(other.post("/api/management/editing/lease", "{\"tabId\":\"" + UUID.randomUUID()
                     + "\"}").statusCode()).isEqualTo(409);
         }

@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import ai.loomspan.sidecar.config.SidecarManagementProperties;
 import org.springframework.http.HttpStatus;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.ResponseEntity;
@@ -43,10 +44,11 @@ public class ManagementController {
     private final ManagementIdentityService identity;
     private final ManagementAttemptLimiter attempts;
     private final ManagementSessionGuard sessions;
+    private final SidecarManagementProperties settings;
 
     public ManagementController(ManagementIdentityService identity, ManagementAttemptLimiter attempts,
-            ManagementSessionGuard sessions) {
-        this.identity = identity; this.attempts = attempts; this.sessions = sessions;
+            ManagementSessionGuard sessions, SidecarManagementProperties settings) {
+        this.identity = identity; this.attempts = attempts; this.sessions = sessions; this.settings = settings;
     }
     @GetMapping("/session")
     public Map<String, Object> session(Authentication authentication, HttpServletRequest request) {
@@ -54,7 +56,9 @@ public class ManagementController {
         CsrfToken token = (CsrfToken) request.getAttribute(CsrfToken.class.getName());
         return Map.of("id", user.id(), "email", user.email(), "role", user.role(),
                 "permissions", user.getAuthorities().stream().map(a -> a.getAuthority()).toList(),
-                "csrfToken", token.getToken());
+                "csrfToken", token.getToken(),
+                "sessionIdleTimeoutSeconds", settings.getSessionIdleTimeout().toSeconds(),
+                "editLeaseTimeoutSeconds", settings.getEditLeaseTimeout().toSeconds());
     }
     @PostMapping("/session/activity")
     public ResponseEntity<Void> activity(Authentication authentication, HttpServletRequest request) {

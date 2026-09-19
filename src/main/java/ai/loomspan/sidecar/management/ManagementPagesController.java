@@ -110,6 +110,28 @@ public class ManagementPagesController {
                 "<section data-console='current'><p id='current-status' role='status' aria-live='polite'>Loading runtime snapshot…</p>"
                 + "<button id='current-refresh' type='button'>Refresh configuration</button><div id='current-content'></div></section>");
     }
+    @GetMapping(value = "/management/configuration/edit", produces = MediaType.TEXT_HTML_VALUE)
+    String edit(Authentication auth, HttpServletRequest request) {
+        return console("Edit configuration", ManagementController.principal(auth), request,
+                "<section data-console='editor'><p id='editor-message' role='status' aria-live='polite'>Loading configuration…</p>"
+                + "<p id='editor-owner'></p><p id='editor-deadline'></p>"
+                + "<div class='editor-actions'><button id='editor-acquire' type='button'>Start editing or resume draft</button>"
+                + "<button id='editor-takeover' type='button' hidden>Take over editing</button>"
+                + "<button id='editor-release' type='button' hidden>Release editing</button>"
+                + "<button id='editor-discard' type='button' hidden>Discard my draft</button>"
+                + "<button id='editor-continue' type='button' hidden>Continue editing</button></div>"
+                + "<div id='editor-fields' hidden><h2>Skill YAML documents</h2><p>Each source name is a diagnostic label. Edit complete YAML documents.</p>"
+                + "<div id='editor-skills'></div><button id='editor-add' type='button'>Add skill document</button>"
+                + "<label for='editor-rest'>REST targets and routes YAML</label><textarea id='editor-rest' spellcheck='false'></textarea></div>"
+                + "<div class='editor-status'><span id='editor-save' role='status' aria-live='polite'>Not editing</span>"
+                + "<button id='editor-retry' type='button' hidden>Retry save</button></div>"
+                + "<div class='editor-validation'><span id='editor-validation-state' role='status' aria-live='polite'>Out of date</span>"
+                + "<button id='editor-recheck' type='button' hidden>Retry validation</button>"
+                + "<details id='editor-details'><summary>Validation details</summary><ul id='editor-issues'></ul></details></div>"
+                + "<button id='editor-publish' type='button' disabled>Publish validated draft</button>"
+                + "<div id='editor-outcome' role='status' aria-live='polite'></div></section>"
+                + "<script src='/management/assets/editor.js' defer></script>");
+    }
     @GetMapping(value = "/management/password/change", produces = MediaType.TEXT_HTML_VALUE)
     String change(Authentication auth, HttpServletRequest request) {
         return console("Change password", ManagementController.principal(auth), request,
@@ -141,6 +163,7 @@ public class ManagementPagesController {
     }
     private static String console(String title, ManagementUserDetailsService.Principal user, HttpServletRequest request, String body) {
         String nav = "<nav aria-label='Management'><a href='/management/home'>Home</a> <a href='/management/configuration/current'>Current configuration</a>"
+                + " <a href='/management/configuration/edit'>Edit configuration</a>"
                 + ("admin".equals(user.role()) ? " <a href='/management/accounts'>Accounts</a>" : "")
                 + " <a href='/management/password/change'>Change password</a></nav>";
         return page(title, nav + "<p>Signed in as " + escape(user.email()) + " (" + escape(user.role()) + ").</p>"

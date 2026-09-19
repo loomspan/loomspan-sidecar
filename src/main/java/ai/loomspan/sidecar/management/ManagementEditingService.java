@@ -24,7 +24,7 @@ public final class ManagementEditingService {
         }
         public String code() { return code; }
     }
-    public record Status(boolean held, boolean mine, Instant expiresAt) {}
+    public record Status(boolean held, boolean mine, Instant expiresAt, String mineTabId) {}
     public record Grant(UUID grantId, Instant expiresAt, Draft draft) {}
     public record Draft(UUID draftId, UUID candidateId, UUID baseSnapshotId,
             ManagedConfiguration configuration, ConfigurationValidationResult validation) {}
@@ -51,8 +51,9 @@ public final class ManagementEditingService {
                 checkAccount(user);
                 expire();
                 var lease = state.lease;
-                return new Status(lease != null, lease != null && lease.sessionId.equals(sessionId),
-                        lease == null ? null : at(lease.expiresAt));
+                boolean mine = lease != null && lease.sessionId.equals(sessionId);
+                return new Status(lease != null, mine, lease == null ? null : at(lease.expiresAt),
+                        mine ? lease.tabId : null);
             }
         });
     }
