@@ -258,6 +258,16 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
         } finally { publication.unlock(); }
     }
 
+    /** Capture the running content once, independently of the intended database selection. */
+    public ConfigurationSnapshot publishedSnapshot() {
+        publication.lock();
+        try {
+            ConfigurationSnapshot snapshot = published;
+            if (snapshot == null) throw new IllegalStateException("Runtime configuration is unavailable");
+            return snapshot;
+        } finally { publication.unlock(); }
+    }
+
     public List<ConfigurationSnapshot> history() {
         publication.lock();
         try { return store.history(); }

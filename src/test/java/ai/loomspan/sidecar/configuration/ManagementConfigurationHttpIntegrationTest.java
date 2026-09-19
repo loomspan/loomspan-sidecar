@@ -1,6 +1,8 @@
 package ai.loomspan.sidecar.configuration;
 
 import ai.loomspan.sidecar.configuration.RuntimeConfigurationService;
+import ai.loomspan.sidecar.bundle.ConfigurationBundleV1;
+import ai.loomspan.sidecar.storage.ManagedConfiguration;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshotStore;
 import ai.loomspan.sidecar.management.ManagementEditingState;
 import ai.loomspan.sidecar.support.JwtTestTokens;
@@ -13,6 +15,7 @@ import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -58,6 +61,36 @@ class ManagementConfigurationHttpIntegrationTest {
     private static final String PASSWORD = "Long Password 123!";
 
     @BeforeEach void clearEditing() { synchronized (editing) { editing.clearAll(); } }
+
+    @Test void exportUsesRunningSnapshotThroughIntendedPointerMismatchAndRequiresManagementSession() throws Exception {
+        var running = runtime.publishedSnapshot();
+        int historyCount = store.history().size();
+        String path = "/api/management/configuration/export";
+        assertThat(new Browser().get(path).statusCode()).isEqualTo(401);
+        assertThat(new Browser().getJwt(path, JwtTestTokens.token("operator", java.util.List.of())).statusCode())
+                .isEqualTo(401);
+        var intended = store.submit(new ManagedConfiguration(java.util.List.of(),
+                "targets: {}\nroutes: {}\n# intended-only\n"), null, running.localId());
+        try {
+            for (String role : java.util.List.of("viewer", "editor", "admin")) {
+                String email = "export-" + UUID.randomUUID() + "@example.test";
+                seed(email, role);
+                Browser browser = login(email);
+                var response = browser.getBytes(path);
+                assertThat(response.statusCode()).isEqualTo(200);
+                assertThat(response.headers().firstValue("Content-Disposition")).hasValueSatisfying(
+                        value -> assertThat(value).contains("attachment", ".zip"));
+                assertThat(response.headers().firstValue("Cache-Control")).hasValueSatisfying(
+                        value -> assertThat(value).contains("no-store"));
+                var bundle = ConfigurationBundleV1.read(new ByteArrayInputStream(response.body()));
+                assertThat(bundle.sourceSnapshotId()).isEqualTo(running.localId());
+                assertThat(bundle.configuration()).isEqualTo(running.configuration());
+                assertThat(bundle.configuration().restRoutesYaml()).doesNotContain("intended-only");
+            }
+            assertThat(runtime.publishedSnapshot()).isEqualTo(running);
+            assertThat(store.history()).hasSize(historyCount + 1);
+        } finally { store.revert(intended.localId(), running.localId()); }
+    }
 
     @Test void editorValidatesExactDraftWithoutPublishing() throws Exception {
         String email = "validate-" + UUID.randomUUID() + "@example.test";
@@ -435,6 +468,9 @@ class ManagementConfigurationHttpIntegrationTest {
                 .followRedirects(HttpClient.Redirect.NEVER).build();
         private String csrf;
         HttpResponse<String> get(String path) throws Exception { return send("GET", path, null, true); }
+        HttpResponse<byte[]> getBytes(String path) throws Exception {
+            return client.send(HttpRequest.newBuilder(uri(path)).GET().build(), HttpResponse.BodyHandlers.ofByteArray());
+        }
         HttpResponse<String> post(String path, String body) throws Exception { return send("POST", path, body, true); }
         HttpResponse<String> postWithoutCsrf(String path, String body) throws Exception {
             return send("POST", path, body, false);

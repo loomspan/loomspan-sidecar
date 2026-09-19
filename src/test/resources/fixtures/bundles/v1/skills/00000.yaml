@@ -1,0 +1,2 @@
+name: fixture
+# literal fixture-secret ${DESTINATION_MODEL}

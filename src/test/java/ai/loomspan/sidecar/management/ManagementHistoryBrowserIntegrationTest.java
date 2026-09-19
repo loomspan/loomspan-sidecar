@@ -1,6 +1,7 @@
 package ai.loomspan.sidecar.management;
 
 import ai.loomspan.sidecar.configuration.RuntimeConfigurationService;
+import ai.loomspan.sidecar.bundle.ConfigurationBundleV1;
 import ai.loomspan.sidecar.storage.ConfigurationDraft;
 import ai.loomspan.sidecar.storage.ManagedConfiguration;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshotStore;
@@ -52,6 +53,30 @@ class ManagementHistoryBrowserIntegrationTest {
         if (!current.configuration().skillDocuments().isEmpty()
                 || !current.configuration().restRoutesYaml().equals("targets: {}\nroutes: {}\n")) {
             publish(new ManagedConfiguration(List.of(), "targets: {}\nroutes: {}\n"));
+        }
+    }
+
+    @Test void viewerDownloadsCurrentBundleWithSensitiveContentNotice() throws Exception {
+        String email = seed("viewer");
+        try (Playwright playwright = Playwright.create(); Browser browser = playwright.chromium().launch();
+                BrowserContext context = browser.newContext(new Browser.NewContextOptions().setAcceptDownloads(true))) {
+            Page page = login(context, email);
+            page.navigate(url("/management/configuration/current"));
+            assertThat(page.textContent("[data-console=current]")).contains("sensitive secrets and placeholders");
+            var download = page.waitForDownload(() -> page.locator("#current-export").click());
+            assertThat(download.suggestedFilename()).isEqualTo("sidecar-current-configuration.zip");
+            var bundle = ConfigurationBundleV1.read(download.path());
+            assertThat(bundle.sourceSnapshotId()).isEqualTo(runtime.publishedSnapshot().localId());
+            assertThat(bundle.configuration()).isEqualTo(runtime.publishedSnapshot().configuration());
+            assertThat(page.locator("#current-status").textContent()).contains("downloaded");
+            page.route("**/api/management/configuration/export", route -> route.fulfill(
+                    new com.microsoft.playwright.Route.FulfillOptions().setStatus(413)
+                            .setContentType("application/json")
+                            .setBody("{\"code\":\"export_too_large\",\"error\":\"Runtime configuration exceeds format 1 bundle limits\"}")));
+            page.locator("#current-export").click();
+            page.locator("#current-status").getByText("exceeds format 1 bundle limits",
+                    new com.microsoft.playwright.Locator.GetByTextOptions().setExact(false)).waitFor();
+            assertThat(page.locator("#current-status").getAttribute("class")).contains("error");
         }
     }
 

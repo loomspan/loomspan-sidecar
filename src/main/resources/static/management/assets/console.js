@@ -29,6 +29,7 @@
       status('accounts-status', 'Administrator access is no longer available. Sign in again if your role changed.', true);
     } else if (currentRoot) {
       document.getElementById('current-refresh')?.remove();
+      document.getElementById('current-export')?.remove();
       document.getElementById('current-content')?.replaceChildren();
       status('current-status', 'This account cannot view the current configuration. Sign in again if your role changed.', true);
     } else if (historyRoot) {
@@ -216,6 +217,31 @@
         status('current-status', error.message, true);
     }
   };
+  const downloadCurrent = async () => {
+    const button = document.getElementById('current-export');
+    button.disabled = true;
+    status('current-status', 'Preparing current configuration bundle…');
+    try {
+      const response = await fetch('/api/management/configuration/export', { credentials: 'same-origin', headers: { Accept: 'application/zip' } });
+      if (response.status === 401) { lostSession(); return; }
+      if (response.status === 403) { forbidden(); return; }
+      if (!response.ok) {
+        let problem = {};
+        try { problem = await response.json(); } catch (_) { /* status is sufficient */ }
+        throw new Error(problem.error || 'Export failed (' + response.status + ')');
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const link = el('a');
+      link.href = url;
+      link.download = 'sidecar-current-configuration.zip';
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      status('current-status', 'Current configuration downloaded. Handle the bundle as sensitive data.');
+    } catch (error) { status('current-status', error.message, true); }
+    finally { button.disabled = false; }
+  };
   const renderAccounts = (accounts) => {
     const root = document.getElementById('accounts-list');
     root.replaceChildren();
@@ -269,6 +295,7 @@
     catch (_) { return; }
     if (currentRoot) {
       document.getElementById('current-refresh').addEventListener('click', loadCurrent);
+      document.getElementById('current-export').addEventListener('click', downloadCurrent);
       loadCurrent();
     }
     if (historyRoot) {

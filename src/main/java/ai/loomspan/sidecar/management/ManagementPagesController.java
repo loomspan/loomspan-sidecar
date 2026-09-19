@@ -109,6 +109,8 @@ public class ManagementPagesController {
         return console("Current configuration", ManagementController.principal(auth), request,
                 "<section data-console='current'><p id='current-status' role='status' aria-live='polite'>Loading runtime snapshot…</p>"
                 + "<p><a href='/management/configuration/history'>Inspect retained history</a></p>"
+                + "<p>Downloaded bundles contain exact authored values, including sensitive secrets and placeholders. Store them securely.</p>"
+                + "<button id='current-export' type='button'>Download current configuration</button>"
                 + "<button id='current-refresh' type='button'>Refresh configuration</button><div id='current-content'></div></section>");
     }
     @GetMapping(value = "/management/configuration/history", produces = MediaType.TEXT_HTML_VALUE)

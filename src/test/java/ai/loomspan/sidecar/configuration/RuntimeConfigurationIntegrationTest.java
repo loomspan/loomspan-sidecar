@@ -13,6 +13,7 @@ import ai.loomspan.sidecar.storage.ConfigurationValidationIssue;
 import ai.loomspan.sidecar.storage.ManagedConfiguration;
 import ai.loomspan.sidecar.storage.SnapshotStatus;
 import ai.loomspan.sidecar.storage.StorageConfiguration;
+import ai.loomspan.sidecar.bundle.ConfigurationBundleV1;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.WebApplicationType;
@@ -291,6 +292,47 @@ class RuntimeConfigurationIntegrationTest {
             var b = publishing.get(5, TimeUnit.SECONDS);
             java.util.UUID runtimeId = service.withEditingState(false, snapshot -> snapshot.localId());
             assertThat(runtimeId).isEqualTo(b.localId());
+        }
+    }
+
+    @Test
+    void exportCaptureWaitsForPublicationAndSurvivesLaterPruning() throws Exception {
+        try (var context = start(directory.resolve("export-capture.db"), 1);
+                var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var service = context.getBean(RuntimeConfigurationService.class);
+            var store = context.getBean(ConfigurationSnapshotStore.class);
+            var initial = service.publishedSnapshot();
+            var draft = validDraft(service, initial, "exportedRest");
+            var entered = new CountDownLatch(1);
+            var release = new CountDownLatch(1);
+            service.hooks(new RuntimeConfigurationService.Hooks() {
+                @Override public void beforeFrameworkPublish() {
+                    entered.countDown();
+                    try { if (!release.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("test timeout"); }
+                    catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new IllegalStateException(failure); }
+                }
+            });
+            var publishing = workers.submit(() -> service.publish(draft::validatedCandidate));
+            try {
+                assertThat(entered.await(3, TimeUnit.SECONDS)).isTrue();
+                var capturing = workers.submit(service::publishedSnapshot);
+                assertThat(capturing.isDone()).isFalse();
+                release.countDown();
+                var accepted = publishing.get(5, TimeUnit.SECONDS);
+                var captured = capturing.get(5, TimeUnit.SECONDS);
+                assertThat(captured.localId()).isEqualTo(accepted.localId());
+                assertThat(captured.configuration()).isEqualTo(accepted.configuration());
+                service.hooks(new RuntimeConfigurationService.Hooks() {});
+                var next = validDraft(service, store.current(), "afterExport");
+                service.publish(next::validatedCandidate);
+                assertThat(store.findByLocalId(captured.localId())).isNull();
+                Path bundle = ConfigurationBundleV1.write(captured);
+                try {
+                    var read = ConfigurationBundleV1.read(bundle);
+                    assertThat(read.sourceSnapshotId()).isEqualTo(captured.localId());
+                    assertThat(read.configuration()).isEqualTo(captured.configuration());
+                } finally { java.nio.file.Files.deleteIfExists(bundle); }
+            } finally { release.countDown(); service.hooks(new RuntimeConfigurationService.Hooks() {}); }
         }
     }
 

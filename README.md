@@ -246,8 +246,10 @@ Restart with `docker compose -f examples/quickstart/compose.yaml start sidecar`
 or `kubectl scale deployment/example-with-loomspan-sidecar --replicas=1`. Verify startup and
 readiness. Restore rolls current selection, statuses, and history back to the
 backup point. This full installation database backup includes authored YAML and
-literal sensitive values without redaction or v1 encryption. Account/session
-transfer is not introduced. Protect backup access accordingly. The database
+literal sensitive values without redaction or v1 encryption. The
+configuration-only bundle described below excludes accounts and sessions;
+the stopped-instance backup remains the full installation recovery artifact.
+Protect backup access accordingly. The database
 copy test verifies both storage and runtime recovery. For an outcome-bookkeeping
 fault, stop the sole instance, preserve a consistent full database-set copy,
 correct the storage problem, and restart if the committed intended selection is
@@ -626,6 +628,7 @@ session and CSRF token.
 | Method and path | Request | Result |
 | --- | --- | --- |
 | `GET /api/management/configuration/current` | None | `published` full runtime snapshot, `intendedId`, `intendedStatus`, and `mutationFault`. |
+| `GET /api/management/configuration/export` | None | Format 1 ZIP of the captured runtime-published configuration; authenticated viewer, editor, or admin. 413 when the v1 size limits are exceeded; 503 when runtime state is unavailable. |
 | `GET /api/management/configuration/history` | None | Retained full submitted snapshots in ascending `submissionSequence`. |
 | `GET /api/management/configuration/history/{localId}` | None | Full retained snapshot or 404 after pruning. |
 | `POST /api/management/configuration/publish` | `{"tabId":"<uuid>","grantId":"<uuid>","expectedCandidateId":"<uuid>"}` | Publishes an exactly validated candidate, then returns its full snapshot. |
@@ -638,6 +641,58 @@ The framework's validation returns `successful` and issues with `severity`
 including identical content, rotates the candidate ID and clears its validation.
 Validation is advisory: Publish prepares and stages afresh. Neither validation
 nor inspection renews login or lease inactivity deadlines.
+
+### Current configuration bundle (format 1)
+
+Use **Download current configuration** on the current-configuration page, or
+`GET /api/management/configuration/export` with a management session. The ZIP is
+a configuration-only backup and promotion artifact. It carries the complete
+authored skill YAML, source labels, and REST routes/targets from the snapshot
+running when export begins. An active empty configuration yields an empty skill
+list and the authored empty REST document. If no runtime snapshot exists, export
+is unavailable. The intended database pointer, retained history, private drafts,
+accounts, sessions, leases, environment values, URL allowlists, SMTP/model
+connections, and SSL bundles are excluded. Import and rollback are not offered
+yet. For full installation recovery, use the stopped-instance database backup
+procedure above.
+
+The ZIP contains exactly `manifest.json`, `rest.json`, and one YAML file per
+skill under `skills/`. All entry names are fixed or generated, never taken from
+source labels. The `src/test/resources/fixtures/bundles/v1/` directory shows the
+unpacked layout and contains `manifest.schema.json` and `rest.schema.json` for
+the exact JSON fields. The schema files are documentation, not ZIP entries.
+JSON and YAML entry bytes are UTF-8. `rest.json` is
+`{"restRoutesYaml":"<exact authored YAML>"}`; it retains comments, sensitive
+literals and unresolved placeholders. The manifest schema is:
+
+```json
+{
+  "formatVersion": 1,
+  "sourceSnapshotId": "<runtime snapshot local UUID>",
+  "producer": {
+    "sidecarVersion": "<informational version>",
+    "frameworkVersion": "<informational version>"
+  },
+  "payloads": [
+    {"path": "rest.json", "sha256": "<lowercase SHA-256 of exact entry bytes>"},
+    {"path": "skills/00000.yaml", "sha256": "<lowercase SHA-256>", "sourceLabel": "<original label>"}
+  ]
+}
+```
+
+`payloads` inventories every entry except the manifest exactly once. Skill
+paths use five decimal digits starting at zero with no gaps; the generated
+ordinal defines the original skill order. The parser checks the supported format,
+inventory, entry names, duplicate names/labels, SHA-256 digests, ZIP CRC and
+sizes, UTF-8, JSON shape, and YAML mapping roots. Informational producer
+versions do not determine compatibility. It performs no filesystem extraction,
+framework validation, import, or activation. Integrity checks detect accidental
+or deliberate changes to a bundle only when compared with a trusted digest;
+they do not authenticate its sender. Protect downloaded ZIPs as sensitive data.
+
+V1 limits are inclusive: 100 MiB compressed ZIP input, 512 MiB total expanded
+entry bytes, and 10,000 ZIP entries (1 MiB = 1,048,576 bytes). The same bounds
+apply to export. An oversize export fails rather than returning a partial ZIP.
 
 ### Console history and outcome inspection
 

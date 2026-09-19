@@ -1,0 +1,19 @@
+{
+  "formatVersion": 1,
+  "sourceSnapshotId": "11111111-2222-4333-8444-555555555555",
+  "producer": {
+    "sidecarVersion": "fixture-sidecar",
+    "frameworkVersion": "fixture-framework"
+  },
+  "payloads": [
+    {
+      "path": "rest.json",
+      "sha256": "1cf7b78430ba3dfbbbe5854cece0c17706b9ec512f30a9b1a245570b9f5c4174"
+    },
+    {
+      "path": "skills/00000.yaml",
+      "sha256": "87eac05ee46804794525f1751c933f6ee9394ce95f2e58c18c464f42f834a853",
+      "sourceLabel": "original/path/fixture.yaml"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Loomspan Sidecar configuration bundle v1 REST payload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["restRoutesYaml"],
+  "properties": {
+    "restRoutesYaml": {"type": "string"}
+  }
+}

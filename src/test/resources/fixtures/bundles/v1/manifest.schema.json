@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Loomspan Sidecar configuration bundle v1 manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["formatVersion", "sourceSnapshotId", "producer", "payloads"],
+  "properties": {
+    "formatVersion": {"type": "integer", "const": 1},
+    "sourceSnapshotId": {"type": "string", "format": "uuid"},
+    "producer": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sidecarVersion", "frameworkVersion"],
+      "properties": {
+        "sidecarVersion": {"type": "string", "minLength": 1},
+        "frameworkVersion": {"type": "string", "minLength": 1}
+      }
+    },
+    "payloads": {
+      "type": "array", "minItems": 1, "maxItems": 9999,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object", "additionalProperties": false,
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": {"const": "rest.json"},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            }
+          },
+          {
+            "type": "object", "additionalProperties": false,
+            "required": ["path", "sha256", "sourceLabel"],
+            "properties": {
+              "path": {"type": "string", "pattern": "^skills/[0-9]{5}\\.yaml$"},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "sourceLabel": {"type": "string", "minLength": 1}
+            }
+          }
+        ]
+      }
+    }
+  }
+}

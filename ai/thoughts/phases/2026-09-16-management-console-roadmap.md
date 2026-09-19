@@ -2,9 +2,9 @@
 
 Date: 2026-09-16
 
-Last handoff update: 2026-09-18. Phases 1 through 3 are complete, with PR 1.3.3
-completion reported by the developer. Phase 4 is next; its quiet automatic
-validation, automatic session-draft saving and console scope are selected below.
+Last handoff update: 2026-09-18. Phases 1 through 4 are complete per the
+developer's handoff. Phase 5 tickets are prepared for current-configuration
+export/import, local rollback and recovery. No Phase 5 pipeline has been run.
 Phase 3 selects email-address usernames and email-only forgotten-password
 recovery for SQLite-backed Spring Security management accounts. Execution JWT
 authentication stays separate. Passwords require uppercase and lowercase letters,
@@ -26,7 +26,7 @@ The latest review also settled non-cancellable updates, refreshed destructive
 confirmation, failed snapshot status, fresh local import/rollback identities, and
 separate validation and publication preparation.
 
-Status: Phases 1 through 3 complete; Phase 4 ready for ticket preparation.
+Status: Phases 1 through 4 complete; Phase 5 tickets ready for execution.
 This document is not a set of implementation tickets or authorization to run them.
 
 ## Outcome
@@ -64,13 +64,21 @@ states. Apply the design lens's simplicity and technical-debt rule throughout.
 
 ## Resume here in a new context
 
-Current handoff, 2026-09-18: the developer reports PR 1.3.3 complete, finishing
-Phase 3. Next prepare Phase 4 tickets under PR 1.4.x for the embedded console,
-account screens, authoring/lease workflow and publication history. The developer
-selected low-key automatic validation after an editing pause and automatic saving
-to the session draft; see Phase 4 and the agreed editor behavior below. Frontend
-tooling, editor component, precise layouts and timing remain implementation-planning
-choices. This roadmap update does not rerun Phase 3 verification or start a pipeline.
+Current handoff, 2026-09-18: the developer reports the PR 1.4.x tickets complete,
+finishing Phase 4. This update does not rerun Phase 4 verification. The developer
+selected current-only export/import for v1: every import prepares and publishes a
+fresh local snapshot; destination history remains that server's own history. An
+all/history transfer mode was considered and rejected. Generous bundle limits are
+100 MiB compressed, 512 MiB expanded and 10,000 entries, inclusive.
+
+The following sequential Full-profile Phase 5 tickets are prepared:
+
+1. [PR 1.5.1 — Current configuration export and bundles](../tickets/2026-09-18-pr-1.5.1-current-configuration-export-and-bundles.md).
+2. [PR 1.5.2 — Validated configuration import](../tickets/2026-09-18-pr-1.5.2-validated-configuration-import.md).
+3. [PR 1.5.3 — Local rollback and recovery](../tickets/2026-09-18-pr-1.5.3-local-rollback-and-recovery.md).
+
+Ticket preparation does not start a pipeline or authorize release/tagging.
+Phase 6 deployment and end-to-end readiness follows Phase 5.
 
 Historical pre-Phase-3 handoff: framework validation and the candidate-metadata follow-up
 are delivered and available in the installed snapshot. The earlier 21 targeted
@@ -441,6 +449,27 @@ before destructive cutover.
 **Ticket preparation:** Apply the versioned bundle, authored-content and destructive
 cutover and URL-variable policies below. Reuse the Phase 1 snapshot contract;
 automatic URL rewriting and console-managed destination bindings remain outside v1.
+
+Settled Phase 5 scope, 2026-09-18: export only the runtime-published configuration,
+never retained history or private drafts. Viewers, editors and admins may export;
+editors/admins may import or roll back. Import always makes a fresh local
+preparation/publication attempt, including repeated imports of identical content.
+Source identity is provenance only; source history/status is not imported. Review
+shows source identity/producer versions, skill/route counts, validation feedback,
+lease ownership and draft-loss warning; a detailed configuration diff is deferred.
+Any local retained snapshot, including failed/pending/current content, may be a
+rollback candidate subject to fresh validation. Full-installation recovery remains
+the stopped-instance database backup procedure, separate from configuration transfer.
+
+Format 1 is a ZIP with UTF-8 `manifest.json`, `rest.json` and individual YAML
+payloads under `skills/`. The manifest includes source identity, producer versions,
+format version, a complete payload inventory and SHA-256 digests; it maps safe
+generated skill entry names to original source labels. Checksums detect corruption,
+not authenticity. PR 1.5.1 planning specifies exact fields and fixtures. Bounds are
+100 MiB ZIP bytes, 512 MiB total expanded entry content and 10,000 entries, inclusive
+(1 MiB = 1,048,576 bytes). Enforce actual consumed sizes and reject ambiguous/unsafe
+archives before mutation; exports obey the same bounds. These are generous fixed
+v1 limits, with clear errors and no required new tuning settings.
 
 ## Phase 6: Deployment and end-to-end readiness
 
