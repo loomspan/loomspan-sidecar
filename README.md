@@ -959,6 +959,59 @@ packaged empty source; framework shutdown remains
 remains under standard `server.ssl.*` and `spring.ssl.bundle.*` namespaces. The
 image honors those standard Boot environment and command-line overrides.
 
+## Phase 6 local acceptance (2026-09-19)
+
+Local integration was checked against the developer-installed
+`ai.loomspan:loomspan-spring-boot-starter:1.0.0-beta.5-SNAPSHOT` with these exact
+commands from the repository root:
+
+```powershell
+.\mvnw.cmd -B -ntp verify
+.\mvnw.cmd -B -ntp package
+docker build --tag loomspan-sidecar:sc5-local .
+python scripts/verify-production.py --image loomspan-sidecar:sc5-local
+```
+
+`verify` and `package` passed with zero test failures or errors. The package
+run executed 260 tests; three Compose-only browser methods skipped in ordinary
+Maven runs and ran through the deployment verifier instead. The image build
+passed. The complete verifier passed with disposable HTTPS Compose projects,
+test-only `.test` mail capture, and local JWT/model/REST fixtures. It checked
+emailed setup, invitations, recovery, Secure cookies, role and CSRF isolation,
+management lock and SMTP outage behavior, concurrent browser editing and stale
+grant rejection, authored publication and REST/model execution, two independent
+database stores with destination URL bindings, invalid import preservation,
+fresh import/rollback identities, and selection after recreation. It also
+showed startup failure with an invalid selected pointer, replacement from a
+stopped full database file set with stale WAL/SHM removal and UID/GID 10001,
+restored accounts/current/history and REST/model execution. The embedded
+shutdown verifier reported admitted-work completion in 2.32 seconds and
+framework cutoff in 4.46 seconds, both with SIGTERM exit 143.
+
+The earlier deferred startup and publication boundary checks are covered by
+Sidecar's `RuntimeConfigurationIntegrationTest` and
+`RuntimeConfigurationRecoveryIntegrationTest`, including before-commit,
+committed pending selection, reversion, status failure, and activation before
+dispatch. `ManagementConfigurationHttpIntegrationTest` covers accepted updates
+after client disconnect/logout. `ExecutionConfigurationCorrelationIntegrationTest`
+and `RestGenerationIntegrationTest` cover captured snapshot IDs and retained
+REST resources across publication; the Compose shutdown check covers the
+existing completion/cutoff budget. These Sidecar tests ran in the Maven suite;
+framework-only tests are not used as Sidecar acceptance evidence.
+
+Use a stopped full database backup for installation recovery, a configuration
+ZIP for authored-content transfer between instances, and retained-history
+rollback to publish a new snapshot from the same instance. ZIP and rollback do
+not restore management accounts or repair an unusable database. Protect the
+database backup and exported ZIP because authored values may contain secrets.
+
+Local acceptance is complete. Framework beta 5 publication remains pending.
+After framework publication, switch the Sidecar dependency to released
+`1.0.0-beta.5`, then run the final Sidecar build/tests and commit. Hosted CI must
+resolve that published artifact and pass before the Sidecar release. None of
+those release gates, publication steps, commits, or tags are claimed by this
+local acceptance run.
+
 ## Dependency and release boundary
 
 Production and test code may use Loomspan Java types only from `ai.loomspan.api`.

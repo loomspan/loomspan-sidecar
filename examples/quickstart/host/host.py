@@ -125,7 +125,8 @@ class Handler(BaseHTTPRequestHandler):
                 payload = json.loads(body or b"{}")
                 if payload.get("message") == "block":
                     time.sleep(3)
-                record = {"path": self.path, "issuer": claims["iss"], "subject": claims["sub"],
+                record = {"path": self.path, "host": self.headers.get("Host"),
+                          "issuer": claims["iss"], "subject": claims["sub"],
                           "roles": claims["roles"], "message": payload.get("message")}
                 with LOCK: VERIFIED.append(record)
                 self.send_json(200, record)

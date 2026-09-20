@@ -82,12 +82,28 @@ protected directory while stopped. For restore, preserve the damaged set,
 remove its stale WAL/SHM companions, copy the stopped backup set in, and set
 directory/file ownership to 10001:10001 before restarting. The exact copy and
 restore procedure is in [stopped-instance backup and recovery](../../README.md#stopped-instance-backup-and-recovery).
+After restart, check the private readiness endpoint, sign in with a restored
+account, and compare **Current configuration** with **History** and the intended
+restart ID. Execute a known REST and model-backed skill with a valid JWT before
+returning the instance to clients. If startup fails on an invalid selected
+snapshot, keep a protected copy of the unusable stopped file set and restore a
+known-good stopped backup; do not edit the live database or assume that a
+configuration ZIP repairs the installation.
 The database includes management accounts and authored configuration; a
 configuration ZIP does not restore accounts or deployment settings. Keep the
 operator env, PEM files, and JWT trust material separately protected and backed
 up. Do not place multiple Sidecar instances or network filesystem replicas on
 one database. Kubernetes deployment support is deferred pending customer
 requirements; the container is not restricted from other environments.
+
+Configuration ZIP export/import transfers authored YAML and route text between
+installations, with destination-specific allowlisted URL values supplied by
+each process. It creates a new local snapshot and does not transfer accounts or
+source history. Retained-history rollback validates and publishes a new local
+snapshot from a source still present in the same installation. Review the
+destination's URL bindings and the documented draft-loss confirmation before
+either cutover. Neither operation replaces the full stopped database recovery
+procedure.
 
 For local verification, run `python scripts/verify-production.py --image
 loomspan-sidecar:sc5-local` from the repository root. It creates only disposable
