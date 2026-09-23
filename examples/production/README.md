@@ -174,7 +174,7 @@ mountpoint from `docker volume inspect` contains `sidecar.db` and any existing
 protected directory while stopped. For restore, preserve the damaged set,
 remove its stale WAL/SHM companions, copy the stopped backup set in, and set
 directory/file ownership to 10001:10001 before restarting. The exact copy and
-restore procedure is in [stopped-instance backup and recovery](../../README.md#stopped-instance-backup-and-recovery).
+restore procedure is in [stopped-instance backup and recovery](../../docs/operations.md#stopped-instance-backup-and-recovery).
 After restart, check the private readiness endpoint, sign in with a restored
 account, and compare **Current configuration** with **History** and the intended
 restart ID. Execute a known REST and model-backed skill with a valid JWT before

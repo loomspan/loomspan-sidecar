@@ -22,9 +22,9 @@ class ConfigurationReferenceTest {
         add(expected, "loomspan-sidecar.auth.jwt.", SidecarJwtProperties.class);
         add(expected, "loomspan-sidecar.executions.", SidecarExecutionProperties.class);
 
-        String readme = Files.readString(Path.of("README.md"));
-        String reference = readme.substring(readme.indexOf("<!-- configuration-reference:start -->"),
-                readme.indexOf("<!-- configuration-reference:end -->"));
+        String referenceGuide = Files.readString(Path.of("docs/operations.md"));
+        String reference = referenceGuide.substring(referenceGuide.indexOf("<!-- configuration-reference:start -->"),
+                referenceGuide.indexOf("<!-- configuration-reference:end -->"));
         for (String key : expected) {
             assertThat(occurrences(reference, "`" + key + "`")).as(key).isEqualTo(1);
         }
@@ -62,9 +62,9 @@ class ConfigurationReferenceTest {
 
     @Test
     void eachReferenceRowDescribesItsOwnDefaultAndConstraints() throws Exception {
-        String readme = Files.readString(Path.of("README.md"));
+        String referenceGuide = Files.readString(Path.of("docs/operations.md"));
         var rows = new java.util.LinkedHashMap<String, String>();
-        readme.lines().filter(line -> line.startsWith("| `loomspan-sidecar.")).forEach(line -> {
+        referenceGuide.lines().filter(line -> line.startsWith("| `loomspan-sidecar.")).forEach(line -> {
             String[] cells = line.split("\\|", -1);
             rows.put(cells[1].trim().replace("`", ""), cells[2]);
         });
