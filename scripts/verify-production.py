@@ -24,6 +24,16 @@ import uuid
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+# The disposable Compose fixture binds only 127.0.0.1. Keep the HTTPS URL and
+# SNI as localhost while avoiding a stalled ::1 connection on some hosts.
+_getaddrinfo = socket.getaddrinfo
+
+
+def fixture_getaddrinfo(host, *args, **kwargs):
+    return _getaddrinfo("127.0.0.1" if host == "localhost" else host, *args, **kwargs)
+
+
+socket.getaddrinfo = fixture_getaddrinfo
 spec = importlib.util.spec_from_file_location("image_verifier", ROOT / "scripts/verify-image.py")
 image = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(image)
@@ -180,7 +190,7 @@ def main():
     project = "sidecar-prod-test-" + uuid.uuid4().hex[:8]
     https_port, host_port, smtp_port = port(), port(), port()
     assert len({https_port, host_port, smtp_port}) == 3
-    origin = f"https://127.0.0.1:{https_port}"
+    origin = f"https://localhost:{https_port}"
     email = "admin@example.test"
     password = "Long Password 123!"
     setup = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
@@ -188,19 +198,11 @@ def main():
                "-f", str(ROOT / "examples/production/compose.yaml")]
     with tempfile.TemporaryDirectory(prefix="sidecar-production-") as temporary:
         root = pathlib.Path(temporary)
-        tls = root / "tls"
-        tls.mkdir()
-        image.run("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-                  "-keyout", str(tls / "privkey.pem"), "-out", str(tls / "fullchain.pem"),
-                  "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1",
-                  timeout=20, capture=True)
-        # OpenSSL creates the key as 0600 on Linux. The disposable fixture
-        # container runs as UID 10001, while the temporary parent stays 0700.
-        (tls / "privkey.pem").chmod(0o644)
         env_file = root / "fixture.env"
         values = {
             "SIDECAR_IMAGE": args.image, "HTTPS_BIND_ADDRESS": "127.0.0.1", "HTTPS_PORT": str(https_port),
-            "TLS_DIR": str(tls),
+            "HTTP_BIND_ADDRESS": "127.0.0.1", "HTTP_PORT": str(port()), "SITE_HOST": "localhost",
+            "CADDY_CONFIG_FILE": str(ROOT / "examples/production/Caddyfile.internal"),
             "JWT_PUBLIC_KEY_FILE": str(ROOT / "examples/quickstart/host/public.pem"),
             "JWT_ISSUER_URI": "http://host:8081", "JWT_AUDIENCE": "loomspan-sidecar",
             "MODEL_DRIVER": "openai", "MODEL_BASE_URL": "http://host:8081/v1",
@@ -222,8 +224,10 @@ def main():
             "host": {"build": {"context": str(ROOT / "examples/quickstart/host")},
                      "environment": {"QUICKSTART_ISSUER": "http://host:8081",
                                      "QUICKSTART_AUDIENCE": "loomspan-sidecar"},
+                     "networks": ["backend"],
                      "ports": [f"127.0.0.1:{host_port}:8081"]},
             "smtp": {"image": "python:3.13-slim", "entrypoint": ["python", "/fixture/smtp-capture.py"],
+                     "networks": ["backend"],
                      "volumes": [{"type": "bind", "source": str(ROOT / "scripts/fixtures/smtp-capture.py"),
                                   "target": "/fixture/smtp-capture.py", "read_only": True}],
                      "ports": [f"127.0.0.1:{smtp_port}:8025"]}
@@ -242,13 +246,14 @@ def main():
             assert service["environment"]["LOOMSPAN_CONNECTIONS_PRIMARY_API_KEY"] == "fixture-only"
             assert len([key for key in config["services"] if key == "sidecar"]) == 1
             assert service["user"] == "10001:10001"
-            assert all("9091" not in str(item) for item in service["ports"]), service["ports"]
+            assert not service.get("ports"), service.get("ports")
+            assert len(config["services"]["caddy"]["ports"]) == 2
             assert service["stop_grace_period"] in ("45s", 45000000000), service["stop_grace_period"]
             assert service["environment"]["LOOMSPAN_SIDECAR_SECURE_COOKIE"] == "true"
             mounts = {mount["target"]: mount for mount in service["volumes"]}
-            assert mounts["/sidecar/tls"]["read_only"]
             assert mounts["/sidecar/keys/public.pem"]["read_only"]
             assert mounts["/sidecar/data"]["type"] == "volume"
+            assert service["environment"]["SERVER_SSL_ENABLED"] == "false"
             image.run("docker", "volume", "create", volume, capture=True, timeout=20)
             image.run("docker", "run", "--rm", "--user", "0:0", "--volume", f"{volume}:/sidecar/data",
                       "--entrypoint", "sh", args.image, "-c", "chown 10001:10001 /sidecar/data && chmod 700 /sidecar/data",
@@ -269,7 +274,10 @@ def main():
                              capture=True).stdout.strip() == "10001:10001"
             ports = json.loads(image.run("docker", "inspect", sidecar, capture=True).stdout)[0]["NetworkSettings"]["Ports"]
             assert ports.get("9091/tcp") is None, ports
-            certificate = ssl.get_server_certificate(("127.0.0.1", https_port))
+            assert ports.get("8080/tcp") is None, ports
+            with socket.create_connection(("127.0.0.1", https_port), timeout=5) as raw:
+                with ssl._create_unverified_context().wrap_socket(raw, server_hostname="localhost") as secure:
+                    certificate = ssl.DER_cert_to_PEM_cert(secure.getpeercert(binary_form=True))
             assert "BEGIN CERTIFICATE" in certificate
             with socket.create_connection(("127.0.0.1", https_port), timeout=2) as cleartext:
                 cleartext.settimeout(2)
@@ -351,7 +359,11 @@ def main():
             print("PASS concurrent Chromium editing, private draft and stale grant invalidation", flush=True)
 
             need(*send(opener, origin + "/api/management/password/forgot", "POST", {"email": email},
-                       session_csrf, extra_headers={"X-Forwarded-Host": "evil.example.test"}), 202)
+                       session_csrf, extra_headers={"Forwarded": "host=evil.example.test;proto=http",
+                                                    "X-Forwarded-Host": "evil.example.test",
+                                                    "X-Forwarded-Proto": "http",
+                                                    "X-Forwarded-Port": "1",
+                                                    "X-Forwarded-Prefix": "/evil"}), 202)
             messages = wait(lambda: (lambda mail: mail if len(mail) > mail_count else None)(
                 json.loads(send(plain, mail_url)[1])), "captured recovery email")
             assert all(re.search(r"(?m)^To: [^\n]+\.test$", message) for message in messages)
@@ -396,8 +408,9 @@ def main():
 
             second_project = project + "-destination"
             second_port, second_host_port, second_smtp_port = port(), port(), port()
-            second_origin = f"https://127.0.0.1:{second_port}"
-            second_values = dict(values, HTTPS_PORT=str(second_port), EXTERNAL_BASE_URL=second_origin,
+            second_origin = f"https://localhost:{second_port}"
+            second_values = dict(values, HTTPS_PORT=str(second_port), HTTP_PORT=str(port()),
+                                 EXTERNAL_BASE_URL=second_origin,
                                  TARGET_URL="http://fixture-destination:8081", URL_VARIABLES="",
                                  SETUP_TOKEN=setup)
             second_env = root / "destination.env"
@@ -406,7 +419,7 @@ def main():
             second_override = root / "destination.json"
             destination_services = json.loads(override.read_text())["services"]
             destination_services["host"]["ports"] = [f"127.0.0.1:{second_host_port}:8081"]
-            destination_services["host"]["networks"] = {"default": {"aliases": ["fixture-destination"]}}
+            destination_services["host"]["networks"] = {"backend": {"aliases": ["fixture-destination"]}}
             destination_services["smtp"]["ports"] = [f"127.0.0.1:{second_smtp_port}:8025"]
             second_override.write_text(json.dumps({"services": destination_services}))
             second_command = ["docker", "compose", "--project-name", second_project,
@@ -570,7 +583,7 @@ def main():
             assert "Cannot load selected configuration snapshot" in logs, logs[-1200:]
             try:
                 status, _ = send(opener, origin + "/v1/skills", token=token)
-                raise AssertionError(f"Invalid selected state admitted dispatch: {status}")
+                assert status in (502, 503), f"Invalid selected state admitted dispatch: {status}"
             except (OSError, urllib.error.URLError):
                 pass
             diagnostic = root / "unusable-database"

@@ -1,0 +1,4 @@
+services:
+  caddy:
+    volumes:
+      - ${TLS_DIR:?Set TLS_DIR to the certificate directory}:/etc/caddy/certs:ro

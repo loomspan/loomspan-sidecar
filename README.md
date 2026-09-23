@@ -28,8 +28,8 @@ configuration; they do not need a model provider account.
 ## Production Compose deployment
 
 The supported v1 deployment is the single-instance [production Compose guide](examples/production/README.md).
-It serves the console and JWT execution API over HTTPS, keeps the health port
-inside the container, and persists SQLite in one local Docker volume. Kubernetes
+It serves the console and JWT execution API through Caddy HTTPS, keeps Sidecar's
+HTTP and health ports unpublished, and persists SQLite in one local Docker volume. Kubernetes
 deployment support is deferred pending customer requirements.
 
 ## Development-only HTTP quick start

@@ -1,0 +1,11 @@
+{$SITE_HOST}:{$HTTPS_PORT} {
+    tls internal
+    request_header -Forwarded
+    request_header -X-Forwarded-*
+    reverse_proxy sidecar:8080 {
+        header_up Host {$SITE_HOST}:{$HTTPS_PORT}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto https
+        header_up X-Forwarded-Host {$SITE_HOST}:{$HTTPS_PORT}
+    }
+}
