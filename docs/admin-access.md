@@ -40,9 +40,23 @@ export LOOMSPAN_SIDECAR_SETUP_TOKEN="$(docker run --rm loomspan-sidecar:sc5-loca
 docker compose -f examples/quickstart/compose.yaml up -d
 ```
 
-Open <http://localhost:8080/management/setup>. Enter the captured setup
-credential, administrator email, chosen password, and confirmation. Sign in at
-<http://localhost:8080/management/login> with the email and chosen password.
+The assignment captures the credential without displaying it. Display it when
+you are ready to enter it in the management console (keep this terminal output
+private):
+
+```powershell
+$env:LOOMSPAN_SIDECAR_SETUP_TOKEN
+```
+
+```sh
+printf '%s\n' "$LOOMSPAN_SIDECAR_SETUP_TOKEN"
+```
+
+Open <http://localhost:8080/management/setup>. Copy the displayed value into
+the **setup credential** field, then enter the administrator email, chosen
+password, and confirmation. The setup credential is not the login password.
+Sign in at <http://localhost:8080/management/login> with the email and chosen
+password.
 The management console is on port 8080; port 9091 is health only. Setup closes
 permanently in this database once activated, even while the setup credential
 remains configured. Remove the secret from the environment and recreate the

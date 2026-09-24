@@ -75,16 +75,23 @@
     const list = $('editor-skills'); list.replaceChildren();
     state.documents.forEach((doc, index) => {
       const section = document.createElement('section'); section.className = 'editor-document';
-      const sourceLabel = document.createElement('label'); sourceLabel.textContent = `Source label ${index + 1}`;
+      const head = document.createElement('div'); head.className = 'editor-document-head';
+      const sourceLabel = document.createElement('label'); sourceLabel.className = 'field';
+      const sourceText = document.createElement('span'); sourceText.textContent = `Source label ${index + 1}`;
       const source = document.createElement('input'); source.value = doc.sourceName; source.setAttribute('aria-label', `Source label ${index + 1}`);
-      source.addEventListener('input', () => { doc.sourceName = source.value; changed(); }); sourceLabel.append(source);
-      const yamlLabel = document.createElement('label'); yamlLabel.textContent = `Skill YAML ${index + 1}`;
-      const yaml = document.createElement('textarea'); yaml.value = doc.yaml; yaml.spellcheck = false; yaml.setAttribute('aria-label', `Skill YAML ${index + 1}`);
-      yaml.addEventListener('input', () => { doc.yaml = yaml.value; changed(); }); yamlLabel.append(yaml);
-      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'editor-remove'; remove.textContent = `Remove skill document ${index + 1}`;
+      source.addEventListener('input', () => { doc.sourceName = source.value; changed(); }); sourceLabel.append(sourceText, source);
+      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'editor-remove btn-ghost-danger'; remove.textContent = 'Remove';
+      remove.setAttribute('aria-label', `Remove skill document ${index + 1}`);
       remove.addEventListener('click', () => { state.documents.splice(index, 1); renderDocuments(); changed(); });
-      section.append(sourceLabel, yamlLabel, remove); list.append(section);
+      head.append(sourceLabel, remove);
+      const yaml = document.createElement('textarea'); yaml.value = doc.yaml; yaml.spellcheck = false; yaml.setAttribute('aria-label', `Skill YAML ${index + 1}`);
+      yaml.addEventListener('input', () => { doc.yaml = yaml.value; changed(); });
+      section.append(head, yaml); list.append(section);
     });
+    if (!state.documents.length) {
+      const empty = document.createElement('p'); empty.className = 'empty'; empty.textContent = 'No skill documents. REST routes can still be configured below.';
+      list.append(empty);
+    }
     $('editor-rest').value = state.rest;
     render();
   };

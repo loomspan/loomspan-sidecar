@@ -51,7 +51,8 @@ public class ManagementSecurityConfiguration {
                         .requestMatchers("/management/login", "/management/setup", "/management/forgot",
                                 "/management/password/set", "/management/password/reset", "/management/assets/console.css",
                                 "/management/assets/console.js",
-                                "/management/assets/import.js",
+                                "/management/assets/import.js", "/management/assets/loomspan-logo.png",
+                                "/management/assets/loomspan-mark.png", "/management/assets/manrope.woff2",
                                 "/api/management/setup", "/api/management/password/forgot",
                                 "/api/management/password/set", "/api/management/password/reset").permitAll()
                         .requestMatchers("/management/accounts").hasAuthority("MGT_ADMIN")
