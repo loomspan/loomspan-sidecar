@@ -168,19 +168,23 @@ class ManagementHttpIntegrationTest {
         assertThat(browser.postForm("/management/login", "email=admin%40example.test&password=wrong").statusCode()).isEqualTo(403);
         assertThat(browser.get("/management/setup").statusCode()).isEqualTo(200);
         assertThat(browser.get("/management/forgot").body()).contains("name='email'", "name='_csrf'");
+        assertThat(browser.get("/management/password/reset").body()).contains("name='token'", "type='password'");
         assertThat(browser.get("/management/password/set?token=fixture").body())
                 .contains("autocomplete='new-password'", "name='_csrf'");
         var csrf = csrf(page.body());
+        assertThat(browser.postJson("/api/management/setup", "{\"credential\":\"" + SETUP
+                + "\",\"email\":\"first@example.test\",\"password\":\"Long Password 123!\",\"confirmation\":\"Long Password 123!\"}", null)
+                .statusCode()).isEqualTo(403);
         assertThat(browser.postForm("/management/forgot", "email=missing%40example.test&_csrf=" + encode(csrf)).body())
                 .contains("If the address has an active account");
-        assertThat(browser.postForm("/management/setup", "credential=bad&email=first%40example.test&_csrf=" + encode(csrf)).body())
-                .contains("Setup is locked or email delivery is unavailable");
+        assertThat(browser.postForm("/management/setup", "credential=bad&email=first%40example.test&password=Long+Password+123%21&confirmation=Long+Password+123%21&_csrf=" + encode(csrf)).body())
+                .contains("Setup could not be completed");
         assertThat(browser.postForm("/management/password/set", "token=bad&password=Long+Password+123%21&_csrf=" + encode(csrf)).body())
                 .contains("Link or password invalid");
         assertThat(browser.postJson("/api/management/setup", "{\"credential\":\"bad\",\"email\":\"first@example.test\"}", csrf)
                 .statusCode()).isEqualTo(400);
         assertThat(browser.postJson("/api/management/setup", "{\"credential\":\"" + SETUP
-                + "\",\"email\":\"first@example.test\"}", csrf).statusCode()).isEqualTo(503);
+                + "\",\"email\":\"first@example.test\"}", csrf).statusCode()).isEqualTo(400);
         var login = browser.postForm("/management/login", "email=admin%40example.test&password=" + encode(PASSWORD)
                 + "&_csrf=" + encode(csrf));
         assertThat(login.statusCode()).isEqualTo(302);

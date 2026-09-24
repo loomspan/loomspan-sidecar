@@ -26,8 +26,8 @@ public class ManagementPagesController {
                     ? "<p>First administrator setup is available. <a href='/management/setup'>Start setup</a>.</p>"
                     : "<p>Management setup is locked. An operator must configure LOOMSPAN_SIDECAR_SETUP_TOKEN.</p>";
             case "reserved" -> identity.setupCredentialConfigured()
-                    ? "<p>First administrator setup is awaiting an emailed password link. The reserved address may retry delivery from <a href='/management/setup'>setup</a>.</p>"
-                    : "<p>First administrator address is reserved, but setup is locked until an operator configures LOOMSPAN_SIDECAR_SETUP_TOKEN. Existing emailed links can still be completed.</p>";
+                    ? "<p>First administrator setup is pending for a reserved address. Complete it at <a href='/management/setup'>setup</a>.</p>"
+                    : "<p>First administrator address is reserved, but setup is locked until an operator configures LOOMSPAN_SIDECAR_SETUP_TOKEN.</p>";
             default -> "";
         };
         return page("Sign in", setup + feedback + "<form method='post' action='/management/login'>"
@@ -42,23 +42,27 @@ public class ManagementPagesController {
             return page("First administrator", "<p>Management setup is complete. <a href='/management/login'>Sign in</a>.</p>");
         if (!identity.setupCredentialConfigured())
             return page("First administrator", "<p>Management setup is locked. An operator must configure a valid LOOMSPAN_SIDECAR_SETUP_TOKEN in the environment."
-                    + ("reserved".equals(state) ? " The first administrator address is reserved; an existing emailed link can still be completed." : "") + "</p>");
+                    + "</p>");
         String status = "reserved".equals(state)
-                ? "The initial administrator address is reserved. Only that address can retry email delivery until activation."
-                : "Enter the one-time operator setup credential and first administrator email. The password setup link will be emailed; sign-in is available after that link is completed.";
+                ? "The initial administrator address is reserved. Only that address can complete setup."
+                : "Enter the one-time operator setup credential, administrator email, and chosen login password.";
         return page("First administrator", "<p>" + status + "</p><form method='post' action='/management/setup'>"
                 + csrf(request) + "<label>Setup credential <input name='credential' type='password' required></label>"
-                + "<label>Email <input name='email' type='email' required></label><button>Send password link</button></form>");
+                + "<label>Email <input name='email' type='email' required></label>"
+                + "<label>Password <input name='password' type='password' autocomplete='new-password' required></label>"
+                + "<label>Confirm password <input name='confirmation' type='password' autocomplete='new-password' required></label>"
+                + "<button>Create administrator</button></form>" + passwordGuidance());
     }
     @PostMapping("/management/setup")
     String setupSubmit(@RequestParam("credential") String credential, @RequestParam("email") String email,
+            @RequestParam("password") String password, @RequestParam("confirmation") String confirmation,
             HttpServletRequest request) {
-        try { tokenAttempt(request); identity.setup(credential, email); return status("Check that mailbox for the setup link. Complete it before signing in."); }
-        catch (RuntimeException rejected) { return status("Setup is locked or email delivery is unavailable; check configuration and retry setup with the reserved address. An account may be awaiting its email link."); }
+        try { tokenAttempt(request); identity.setup(credential, email, password, confirmation); return status("Administrator created. Sign in with the email and chosen password."); }
+        catch (RuntimeException rejected) { return status("Setup could not be completed. Check the setup credential, reserved address, and password policy, then retry."); }
     }
     @GetMapping(value = "/management/forgot", produces = MediaType.TEXT_HTML_VALUE)
     String forgot(HttpServletRequest request) {
-        return page("Forgot password", "<p>Enter your account email. If it has an active account, a reset link will be sent when email delivery is available. You can safely retry later.</p><form method='post' action='/management/forgot'>" + csrf(request)
+        return page("Forgot password", "<p>Enter your account email. If it has an active account, a reset link will be sent when email delivery is available. Without SMTP, ask an operator to issue a local reset credential and enter it on the <a href='/management/password/reset'>reset page</a>.</p><form method='post' action='/management/forgot'>" + csrf(request)
                 + "<label>Email <input name='email' type='email' autocomplete='username' required></label>"
                 + "<button>Request link</button></form>");
     }
@@ -73,9 +77,11 @@ public class ManagementPagesController {
     @GetMapping(value = {"/management/password/set", "/management/password/reset"}, produces = MediaType.TEXT_HTML_VALUE)
     String passwordPage(@RequestParam(name = "token", defaultValue = "") String token, HttpServletRequest request) {
         String purpose = request.getRequestURI().endsWith("/set") ? "set" : "reset";
-        return page("Password " + purpose, "<p>Links expire and can be used once. If this link fails, request a fresh link through <a href='/management/forgot'>password recovery</a> or ask your administrator to resend an invitation.</p>"
+        return page("Password " + purpose, "<p>Credentials expire and can be used once. If this attempt fails, request a fresh credential through <a href='/management/forgot'>password recovery</a> or ask your administrator to resend an invitation.</p>"
                 + "<form method='post' action='/management/password/" + purpose + "'>"
-                + csrf(request) + "<input type='hidden' name='token' value='" + escape(token) + "'>"
+                + csrf(request) + ("reset".equals(purpose) && token.isEmpty()
+                    ? "<label>Reset credential <input type='password' name='token' autocomplete='off' required></label>"
+                    : "<input type='hidden' name='token' value='" + escape(token) + "'>")
                 + "<label>New password <input name='password' type='password' autocomplete='new-password' required></label>"
                 + "<button>Save password</button></form>" + passwordGuidance());
     }
@@ -98,7 +104,8 @@ public class ManagementPagesController {
     String accounts(Authentication auth, HttpServletRequest request) {
         return console("Accounts", ManagementController.principal(auth), request,
                 "<section data-console='accounts'><p id='accounts-status' role='status' aria-live='polite'>Loading accounts…</p>"
-                + "<form id='invite-form'><h2>Invite account</h2><p>Account email cannot be changed. The password setup link is emailed.</p>"
+                + "<form id='invite-form'><h2>Invite account</h2><p>Account email cannot be changed. The password setup link is emailed."
+                + (identity.mailAvailable() ? "" : " Email delivery is not configured, so invitations and resend cannot be completed here.") + "</p>"
                 + "<label>Email <input name='email' type='email' autocomplete='off' required></label>"
                 + "<label>Role <select name='role'><option value='viewer'>Viewer</option><option value='editor'>Editor</option><option value='admin'>Administrator</option></select></label>"
                 + "<button>Send invitation</button></form><button id='accounts-refresh' type='button'>Refresh accounts</button>"

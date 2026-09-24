@@ -43,8 +43,8 @@ public final class ManagementAccountRepository {
     public boolean reserve(long id) {
         return jdbc.update("UPDATE management_bootstrap SET state='reserved',account_id=? WHERE singleton=1 AND state='unreserved'", id) == 1;
     }
-    public void activateBootstrap(long id) {
-        jdbc.update("UPDATE management_bootstrap SET state='activated' WHERE singleton=1 AND state='reserved' AND account_id=?", id);
+    public boolean activateBootstrap(long id) {
+        return jdbc.update("UPDATE management_bootstrap SET state='activated' WHERE singleton=1 AND state='reserved' AND account_id=?", id) == 1;
     }
     public void insertToken(String digest, long id, String purpose, long expiry) {
         jdbc.update("INSERT INTO management_token(digest,account_id,purpose,expires_at) VALUES (?,?,?,?)",

@@ -271,26 +271,22 @@ configuration inspection, validation and publication APIs. A management session
 cannot call `/v1/**`; an execution JWT or observability API key cannot log in to
 management. Sessions are local to one process and do not survive restart.
 
-Set `LOOMSPAN_SIDECAR_SETUP_TOKEN` to an **unpadded base64url encoding of exactly
-32 cryptographically random bytes**. For example, generate a value with
-`python -c "import secrets; print(secrets.token_urlsafe(32))"` and deliver it
-through a deployment secret. The value is read only from the process environment;
-it is never saved in SQLite. Visit `/management/setup`, supply that credential
-and the first admin email, then follow the emailed password-set link. Missing,
-malformed or wrong credentials leave setup locked; execution stays available.
-The first successful request permanently reserves the chosen address before
-email delivery. If delivery fails, repeat setup with the same credential and
-address after fixing SMTP. Other addresses cannot replace it. After the admin
-sets a password, setup remains closed even if the environment variable remains.
+Generate `LOOMSPAN_SIDECAR_SETUP_TOKEN` with the packaged `admin generate-setup-token`
+command. The [administrator access walkthrough](admin-access.md) has copyable
+PowerShell and POSIX commands. This one-time credential is distinct from the
+administrator email login and chosen password. `/management/setup` accepts all
+four fields and activates the account without email. Missing or invalid input
+leaves setup unchanged; completed setup remains closed even if the environment
+credential remains. Remove the secret and recreate the container afterward.
 
 Configure SMTP with standard `spring.mail.*` values in deployment YAML or their
 environment overrides. Set `loomspan-sidecar.management.mail-from` to a sender
 address and `loomspan-sidecar.management.external-base-url` to the trusted public
 HTTPS console URL; loopback HTTP is allowed for local development. Links are
 built solely from that configured URL. SMTP connect, read and write waits default
-to five seconds. Missing or failed delivery prevents setup/invitations/recovery;
+to five seconds. Missing or failed delivery prevents invitations and emailed recovery;
 existing logins and execution remain available. Test the deployment's SMTP and
-HTTPS settings with a dedicated mailbox before initial setup. Never use a live
+HTTPS settings with a dedicated mailbox before relying on email actions. Never use a live
 recipient in automated tests. The mail health probe is disabled so an SMTP outage
 does not mark execution readiness down; email actions report their own failure.
 
@@ -309,22 +305,23 @@ is no blocklist, breached-password lookup or periodic expiration.
 The embedded console is served from the Sidecar JAR on the application port;
 no frontend service is needed. Open `/management/login` to sign in. The landing
 page explains an available, reserved, or locked first-administrator setup state;
-`/management/setup` accepts the one-time credential only until activation.
+`/management/setup` accepts the one-time credential and chosen password only until activation.
 Authenticated users reach `/management/home`,
 `/management/configuration/current`, `/management/configuration/edit`, and
 `/management/password/change`.
 Administrators also reach `/management/accounts` to invite accounts, change
 roles, disable or re-enable accounts, and resend a pending password link. The
 public `/management/forgot` and `/management/password/{set,reset}` forms support
-email-only recovery and initial password setup. Forms permit keyboard use,
+emailed recovery, manually entered operator reset credentials, and invited-account password setup. Forms permit keyboard use,
 password-manager autofill and paste. Forgotten-password requests
 always give the same response for known and unknown addresses. Set links expire
 after 24 hours and reset links after 30 minutes; each is single-use. A successful
 password change or reset ends affected sessions and invalidates other links.
-Sign in normally afterward. Recovery is email only: there is no offline account
-repair, security question, or admin-assigned replacement password. If email and
-administrator access are both lost, restore a known-good **full database backup**
-as an installation recovery operation, not as a password-reset bypass.
+Sign in normally afterward. An operator with access to the stopped SQLite
+volume can issue a reset credential for an existing enabled administrator with
+`admin issue-password-reset`; see the [walkthrough](admin-access.md). The reset
+page accepts that credential without a token-bearing URL. There is no security
+question or admin-assigned replacement password.
 
 The current-configuration page shows the complete authored skill YAML and REST
 routes/targets from the **runtime-published** snapshot, including placeholders
@@ -335,7 +332,8 @@ is displayed as text, never interpreted as HTML. Refresh is explicit; passive
 reads do not extend the idle login. The browser reports deliberate interaction
 at most once every 30 seconds. If an invitation reports a delivery failure,
 refresh the account list: it may contain a pending account. Correct SMTP and
-resend the link. A used or expired set/reset link requires a fresh email link.
+resend the link. A used or expired set/reset credential requires a fresh
+invitation, emailed reset link, or local operator reset credential as applicable.
 Role changes, disables, resets and password changes invalidate affected sessions;
 sign in again before continuing. Viewer/editor/admin checks and CSRF are enforced
 by the server even if a stale browser page still shows an action.
@@ -387,8 +385,8 @@ an intentional user action and extends the default 30-minute idle deadline only
 when at least 30 seconds have passed since the previous accepted report;
 polling the session endpoint does not. `POST /api/management/logout` ends the
 session. `POST /api/management/password/change` takes `currentPassword` and
-`newPassword`. Anonymous `POST /api/management/setup` takes `credential` and
-`email`; `POST /api/management/password/forgot` takes `email`; and
+`newPassword`. Anonymous `POST /api/management/setup` takes `credential`, `email`,
+`password`, and `confirmation`; `POST /api/management/password/forgot` takes `email`; and
 `POST /api/management/password/{set,reset}` takes `token` and `password`.
 Admin-only `GET/POST /api/management/accounts` lists accounts or invites one
 with `email` and `role`; `PATCH /api/management/accounts/{id}` accepts `role`

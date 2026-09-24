@@ -123,17 +123,17 @@ with no Caddy request path.
 
 Set `JWT_ISSUER_URI` and `JWT_AUDIENCE` to the real token issuer and audience.
 Configure `MODEL_DRIVER`, `MODEL_BASE_URL`, `MODEL_API_KEY`, and `MODEL_NAME` for
-the model named `primary` in authored skills. For the first administrator setup,
-set `SETUP_TOKEN` to unpadded base64url encoding of exactly 32 random bytes;
-generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+the model named `primary` in authored skills. For first administrator setup,
+generate `SETUP_TOKEN` with the packaged image using the
+[administrator access walkthrough](../../docs/admin-access.md). SMTP is optional
+for setup and local operator recovery.
 Set `SMTP_FROM`, `SMTP_HOST`, `SMTP_PORT`,
 `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_AUTH`, and `SMTP_STARTTLS` for the
 customer's SMTP provider. When `SMTP_STARTTLS=true`, the connection fails if
 the provider does not support STARTTLS, so SMTP credentials are not sent over
 plaintext. Set `SMTP_STARTTLS=false` and `SMTP_AUTH=false` only for a trusted
 plaintext relay without SMTP credentials. Email delivery and a correct trusted
-HTTPS origin are
-required for initial setup, invitations, and password recovery. Automated tests
+HTTPS origin are required for invitations and emailed password recovery. Automated tests
 use `.test` recipients and an isolated capture fixture; production uses the
 customer SMTP service. To use a REST `base-url: ${TARGET_URL}`, list `TARGET_URL`
 in `URL_VARIABLES` and supply its absolute HTTP(S) value as `TARGET_URL`.
@@ -154,7 +154,7 @@ docker compose --project-name production --env-file examples/production/producti
 ```
 
 Use the HTTPS origin in a browser, open `/management/setup`, enter the one-time
-credential and administrator address, follow the emailed password link, then
+credential, administrator address, chosen password, and confirmation, then
 sign in at `/management/login`. Verify the browser receives a Secure session
 cookie and the certificate chains to the intended CA. After setup, clear
 `SETUP_TOKEN` in `production.env` and recreate the service. Existing accounts

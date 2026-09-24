@@ -61,6 +61,29 @@ class ManagementIdentityStoreTest {
         return new Fixture(source, jdbc, service, accounts, mail, clock, credential);
     }
 
+    @Test void setupWithoutSmtpActivatesOneAdministratorAtomically() {
+        var f = fixture(directory.resolve("smtp-free.db"));
+        when(f.mail.configured()).thenReturn(false);
+        assertThatThrownBy(() -> f.service.setup("bad", "admin@example.test", PASSWORD, PASSWORD))
+                .isInstanceOf(ManagementIdentityService.Rejected.class);
+        assertThatThrownBy(() -> f.service.setup(null, "admin@example.test", PASSWORD, PASSWORD))
+                .isInstanceOf(ManagementIdentityService.Rejected.class);
+        assertThatThrownBy(() -> f.service.setup("A".repeat(42), "admin@example.test", PASSWORD, PASSWORD))
+                .isInstanceOf(ManagementIdentityService.Rejected.class);
+        assertThatThrownBy(() -> f.service.setup(f.credential, "admin@example.test", "short", "short"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> f.service.setup(f.credential, "admin@example.test", PASSWORD, "Different Password 1!"))
+                .isInstanceOf(ManagementIdentityService.Rejected.class);
+        assertThat(f.accounts.bootstrapState()).isEqualTo("unreserved");
+        assertThat(f.accounts.all()).isEmpty();
+        f.service.setup(f.credential, " Admin@Example.Test ", PASSWORD, PASSWORD);
+        assertThat(f.accounts.bootstrapState()).isEqualTo("activated");
+        assertThat(f.accounts.all()).hasSize(1);
+        assertThat(f.service.matches(PASSWORD, f.accounts.all().getFirst().passwordHash())).isTrue();
+        assertThat(f.jdbc.queryForObject("SELECT COUNT(*) FROM management_token", Integer.class)).isZero();
+        verify(f.mail, never()).send(anyString(), anyString(), anyString());
+    }
+
     @Test
     void configurationInitializationDoesNotConsumeManagementBootstrap() {
         Path database = directory.resolve("identity.db");
@@ -79,23 +102,22 @@ class ManagementIdentityStoreTest {
         var service = new ManagementIdentityService(accounts,
                 new TransactionTemplate(new DataSourceTransactionManager(source)), mail, clock, () -> credential,
                 new ManagementEditingState());
-        assertThatThrownBy(() -> service.setup("bad", "admin@example.test"))
+        assertThatThrownBy(() -> service.setup("bad", "admin@example.test", PASSWORD, PASSWORD))
                 .isInstanceOf(ManagementIdentityService.Rejected.class);
-        service.setup(credential, " Admin@Example.Test ");
-        assertThat(accounts.bootstrapState()).isEqualTo("reserved");
-        assertThat(accounts.byEmail("admin@example.test").passwordHash()).isNull();
+        service.setup(credential, " Admin@Example.Test ", PASSWORD, PASSWORD);
+        assertThat(accounts.bootstrapState()).isEqualTo("activated");
+        assertThat(accounts.byEmail("admin@example.test").active()).isTrue();
         var reopened = StorageConfiguration.dataSource(database);
         StorageConfiguration.migrate(reopened);
         var again = new ManagementAccountRepository(new JdbcTemplate(reopened));
-        assertThat(again.bootstrapState()).isEqualTo("reserved");
-        assertThatThrownBy(() -> service.setup(credential, "other@example.test"))
+        assertThat(again.bootstrapState()).isEqualTo("activated");
+        assertThatThrownBy(() -> service.setup(credential, "other@example.test", PASSWORD, PASSWORD))
                 .isInstanceOf(ManagementIdentityService.Rejected.class);
     }
 
     @Test void accountEmailAndLastAdminInvariantsSurviveRestartAndRaces() throws Exception {
         var f = fixture(directory.resolve("accounts.db"));
-        f.service.setup(f.credential, "Admin@Example.Test");
-        f.service.redeem("set", f.token(), PASSWORD);
+        f.service.setup(f.credential, "Admin@Example.Test", PASSWORD, PASSWORD);
         assertThat(f.accounts.byEmail("admin@example.test").active()).isTrue();
         assertThatThrownBy(() -> f.service.invite(" ADMIN@example.test ", "viewer"))
                 .isInstanceOf(ManagementIdentityService.Rejected.class);
@@ -138,34 +160,39 @@ class ManagementIdentityStoreTest {
         var pool = Executors.newFixedThreadPool(2);
         try {
             var first = pool.submit(() -> { barrier.await();
-                try { f.service.setup(f.credential, "first@example.test"); return true; }
+                try { f.service.setup(f.credential, "first@example.test", PASSWORD, PASSWORD); return true; }
                 catch (RuntimeException rejected) { return false; }
             });
             var other = pool.submit(() -> { barrier.await();
-                try { second.setup(f.credential, "second@example.test"); return true; }
+                try { second.setup(f.credential, "second@example.test", PASSWORD, PASSWORD); return true; }
                 catch (RuntimeException rejected) { return false; }
             });
             barrier.countDown();
             assertThat((first.get(10, TimeUnit.SECONDS) ? 1 : 0) + (other.get(10, TimeUnit.SECONDS) ? 1 : 0)).isEqualTo(1);
         } finally { pool.shutdownNow(); }
         assertThat(f.accounts.all()).hasSize(1);
-        assertThat(f.accounts.bootstrapState()).isEqualTo("reserved");
+        assertThat(f.accounts.bootstrapState()).isEqualTo("activated");
         assertThat(f.accounts.all().getFirst().role()).isEqualTo("admin");
     }
 
+
     @Test void passwordLinksArePurposeBoundSingleUseAndTransactional() {
         var f = fixture(directory.resolve("tokens.db"));
-        f.service.setup(f.credential, "admin@example.test");
+        f.service.setup(f.credential, "admin@example.test", PASSWORD, PASSWORD);
+        assertThat(f.jdbc.queryForObject("SELECT COUNT(*) FROM management_token", Integer.class)).isZero();
+        var invited = f.service.invite("viewer@example.test", "viewer");
         String set = f.token();
-        assertThatThrownBy(() -> f.service.redeem("reset", set, PASSWORD)).isInstanceOf(ManagementIdentityService.Rejected.class);
-        assertThat(f.jdbc.queryForObject("SELECT COUNT(*) FROM management_token WHERE digest=?", Integer.class, set)).isZero();
+        assertThatThrownBy(() -> f.service.redeem("reset", set, PASSWORD))
+                .isInstanceOf(ManagementIdentityService.Rejected.class);
         f.service.redeem("set", set, PASSWORD);
-        assertThatThrownBy(() -> f.service.redeem("set", set, PASSWORD)).isInstanceOf(ManagementIdentityService.Rejected.class);
+        assertThat(f.accounts.byId(invited.id()).active()).isTrue();
+        assertThatThrownBy(() -> f.service.redeem("set", set, PASSWORD))
+                .isInstanceOf(ManagementIdentityService.Rejected.class);
         assertThat(f.accounts.bootstrapState()).isEqualTo("activated");
         var reopened = new ManagementAccountRepository(new JdbcTemplate(
                 StorageConfiguration.dataSource(directory.resolve("tokens.db"))));
         assertThat(reopened.bootstrapState()).isEqualTo("activated");
-        assertThatThrownBy(() -> f.service.setup(f.credential, "another@example.test"))
+        assertThatThrownBy(() -> f.service.setup(f.credential, "another@example.test", PASSWORD, PASSWORD))
                 .isInstanceOf(ManagementIdentityService.Rejected.class);
         String hash = f.accounts.byEmail("admin@example.test").passwordHash();
         assertThat(hash).startsWith("{pbkdf2@SpringSecurity_v5_8}").doesNotContain(PASSWORD);

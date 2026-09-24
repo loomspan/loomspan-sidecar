@@ -10,6 +10,9 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import urllib.parse
+import http.cookiejar
+import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 300
@@ -80,10 +83,18 @@ def main():
     assert inspect["Config"]["User"] == "10001:10001"
     assert any(value.startswith("JAVA_TOOL_OPTIONS=") and "MaxRAMPercentage" in value
                for value in inspect["Config"]["Env"])
+    generated = [run("docker", "run", "--rm", args.image, "admin", "generate-setup-token",
+                     capture=True, timeout=30) for _ in range(2)]
+    assert all(re.fullmatch(r"[A-Za-z0-9_-]{43}\n?", item.stdout) for item in generated)
+    assert generated[0].stdout != generated[1].stdout
+    invalid = run("docker", "run", "--rm", args.image, "admin", "generate-setup-token", "extra",
+                  capture=True, check=False, timeout=30)
+    assert invalid.returncode != 0 and not invalid.stdout
 
     project = "loomspan-sc5-" + str(os.getpid())
     compose = ROOT / "examples/quickstart/compose.yaml"
     environment = dict(os.environ, SIDECAR_IMAGE=args.image,
+                       LOOMSPAN_SIDECAR_SETUP_TOKEN=generated[0].stdout.strip(),
                        SIDECAR_API_PORT=str(args.api_port),
                        QUICKSTART_HOST_PORT=str(args.host_port),
                        SIDECAR_MANAGEMENT_PORT=str(args.management_port))
@@ -107,9 +118,51 @@ def main():
         assert request(api_url + "/v1/skills/unknown/executions", "POST", token, {})[0] == 404
         assert '"status":"UP"' in request(management_url + "/actuator/health/liveness")[1]
 
+        browser = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        with browser.open(api_url + "/management/setup") as response:
+            page = response.read().decode()
+        match = re.search(r"name='_csrf' value='([^']+)'", page)
+        assert match and "name='confirmation'" in page
+        payload = json.dumps({"credential": generated[0].stdout.strip(),
+                              "email": "admin@example.test", "password": "Long Password 123!",
+                              "confirmation": "Long Password 123!"}).encode()
+        with browser.open(urllib.request.Request(api_url + "/api/management/setup", data=payload,
+                          headers={"Content-Type": "application/json", "X-CSRF-TOKEN": match.group(1)})) as response:
+            assert response.status == 202
+        assert "Management setup is complete" in browser.open(api_url + "/management/setup").read().decode()
+
+        busy = run("docker", "compose", "-p", project, "-f", str(compose), "run", "--rm", "--no-deps",
+                   "sidecar", "admin", "issue-password-reset", "--database", "/sidecar/data/sidecar.db",
+                   "--email", "admin@example.test", env=environment, capture=True, check=False, timeout=60)
+        assert busy.returncode != 0 and not busy.stdout
+
         started = time.monotonic()
         run("docker", "compose", "-p", project, "-f", str(compose), "stop", "-t", "15", "sidecar", env=environment)
         assert time.monotonic() - started < 20
+        reset = run("docker", "compose", "-p", project, "-f", str(compose), "run", "--rm", "--no-deps",
+                    "sidecar", "admin", "issue-password-reset", "--database", "/sidecar/data/sidecar.db",
+                    "--email", "admin@example.test", env=environment, capture=True, timeout=60)
+        assert re.fullmatch(r"[A-Za-z0-9_-]{43}\n?", reset.stdout), "reset output contract"
+        environment["LOOMSPAN_SIDECAR_SETUP_TOKEN"] = ""
+        run("docker", "compose", "-p", project, "-f", str(compose), "up", "-d", "--force-recreate",
+            "sidecar", env=environment)
+        wait_for(management_url + "/actuator/health/readiness")
+        recovery_browser = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        reset_page = recovery_browser.open(api_url + "/management/password/reset").read().decode()
+        assert "name='token'" in reset_page and "type='password'" in reset_page
+        reset_csrf = re.search(r"name='_csrf' value='([^']+)'", reset_page).group(1)
+        form = urllib.parse.urlencode({"token": reset.stdout.strip(),
+                                       "password": "Another Long Password 1!", "_csrf": reset_csrf}).encode()
+        with recovery_browser.open(urllib.request.Request(api_url + "/management/password/reset", data=form,
+                                   headers={"Content-Type": "application/x-www-form-urlencoded"})) as response:
+            assert "Password saved" in response.read().decode()
+        login_page = recovery_browser.open(api_url + "/management/login").read().decode()
+        login_csrf = re.search(r"name='_csrf' value='([^']+)'", login_page).group(1)
+        login_form = urllib.parse.urlencode({"email": "admin@example.test", "password": "Another Long Password 1!",
+                                             "_csrf": login_csrf}).encode()
+        with recovery_browser.open(urllib.request.Request(api_url + "/management/login", data=login_form,
+                                   headers={"Content-Type": "application/x-www-form-urlencoded"})) as response:
+            assert response.url.endswith("/management/home")
 
     finally:
         require_cleanup("docker", "compose", "-p", project, "-f", str(compose), "down", "--volumes",

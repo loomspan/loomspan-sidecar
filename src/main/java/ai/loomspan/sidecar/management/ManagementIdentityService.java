@@ -3,7 +3,6 @@ package ai.loomspan.sidecar.management;
 import ai.loomspan.sidecar.configuration.RuntimeConfigurationService;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Base64;
@@ -33,7 +32,6 @@ public class ManagementIdentityService {
     private final Supplier<String> setupCredential;
     private final ManagementEditingState editing;
     private RuntimeConfigurationService runtime;
-    private final SecureRandom random = new SecureRandom();
     private final Pbkdf2PasswordEncoder encoder = new Pbkdf2PasswordEncoder("", 16, 310_000,
             Pbkdf2PasswordEncoder.SecretKeyFactoryAlgorithm.PBKDF2WithHmacSHA256);
 
@@ -68,6 +66,7 @@ public class ManagementIdentityService {
     public boolean setupAvailable() { return "unreserved".equals(accounts.bootstrapState()); }
     public String setupState() { return accounts.bootstrapState(); }
     public boolean setupCredentialConfigured() { return decoded(setupCredential.get()) != null; }
+    public boolean mailAvailable() { return mail.configured(); }
     public Account account(long id) { return accounts.byId(id); }
     public Account account(String email) {
         try { return accounts.byEmail(ManagementPolicy.email(email)); }
@@ -75,13 +74,13 @@ public class ManagementIdentityService {
     }
     public List<Account> accounts() { return accounts.all(); }
 
-    public void setup(String suppliedCredential, String email) {
+    public void setup(String suppliedCredential, String email, String password, String confirmation) {
         if (!credentialValid(suppliedCredential)) throw new Rejected();
         String normalized = ManagementPolicy.email(email);
-        if (!mail.configured()) throw new ManagementMailService.Unavailable();
-        Issued issued;
+        ManagementPolicy.password(password);
+        if (!password.equals(confirmation)) throw new Rejected();
         try {
-            issued = tx.execute(status -> {
+            tx.executeWithoutResult(status -> {
                 String state = accounts.bootstrapState();
                 long id;
                 if ("unreserved".equals(state)) {
@@ -90,13 +89,15 @@ public class ManagementIdentityService {
                 } else if ("reserved".equals(state)) {
                     id = accounts.reservedId();
                     Account reserved = accounts.byId(id);
-                    if (reserved == null || !reserved.email().equals(normalized) || reserved.passwordHash() != null)
+                    if (reserved == null || !reserved.email().equals(normalized) || !reserved.enabled()
+                            || !"admin".equals(reserved.role()) || reserved.passwordHash() != null)
                         throw new Rejected();
                 } else throw new Rejected();
-                return issue(id, normalized, "set", Duration.ofHours(24));
+                accounts.password(id, "{pbkdf2@SpringSecurity_v5_8}" + encoder.encode(password));
+                accounts.consumeTokens(id, clock.millis());
+                if (!accounts.activateBootstrap(id)) throw new Rejected();
             });
         } catch (org.springframework.dao.DataAccessException conflict) { throw new Rejected(); }
-        mail.send(issued.email(), issued.purpose(), issued.token());
     }
 
     public Account invite(String email, String role) {
@@ -129,7 +130,7 @@ public class ManagementIdentityService {
         try {
             Account account = account(email);
             if (account == null || !account.active() || !mail.configured()) return;
-            Issued issued = tx.execute(status -> issue(account.id(), account.email(), "reset", Duration.ofMinutes(30)));
+            Issued issued = tx.execute(status -> issue(account.id(), account.email(), "reset", ManagementTokens.RESET_LIFETIME));
             mail.send(issued.email(), issued.purpose(), issued.token());
         } catch (org.springframework.dao.DataAccessException | ManagementMailService.Unavailable ignored) {
             // Database contention and SMTP failure must not reveal whether this address exists.
@@ -138,7 +139,7 @@ public class ManagementIdentityService {
 
     public void redeem(String purpose, String token, String password) {
         ManagementPolicy.password(password);
-        String digest = digest(token);
+        String digest = ManagementTokens.digest(token);
         withEditingLock(() -> {
             long changed = tx.execute(status -> {
                 var entry = accounts.token(digest);
@@ -147,10 +148,11 @@ public class ManagementIdentityService {
                 Account account = accounts.byId(entry.accountId());
                 if (account == null || !account.enabled() || ("set".equals(purpose) && account.passwordHash() != null)
                         || ("reset".equals(purpose) && account.passwordHash() == null)) throw new Rejected();
+                if ("set".equals(purpose) && "reserved".equals(accounts.bootstrapState())
+                        && java.util.Objects.equals(account.id(), accounts.reservedId())) throw new Rejected();
                 if (!accounts.consume(digest, clock.millis())) throw new Rejected();
                 accounts.password(account.id(), "{pbkdf2@SpringSecurity_v5_8}" + encoder.encode(password));
                 accounts.consumeTokens(account.id(), clock.millis());
-                if ("set".equals(purpose)) accounts.activateBootstrap(account.id());
                 return account.id();
             });
             editing.clearAccount(changed);
@@ -188,21 +190,10 @@ public class ManagementIdentityService {
     }
 
     private Issued issue(long id, String email, String purpose, Duration duration) {
-        byte[] bytes = new byte[32]; random.nextBytes(bytes);
-        String raw = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-        // A new issuance supersedes earlier links of the same account and purpose.
-        accounts.consumeTokens(id, clock.millis());
-        accounts.insertToken(digest(raw), id, purpose, clock.millis() + duration.toMillis());
-        return new Issued(id, email, purpose, raw);
+        return new Issued(id, email, purpose,
+                ManagementTokens.issue(accounts, id, purpose, clock.millis(), duration));
     }
 
-    private static String digest(String raw) {
-        if (raw == null || !raw.matches("[A-Za-z0-9_-]{43}")) throw new Rejected();
-        try {
-            byte[] value = MessageDigest.getInstance("SHA-256").digest(raw.getBytes(StandardCharsets.US_ASCII));
-            return java.util.HexFormat.of().formatHex(value);
-        } catch (java.security.NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
-    }
     private boolean credentialValid(String supplied) {
         byte[] expected = decoded(setupCredential.get());
         byte[] actual = decoded(supplied);

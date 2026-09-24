@@ -22,7 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/management")
 public class ManagementController {
-    public record Setup(String credential, String email) {
+    public record Setup(String credential, String email, String password, String confirmation) {
         @Override public String toString() { return "Setup[redacted]"; }
     }
     public record Email(String email) {
@@ -75,7 +75,7 @@ public class ManagementController {
     @PostMapping("/setup")
     public ResponseEntity<Void> setup(@RequestBody Setup body, HttpServletRequest request) {
         tokenAttempt(request);
-        identity.setup(body.credential(), body.email());
+        identity.setup(body.credential(), body.email(), body.password(), body.confirmation());
         return ResponseEntity.accepted().build();
     }
     @PostMapping("/password/forgot")

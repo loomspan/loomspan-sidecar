@@ -25,8 +25,14 @@ import java.sql.Statement;
 @Configuration
 public class StorageConfiguration
 {
+    @Bean(destroyMethod = "close")
+    StorageLock storageLock(SidecarStorageProperties properties)
+    {
+        return StorageLock.acquire(Path.of(properties.getDatabasePath()));
+    }
+
     @Bean
-    DataSource storageDataSource(SidecarStorageProperties properties)
+    DataSource storageDataSource(SidecarStorageProperties properties, StorageLock storageLock)
     {
         return dataSource(Path.of(properties.getDatabasePath()));
     }

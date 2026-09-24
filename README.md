@@ -20,6 +20,10 @@ configuration snapshots in SQLite; execution records are held in memory.
 
 ## Try the local service
 
+For first administrator setup and SMTP-free recovery, follow the
+[administrator access walkthrough](docs/admin-access.md). It covers the local
+loopback HTTP console and the production Caddy HTTPS console.
+
 Follow the [source-build prerequisites](docs/operations.md#build-from-source),
 then build the JAR and image from the repository root. Docker Compose starts
 Sidecar with a local JWT issuer and deterministic model fixture; no model

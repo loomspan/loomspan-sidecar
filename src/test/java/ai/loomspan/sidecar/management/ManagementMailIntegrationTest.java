@@ -49,7 +49,7 @@ class ManagementMailIntegrationTest {
         }
     }
 
-    @Test void failedInitialMailKeepsReservationRetryable() throws Exception {
+    @Test void reservedInitialAdministratorCompletesWithoutMail() throws Exception {
         var settings = new SidecarManagementProperties();
         settings.setMailFrom("operator@example.test");
         settings.setExternalBaseUrl("https://console.example.test");
@@ -59,23 +59,24 @@ class ManagementMailIntegrationTest {
         StorageConfiguration.migrate(source);
         var accounts = new ManagementAccountRepository(new JdbcTemplate(source));
         var tx = new TransactionTemplate(new DataSourceTransactionManager(source));
-        try (var failed = new LocalSmtp(true)) {
-            var first = new ManagementIdentityService(accounts, tx, mail(settings, failed.port()),
-                    Clock.systemUTC(), () -> credential, new ManagementEditingState());
-            assertThatThrownBy(() -> first.setup(credential, "admin@example.test"))
-                    .isInstanceOf(ManagementMailService.Unavailable.class);
-        }
+        long reserved = accounts.insert("admin@example.test", "admin", Clock.systemUTC().millis());
+        assertThat(accounts.reserve(reserved)).isTrue();
+        String oldDigest = ManagementTokens.digest("A".repeat(43));
+        accounts.insertToken(oldDigest, reserved, "set", Clock.systemUTC().millis() + 100000);
         assertThat(accounts.bootstrapState()).isEqualTo("reserved");
         assertThat(accounts.byEmail("admin@example.test").active()).isFalse();
-        try (var recovered = new LocalSmtp()) {
-            var retry = new ManagementIdentityService(accounts, tx, mail(settings, recovered.port()),
+        try (var rejectedMail = new LocalSmtp(true)) {
+            var retry = new ManagementIdentityService(accounts, tx, mail(settings, rejectedMail.port()),
                     Clock.systemUTC(), () -> credential, new ManagementEditingState());
-            assertThatThrownBy(() -> retry.setup(credential, "other@example.test"))
+            assertThatThrownBy(() -> retry.setup(credential, "other@example.test", "Long Password 123!", "Long Password 123!"))
                     .isInstanceOf(ManagementIdentityService.Rejected.class);
-            retry.setup(credential, "admin@example.test");
-            assertThat(recovered.messages()).hasSize(1);
-            retry.redeem("set", linkToken(recovered.messages().getFirst()), "Long Password 123!");
+            assertThatThrownBy(() -> retry.redeem("set", "A".repeat(43), "Long Password 123!"))
+                    .isInstanceOf(ManagementIdentityService.Rejected.class);
+            retry.setup(credential, "admin@example.test", "Long Password 123!", "Long Password 123!");
+            assertThat(rejectedMail.messages()).isEmpty();
             assertThat(accounts.bootstrapState()).isEqualTo("activated");
+            assertThat(accounts.byId(reserved).active()).isTrue();
+            assertThat(new JdbcTemplate(source).queryForObject("SELECT consumed_at FROM management_token WHERE digest=?", Long.class, oldDigest)).isNotNull();
         }
     }
 
@@ -91,7 +92,7 @@ class ManagementMailIntegrationTest {
         return new ManagementMailService(provider, settings, "127.0.0.1");
     }
 
-    @Test void setupAndInvitationMailAreTrustedAndRetryable() throws Exception {
+    @Test void invitationMailAndRecoveryAreTrustedAndRetryable() throws Exception {
         try (var smtp = new LocalSmtp()) {
             var properties = new SidecarManagementProperties();
             properties.setMailFrom("operator@example.test");
@@ -105,18 +106,10 @@ class ManagementMailIntegrationTest {
             var identity = new ManagementIdentityService(accounts,
                     new TransactionTemplate(new DataSourceTransactionManager(source)), mail, Clock.systemUTC(), () -> setup,
                     new ManagementEditingState());
-            identity.setup(setup, "admin@example.test");
-            assertThat(smtp.messages()).hasSize(1);
-            assertThat(smtp.messages().getFirst()).contains("From: operator@example.test", "To: admin@example.test",
-                    "https://console.example.test/base/management/password/set?token=")
-                    .doesNotContain("localhost", "127.0.0.1");
-            assertThat(accounts.byEmail("admin@example.test").active()).isFalse();
-            identity.setup(setup, "admin@example.test");
-            assertThat(smtp.messages()).hasSize(2);
-            String token = linkToken(smtp.messages().getLast());
-            identity.redeem("set", token, "Long Password 123!");
+            identity.setup(setup, "admin@example.test", "Long Password 123!", "Long Password 123!");
+            assertThat(smtp.messages()).isEmpty();
             assertThat(accounts.byEmail("admin@example.test").active()).isTrue();
-            assertThatThrownBy(() -> identity.setup(setup, "other@example.test"))
+            assertThatThrownBy(() -> identity.setup(setup, "other@example.test", "Long Password 123!", "Long Password 123!"))
                     .isInstanceOf(ManagementIdentityService.Rejected.class);
             var invite = identity.invite("viewer@example.test", "viewer");
             assertThat(invite.active()).isFalse();

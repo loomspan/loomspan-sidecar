@@ -63,23 +63,12 @@ class ManagementMailHttpIntegrationTest {
         assertThat(setupPage).contains("one-time operator setup credential", "name='_csrf'").doesNotContain(SETUP);
         String csrf = formCsrf(setupPage);
         var setup = browser.post("/api/management/setup", "{\"credential\":\"" + SETUP
-                + "\",\"email\":\"Admin@Example.Test\"}", csrf);
+                + "\",\"email\":\"Admin@Example.Test\",\"password\":\"Long Password 123!\",\"confirmation\":\"Long Password 123!\"}", csrf);
         assertThat(setup.statusCode()).isEqualTo(202);
-        assertThat(browser.get("/management/setup").body()).contains("address is reserved").doesNotContain(SETUP);
-        assertThat(smtp.messages()).hasSize(1);
-        assertThat(smtp.messages().getFirst()).contains("From: operator@example.test",
-                "To: admin@example.test", "https://console.example.test/management/password/set?token=")
-                .doesNotContain("evil.example");
-        String token = linkToken(smtp.messages().getFirst());
-        assertThat(accounts.byEmail("admin@example.test").active()).isFalse();
-        var prelogin = browser.postForm("/management/login", "email=admin%40example.test&password=Long+Password+123%21&_csrf=" + csrf);
-        assertThat(prelogin.headers().firstValue("Location").orElseThrow()).endsWith("/management/login?error");
-        assertThat(browser.post("/api/management/password/set", "{\"token\":\"" + token
-                + "\",\"password\":\"Long Password 123!\"}", csrf).statusCode()).isEqualTo(204);
+        assertThat(smtp.messages()).isEmpty();
+        assertThat(accounts.byEmail("admin@example.test").active()).isTrue();
         assertThat(browser.get("/management/setup").body()).contains("Management setup is complete")
                 .doesNotContain("name='credential'");
-        assertThat(browser.post("/api/management/password/set", "{\"token\":\"" + token
-                + "\",\"password\":\"Long Password 123!\"}", csrf).statusCode()).isEqualTo(400);
         assertThat(browser.postForm("/management/login", "email=admin%40example.test&password=Long+Password+123%21&_csrf=" + csrf)
                 .statusCode()).isEqualTo(302);
         String sessionCsrf = jsonCsrf(browser.get("/api/management/session").body());

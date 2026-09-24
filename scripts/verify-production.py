@@ -193,7 +193,10 @@ def main():
     origin = f"https://localhost:{https_port}"
     email = "admin@example.test"
     password = "Long Password 123!"
-    setup = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+    setup_result = image.run("docker", "run", "--rm", args.image, "admin", "generate-setup-token",
+                             capture=True, timeout=30)
+    setup = setup_result.stdout.strip()
+    assert re.fullmatch(r"[A-Za-z0-9_-]{43}", setup)
     compose = ["docker", "compose", "--project-name", project,
                "-f", str(ROOT / "examples/production/compose.yaml")]
     with tempfile.TemporaryDirectory(prefix="sidecar-production-") as temporary:
@@ -207,8 +210,8 @@ def main():
             "JWT_ISSUER_URI": "http://host:8081", "JWT_AUDIENCE": "loomspan-sidecar",
             "MODEL_DRIVER": "openai", "MODEL_BASE_URL": "http://host:8081/v1",
             "MODEL_API_KEY": "fixture-only", "MODEL_NAME": "deterministic-planner",
-            "SETUP_TOKEN": "", "SMTP_FROM": "sidecar@example.test", "EXTERNAL_BASE_URL": origin,
-            "SMTP_HOST": "smtp", "SMTP_PORT": "2525", "SMTP_USERNAME": "", "SMTP_PASSWORD": "",
+            "SETUP_TOKEN": "", "SMTP_FROM": "", "EXTERNAL_BASE_URL": origin,
+            "SMTP_HOST": "", "SMTP_PORT": "2525", "SMTP_USERNAME": "", "SMTP_PASSWORD": "",
             "SMTP_AUTH": "false", "SMTP_STARTTLS": "false", "URL_VARIABLES": "TARGET_URL",
             "TARGET_URL": "http://host:8081"}
         compose_environment = dict(os.environ)
@@ -302,18 +305,23 @@ def main():
             wait(lambda: send(opener, origin + "/management/setup")[0] == 200, "setup page")
             page = need(*send(opener, origin + "/management/setup"), 200)
             need(*send(opener, origin + "/api/management/setup", "POST",
-                       {"credential": setup, "email": email}, csrf_from(page)), 202)
+                       {"credential": setup, "email": email, "password": password,
+                        "confirmation": password}, csrf_from(page)), 202)
             mail_url = f"http://127.0.0.1:{smtp_port}/messages"
-            messages = wait(lambda: json.loads(send(plain, mail_url)[1]) or None, "captured setup email")
-            assert len(messages) == 1 and "To: admin@example.test" in messages[0]
-            assert "From: sidecar@example.test" in messages[0]
-            match = re.search(re.escape(origin) + r"/management/password/set\?token=[A-Za-z0-9_-]{43}", messages[0])
-            assert match, "setup email did not use the trusted HTTPS origin"
-            browser(origin, email, password, match.group(0))
+            assert json.loads(send(plain, mail_url)[1]) == []
+            browser(origin, email, password)
             print("PASS Chromium HTTPS setup, login, and Secure session cookie", flush=True)
+
+            values["SMTP_FROM"] = "sidecar@example.test"
+            values["SMTP_HOST"] = "smtp"
+            write_env()
+            image.run(*command, "up", "-d", "--force-recreate", "sidecar",
+                      env=compose_environment, timeout=120)
+            wait(lambda: send(opener, origin + "/management/login")[0] == 200, "mail-enabled login")
 
             print("CHECK management API login", flush=True)
             session_csrf = login(opener, origin, email, password)
+            messages = json.loads(send(plain, mail_url)[1])
             mail_count = len(messages)
             users = {}
             for role in ("editor", "viewer"):
@@ -409,10 +417,13 @@ def main():
             second_project = project + "-destination"
             second_port, second_host_port, second_smtp_port = port(), port(), port()
             second_origin = f"https://localhost:{second_port}"
+            second_setup = image.run("docker", "run", "--rm", args.image, "admin", "generate-setup-token",
+                                     capture=True, timeout=30).stdout.strip()
+            assert re.fullmatch(r"[A-Za-z0-9_-]{43}", second_setup) and second_setup != setup
             second_values = dict(values, HTTPS_PORT=str(second_port), HTTP_PORT=str(port()),
                                  EXTERNAL_BASE_URL=second_origin,
                                  TARGET_URL="http://fixture-destination:8081", URL_VARIABLES="",
-                                 SETUP_TOKEN=setup)
+                                 SETUP_TOKEN=second_setup)
             second_env = root / "destination.env"
             second_env.write_text("".join(f"{key}={value}\n" for key, value in second_values.items()))
             second_environment = dict(os.environ, **second_values)
@@ -437,15 +448,9 @@ def main():
                      "destination setup")
                 page = need(*send(second_client, second_origin + "/management/setup"), 200)
                 need(*send(second_client, second_origin + "/api/management/setup", "POST",
-                           {"credential": setup, "email": "destination-admin@example.test"}, csrf_from(page)), 202)
-                second_mail = f"http://127.0.0.1:{second_smtp_port}/messages"
-                message = wait(lambda: (lambda mail: mail[-1] if mail else None)(
-                    json.loads(send(plain, second_mail)[1])), "destination setup mail")
-                assert "To: destination-admin@example.test" in message
-                link = re.search(re.escape(second_origin) +
-                                 r"/management/password/set\?token=[A-Za-z0-9_-]{43}", message)
-                assert link
-                browser(second_origin, "destination-admin@example.test", password, setup_link=link.group(0))
+                           {"credential": second_setup, "email": "destination-admin@example.test",
+                            "password": password, "confirmation": password}, csrf_from(page)), 202)
+                browser(second_origin, "destination-admin@example.test", password)
                 second_csrf = login(second_client, second_origin, "destination-admin@example.test", password)
                 second_token = json.loads(need(*send(plain, f"http://127.0.0.1:{second_host_port}/token"), 200))[
                     "access_token"]
@@ -638,6 +643,29 @@ def main():
             assert execute(opener, origin, token, "identityLeaf")["configurationSnapshotId"] == snapshot
             assert execute(opener, origin, token, "quickstartPlanner")["configurationSnapshotId"] == snapshot
             print("PASS stopped database-set restore with UID 10001 account/config activation", flush=True)
+
+            busy_reset = image.run(*command, "run", "--rm", "--no-deps", "sidecar",
+                                   "admin", "issue-password-reset", "--database", "/sidecar/data/sidecar.db",
+                                   "--email", email, env=compose_environment, capture=True,
+                                   check=False, timeout=60)
+            assert busy_reset.returncode != 0 and not busy_reset.stdout
+            image.run(*command, "stop", "sidecar", env=compose_environment, timeout=60)
+            offline_reset = image.run(*command, "run", "--rm", "--no-deps", "sidecar",
+                                      "admin", "issue-password-reset", "--database", "/sidecar/data/sidecar.db",
+                                      "--email", email, env=compose_environment, capture=True, timeout=60)
+            assert re.fullmatch(r"[A-Za-z0-9_-]{43}\n?", offline_reset.stdout)
+            image.run(*command, "start", "sidecar", env=compose_environment, timeout=60)
+            wait(lambda: send(client(), origin + "/management/password/reset")[0] == 200,
+                 "manual reset page")
+            recovery_client = client()
+            manual_page = need(*send(recovery_client, origin + "/management/password/reset"), 200)
+            assert "name='token'" in manual_page and "type='password'" in manual_page
+            replacement = "Final Recovery Password 1!"
+            need(*send(recovery_client, origin + "/api/management/password/reset", "POST",
+                       {"token": offline_reset.stdout.strip(), "password": replacement},
+                       csrf_from(manual_page)), 204)
+            assert login(client(), origin, email, replacement)
+            print("PASS production stopped-volume offline reset and manual redemption", flush=True)
 
             image.run(sys.executable, str(ROOT / "scripts/verify-shutdown.py"), "--image", args.image,
                       "--database-dir", str(backup), "--api-port", str(port()),
