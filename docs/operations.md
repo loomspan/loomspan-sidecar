@@ -750,11 +750,14 @@ containing the executable JAR, a reproducible ZIP archive, and SHA-256 files.
 Local preparation is intentionally nonpublishing:
 
 ```powershell
-python scripts/prepare-release.py --validate-only --project-version 1.0.0-beta.5 --loomspan-version 1.0.0-beta.5
+python scripts/prepare-release.py --validate-only --project-version 1.0.0-beta.1 --loomspan-version 1.0.0-beta.5 --tag v1.0.0-beta.1
 ```
 
-Sidecar development is on `1.0.0-beta.5-SNAPSHOT` for the
+Sidecar development is on `1.0.0-beta.1-SNAPSHOT` for the
 [management console roadmap](../ai/thoughts/phases/2026-09-16-management-console-roadmap.md).
 The framework dependency remains `1.0.0-beta.5-SNAPSHOT`. Final dependency changes,
 release tags and publication follow the separate release verification workflow;
 the framework must be published and resolvable before final Sidecar verification.
+Sidecar and framework versions advance independently. The first planned Sidecar
+release is `1.0.0-beta.1`, tagged `v1.0.0-beta.1`, bundling framework
+`1.0.0-beta.5`. Historical acceptance evidence retains the versions tested then.

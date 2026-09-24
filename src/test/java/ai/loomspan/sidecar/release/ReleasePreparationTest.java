@@ -35,10 +35,10 @@ class ReleasePreparationTest {
                 "if result.returncode", "database-first Sidecar startup",
                 "require_cleanup(\"docker\", \"compose\"");
 
-        assertThat(run("1.0.0-beta.5", "1.0.0-beta.5", "v1.0.0-beta.5")).isZero();
-        assertThat(run("1.0.0-beta.5-SNAPSHOT", "1.0.0-beta.5", "v1.0.0-beta.5-SNAPSHOT")).isNotZero();
-        assertThat(run("1.0.0-beta.5", "1.0.0-beta.3", "v1.0.0-beta.5")).isNotZero();
-        assertThat(run("1.0.0-beta.5", "1.0.0-beta.5", "vwrong")).isNotZero();
+        assertThat(run("1.0.0-beta.1", "1.0.0-beta.5", "v1.0.0-beta.1")).isZero();
+        assertThat(run("1.0.0-beta.1-SNAPSHOT", "1.0.0-beta.5", "v1.0.0-beta.1-SNAPSHOT")).isNotZero();
+        assertThat(run("1.0.0-beta.1", "1.0.0-beta.3", "v1.0.0-beta.1")).isNotZero();
+        assertThat(run("1.0.0-beta.1", "1.0.0-beta.5", "vwrong")).isNotZero();
     }
 
     private static int run(String project, String loomspan, String tag) throws Exception {

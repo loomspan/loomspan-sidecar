@@ -52,6 +52,9 @@
   beta 5.
 - Prove Sidecar integration against the snapshot before final framework release
   checks using local integration evidence. Publish the framework to Maven Central
-  first, then switch Sidecar to `1.0.0-beta.5` for its final build/tests and final
-  commit. Hosted CI resolves that published artifact; its execution is deferred
+  first, then switch Sidecar's framework dependency to `1.0.0-beta.5` for its
+  final build/tests and final commit. Hosted CI resolves that published artifact; its execution is deferred
   until publication. Verify before releasing Sidecar. Never overwrite a release.
+- Sidecar and framework versions advance independently. Sidecar development is
+  `1.0.0-beta.1-SNAPSHOT`; its first planned release is `1.0.0-beta.1`, tagged
+  `v1.0.0-beta.1`. Keep the framework dependency pinned to its tested version.
