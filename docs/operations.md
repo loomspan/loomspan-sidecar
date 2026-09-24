@@ -737,7 +737,9 @@ Error Prone annotations use the transitive dependency version; Sidecar does not
 require a separate annotation-version override.
 
 Push and pull-request CI is prepared to override the dependency with published
-`1.0.0-beta.5`. Hosted verification is deferred until that artifact exists on
+`1.0.0-beta.5` through job-level `MAVEN_ARGS`, including Maven subprocesses
+launched by the production Compose browser verifier. Local verification keeps
+the POM's snapshot default. Hosted verification is deferred until that artifact exists on
 Maven Central. The delivery order is local Sidecar integration against the
 snapshot, framework release checks and publication, then Sidecar verification
 against the released artifact. This project does not build framework source in
