@@ -6,7 +6,7 @@ import importlib.util
 import json
 import os
 import pathlib
-import shutil
+import subprocess
 import tempfile
 import time
 
@@ -38,14 +38,9 @@ def verify(args, cutoff):
     management_url = f"http://127.0.0.1:{args.management_port}"
     with tempfile.TemporaryDirectory(prefix="loomspan-shutdown-") as directory:
         root = pathlib.Path(directory)
-        data = root / "data"
-        data.mkdir()
         if not args.validate_only:
-            source = pathlib.Path(args.database_dir)
+            source = pathlib.Path(args.database_dir).resolve()
             assert (source / "sidecar.db").is_file(), "stopped test database is missing sidecar.db"
-            for suffix in ("", "-wal", "-shm"):
-                part = source / ("sidecar.db" + suffix)
-                if part.exists(): shutil.copy2(part, data / part.name)
         override = root / "override.json"
         override.write_text(json.dumps({"services": {
             "host": {"entrypoint": ["python", "/host/verification.py"], "volumes": [
@@ -55,16 +50,23 @@ def verify(args, cutoff):
                                     "LOOMSPAN_MODELS_PRIMARY_CONNECTION": "local",
                                     "LOOMSPAN_MODELS_PRIMARY_PROVIDER_MODEL": "deterministic-planner",
                                     "LOOMSPAN_SIDECAR_URL_VARIABLES": "TARGET_URL",
-                                    "TARGET_URL": "http://host:8081"}, "volumes": [
-                {"type": "bind", "source": str(data), "target": "/sidecar/data"}]}
+                                    "TARGET_URL": "http://host:8081"}}
         }}))
         compose = ["docker", "compose", "-p", project, "-f", str(ROOT / "examples/quickstart/compose.yaml"),
                    "-f", str(override)]
         if args.validate_only:
             image.run(*compose, "config", "--quiet", env=environment, timeout=15)
             return
-        container = None
         try:
+            # Keep the source read-only; initialize the Compose volume for the image's UID.
+            image.run(*compose, "run", "--rm", "--no-deps", "--user", "0:0",
+                      "--volume", f"{source}:/backup:ro", "--entrypoint", "sh", "sidecar", "-c",
+                      "cp -p /backup/sidecar.db /sidecar/data/ && "
+                      "for suffix in -wal -shm; do "
+                      "if test -f /backup/sidecar.db$suffix; then "
+                      "cp -p /backup/sidecar.db$suffix /sidecar/data/ || exit 1; fi; done && "
+                      "chown -R 10001:10001 /sidecar/data && chmod 700 /sidecar/data && "
+                      "chmod 600 /sidecar/data/sidecar.db*", env=environment, timeout=30)
             image.run(*compose, "up", "-d", "--build", env=environment)
             image.wait_for(management_url + "/actuator/health/readiness")
             token = json.loads(image.request(host_url + "/token")[1])["access_token"]
@@ -97,8 +99,9 @@ def verify(args, cutoff):
             print(f"PASS {mode}: SIGTERM exit {state['ExitCode']} in {elapsed:.2f}s; {progress}", flush=True)
         finally:
             try:
-                if container:
-                    image.run("docker", "logs", container, check=False, timeout=15)
+                image.run(*compose, "logs", "--no-color", env=environment, check=False, timeout=15)
+            except (OSError, subprocess.TimeoutExpired) as failure:
+                print(f"Could not collect shutdown fixture logs: {failure}", flush=True)
             finally:
                 image.require_cleanup(*compose, "down", "--volumes", "--remove-orphans", env=environment)
 

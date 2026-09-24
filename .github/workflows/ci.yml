@@ -30,6 +30,7 @@ jobs:
           ./mvnw -B -ntp verify
       - name: Build and verify image without publishing
         run: |
+          python scripts/test_verify_shutdown.py
           docker build --tag loomspan-sidecar:ci .
           python scripts/verify-image.py --image loomspan-sidecar:ci
           python scripts/verify-production.py --image loomspan-sidecar:ci

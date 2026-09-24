@@ -52,8 +52,12 @@ deadline:
 python scripts/verify-shutdown.py --image loomspan-sidecar:sc5-local --database-dir C:/path/to/stopped-test-data
 ```
 
-The shutdown verifier copies that database into isolated Compose projects and
-uses ports `28080`, `28081`, and `29091` (overridable with the same port flags).
+The shutdown verifier mounts the source database directory read-only and copies
+the database set into each isolated Compose project's disposable named volume,
+with ownership `10001:10001` and owner-only read/write access. This also works
+on Linux CI runners where host bind mounts retain host ownership. It prints
+Compose logs before cleanup, including when startup readiness fails, and uses
+ports `28080`, `28081`, and `29091` (overridable with the same port flags).
 Its test callback gate holds admitted execution across SIGTERM. One case
 releases it and checks completion; the other holds it past a three-second
 framework budget and checks bounded exit without a forced kill.
