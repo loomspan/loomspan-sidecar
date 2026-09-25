@@ -71,6 +71,16 @@ an unavailable or expired result. See the [integration guide](docs/integration.m
 for JWT configuration, skill and REST route authoring, request examples, results,
 and limits.
 
+## Install agent guidance
+
+Read the official [loomspan-install instructions](https://github.com/loomspan/loomspan-framework/tree/main/agent-skills/loomspan-install) through your agent host. Select the exact Sidecar target from your deployment metadata; no application POM, Loomspan checkout or live server is required. The installer reads that release's POM to select matching framework guidance and defaults to the host's project scope. Updates change only selected skills, not dependencies or runtime targets.
+
+The sibling skills are `loomspan` (orientation), `loomspan-docs` (framework semantics), `loomspan-console` (runtime evidence), and [loomspan-sidecar-authoring](agent-skills/loomspan-sidecar-authoring/SKILL.md) (server setup and direct API authoring). Install complete exact-revision folders through the host, including their resources and client.
+
+Current source is not a released installable combination: Sidecar pins framework beta.5-SNAPSHOT while framework main is beta.6-SNAPSHOT; older beta.5 sources lack the renamed family. Missing exact sources stop preflight, with no main/latest fallback or dependency upgrade. Published releases are never overwritten to add these skills.
+
+Future `loomspan-sdk-<language>` skills live with their SDKs and use their own dependency versions and published compatibility facts. They own application lifecycle, security integration, request context and callbacks; Sidecar guidance owns server setup. Equal versions do not establish compatibility. Direct API users need no SDK.
+
 ## Planned SDKs
 
 Client SDKs for Sidecar's public HTTP API will live in this repository under

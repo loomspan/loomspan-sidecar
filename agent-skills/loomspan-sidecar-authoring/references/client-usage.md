@@ -1,10 +1,10 @@
 # Client setup and commands
 
-Requires Python 3.9 or newer and only its standard library. Copy `agent-skills/loomspan-sidecar-authoring` to a coding agent's supported skill directory or provide the `SKILL.md` path in that environment. The client can also run directly; there is no agent allowlist or proprietary dependency. From this repository:
+Requires Python 3.9 or newer and only its standard library. Resolve the bundled [client](../client/sidecar_authoring.py) from the installed skill root supplied by the host; the customer's current directory remains their application project. There is no agent allowlist or proprietary dependency. Set `$skillRoot` below to that host-resolved absolute path, not a guessed agent directory.
 
 ```powershell
 # Inject LOOMSPAN_SIDECAR_MANAGEMENT_TOKEN into this process externally.
-$client = 'agent-skills/loomspan-sidecar-authoring/client/sidecar_authoring.py'
+$client = Join-Path $skillRoot 'client/sidecar_authoring.py'
 $url = 'https://sidecar.example.test'
 python $client --url $url current
 python $client --url $url draft

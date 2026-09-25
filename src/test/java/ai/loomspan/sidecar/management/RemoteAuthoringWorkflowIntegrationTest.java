@@ -69,7 +69,7 @@ class RemoteAuthoringWorkflowIntegrationTest {
     private final ObjectMapper mapper = new ObjectMapper();
     private final HttpClient http = HttpClient.newHttpClient();
     private static final Path CLIENT = Path.of("agent-skills/loomspan-sidecar-authoring/client/sidecar_authoring.py");
-    private static final Path EXAMPLE = Path.of("examples/remote-authoring");
+    private static final Path EXAMPLE = Path.of("agent-skills/loomspan-sidecar-authoring/examples/remote-authoring");
 
     @BeforeEach void clearPriorLease() {
         synchronized (editingState) { editingState.clearLease(); }

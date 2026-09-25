@@ -653,7 +653,7 @@ history and rollback workflows use these same contracts.
 <!-- configuration-reference:end -->
 
 The route schema and `${NAME}` bindings are described in
-[REST skill routes](integration.md#rest-skill-routes). Framework startup discovery uses the
+[REST skill routes](../agent-skills/loomspan-sidecar-authoring/references/integration.md#rest-skill-routes). Framework startup discovery uses the
 packaged empty source; framework shutdown remains
 `loomspan.shutdown.timeout`; inbound server and outbound mTLS configuration
 remains under standard `server.ssl.*` and `spring.ssl.bundle.*` namespaces. The

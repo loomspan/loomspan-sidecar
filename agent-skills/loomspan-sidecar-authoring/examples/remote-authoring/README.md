@@ -4,4 +4,6 @@ The example manifest and route describe `GET /records/{recordId}`. The local int
 
 The local Java walkthrough test exercises these same YAML assets with a controlled callback. It intentionally saves a malformed `rest: false` candidate first, reads structured validation issues, repairs the saved candidate, and then publishes and executes. The application callback is a test fixture, not an API for accessing application source.
 
-The management token is used only to author. Execution uses an issuer-signed JWT with `RECORD_READER`; the target verifies that JWT and record ownership independently. A foreign record must yield a failed execution and a callback denial. `docs/integration.md` describes URL variables, execution polling, and optional bundle transfer.
+The management token is used only to author. Execution uses an issuer-signed JWT with `RECORD_READER`; the target verifies that JWT and record ownership independently. A foreign record must yield a failed execution and a callback denial. The bundled [integration guide](../../references/integration.md) describes URL variables, execution polling, and optional bundle transfer.
+
+Use [record.yaml](record.yaml) and [rest-routes.yaml](rest-routes.yaml) together.
