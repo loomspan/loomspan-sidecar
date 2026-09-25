@@ -659,6 +659,11 @@ packaged empty source; framework shutdown remains
 remains under standard `server.ssl.*` and `spring.ssl.bundle.*` namespaces. The
 image honors those standard Boot environment and command-line overrides.
 
+The production verifier uses labeled editing sessions and exact draft revisions.
+Import and rollback checks review and load content into the private draft, assert
+that the published snapshot is unchanged, then explicitly validate and publish.
+It also checks stale-base rejection and lease release after publication.
+
 ## Phase 6 local acceptance (2026-09-19)
 
 Local integration was checked against the developer-installed

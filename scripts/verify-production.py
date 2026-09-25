@@ -92,11 +92,22 @@ def get_bytes(opener, url):
 
 
 def draft(opener, origin, csrf):
-    tab = str(uuid.uuid4())
     grant = json.loads(need(*send(opener, origin + "/api/management/editing/lease", "POST",
-                                 {"tabId": tab}, csrf), 200))
-    return {"tabId": tab, "grantId": grant["grantId"],
-            "expectedCandidateId": grant["draft"]["candidateId"]}
+                                 {"label": "Production verifier"}, csrf), 200))
+    return candidate(grant, grant["draft"])
+
+
+def candidate(lease, saved):
+    return {key: lease[key] for key in ("editingSessionId", "generation")} | {
+        key: saved[key] for key in ("draftId", "revision", "baseSnapshotId")}
+
+
+def publish_draft(opener, origin, csrf, cap):
+    checked = json.loads(need(*send(opener, origin + "/api/management/editing/draft/validate", "POST",
+                                   cap, csrf), 200))
+    assert checked["validation"]["successful"], checked
+    return json.loads(need(*send(opener, origin + "/api/management/configuration/publish", "POST",
+                                 candidate(cap, checked), csrf), 200))
 
 
 def wait(action, description, seconds=90):
@@ -135,11 +146,7 @@ def login(opener, origin, email, password):
 
 
 def publish_fixture(opener, origin, csrf):
-    tab = str(uuid.uuid4())
-    grant = json.loads(need(*send(opener, origin + "/api/management/editing/lease", "POST",
-                                 {"tabId": tab}, csrf), 200))
-    name = grant["grantId"]
-    candidate = grant["draft"]["candidateId"]
+    cap = draft(opener, origin, csrf)
     fixture = ROOT / "examples/quickstart/sidecar"
     skill_documents = []
     for filename in ("identity-leaf.yaml", "detail-leaf.yaml", "planner.yaml"):
@@ -148,14 +155,9 @@ def publish_fixture(opener, origin, csrf):
     routes = (fixture / "rest-routes.yaml").read_text().replace(
         "${QUICKSTART_HOST_URL:http://host:8081}", "${TARGET_URL}")
     saved = json.loads(need(*send(opener, origin + "/api/management/editing/draft", "PUT",
-                                 {"tabId": tab, "grantId": name, "expectedCandidateId": candidate,
+                                 {**cap,
                                   "skillDocuments": skill_documents, "restRoutesYaml": routes}, csrf), 200))
-    cap = {"tabId": tab, "grantId": name, "expectedCandidateId": saved["candidateId"]}
-    checked = json.loads(need(*send(opener, origin + "/api/management/editing/draft/validate", "POST",
-                                   cap, csrf), 200))
-    assert checked["validation"]["successful"], checked
-    published = json.loads(need(*send(opener, origin + "/api/management/configuration/publish", "POST",
-                                     cap, csrf), 200))
+    published = publish_draft(opener, origin, csrf, candidate(cap, saved))
     assert published["localId"]
     return published["localId"]
 
@@ -342,7 +344,7 @@ def main():
                 assert json.loads(need(*send(user, origin + "/api/management/session"), 200))["role"] == role
                 users[role] = (user, user_csrf)
             need(*send(users["viewer"][0], origin + "/api/management/editing/lease", "POST",
-                       {"tabId": str(uuid.uuid4())}, users["viewer"][1]), 403)
+                       {"label": "Viewer"}, users["viewer"][1]), 403)
             need(*send(users["editor"][0], origin + "/api/management/accounts", "POST",
                        {"email": "forbidden@example.test", "role": "viewer"}, users["editor"][1]), 403)
             need(*send(opener, origin + "/api/management/accounts", "POST",
@@ -467,7 +469,7 @@ def main():
                     "/api/management/editing/draft"), 200))
                 bad_binding = json.loads(need(*multipart(second_client, second_origin +
                     "/api/management/configuration/import/review", exported, second_csrf), 200))
-                assert not bad_binding["validation"]["successful"] and bad_binding["reviewId"] is None
+                assert not bad_binding["validation"]["successful"]
                 assert json.loads(need(*send(second_client, second_origin +
                     "/api/management/editing/draft"), 200))["draftId"] == before["draftId"]
                 assert json.loads(need(*send(second_client, second_origin +
@@ -494,23 +496,25 @@ def main():
                 review = json.loads(need(*multipart(second_client, second_origin +
                     "/api/management/configuration/import/review", exported, second_csrf), 200))
                 assert review["validation"]["successful"] and review["sourceSnapshotId"] == snapshot
-                assert review["observation"]["grantId"] == held["grantId"]
-                fields = {"reviewId": review["reviewId"], "expectedPublishedId": second_current,
-                          "expectedGrantId": held["grantId"]}
-                stale = dict(fields, expectedPublishedId=str(uuid.uuid4()))
-                need(*multipart(second_client, second_origin + "/api/management/configuration/import/confirm",
+                fields = held
+                stale = dict(fields, baseSnapshotId=str(uuid.uuid4()))
+                need(*multipart(second_client, second_origin + "/api/management/configuration/import/load",
                                 exported, second_csrf, stale), 409)
                 assert json.loads(need(*send(second_client, second_origin +
                     "/api/management/editing/draft"), 200))["draftId"] == before["draftId"]
-                imported = json.loads(need(*multipart(second_client, second_origin +
-                    "/api/management/configuration/import/confirm", exported, second_csrf, fields), 200))
+                loaded = json.loads(need(*multipart(second_client, second_origin +
+                    "/api/management/configuration/import/load", exported, second_csrf, fields), 200))
+                assert loaded["revision"] > before["revision"] and loaded["sourceSnapshotId"] == snapshot
+                assert json.loads(need(*send(second_client, second_origin +
+                    "/api/management/configuration/current"), 200))["published"]["localId"] == second_current
+                imported = publish_draft(second_client, second_origin, second_csrf, candidate(held, loaded))
                 imported_id = imported["localId"]
                 assert imported_id not in (snapshot, second_current) and imported["sourceId"] == snapshot
                 assert all(item["localId"] != snapshot for item in json.loads(need(*send(second_client,
                     second_origin + "/api/management/configuration/history"), 200)))
                 need(*send(second_client, second_origin + "/api/management/editing/draft"), 404)
-                need(*send(second_client, second_origin + "/api/management/editing/lease/activity", "POST",
-                           {"tabId": held["tabId"], "grantId": held["grantId"]}, second_csrf), 409)
+                need(*send(second_client, second_origin + "/api/management/editing/lease/renew", "POST",
+                           {key: held[key] for key in ("editingSessionId", "generation")}, second_csrf), 409)
                 assert execute(second_client, second_origin, second_token,
                                "identityLeaf")["configurationSnapshotId"] == imported_id
                 verified = json.loads(need(*send(plain, f"http://127.0.0.1:{second_host_port}/status"), 200))[
@@ -527,11 +531,14 @@ def main():
                 rollback_review = json.loads(need(*send(second_client, second_origin +
                     f"/api/management/configuration/rollback/{imported_id}/review", "POST", {}, second_csrf), 200))
                 assert rollback_review["validation"]["successful"]
-                rolled = json.loads(need(*send(second_client, second_origin +
-                    "/api/management/configuration/rollback/confirm", "POST",
-                    {"sourceId": imported_id, "reviewId": rollback_review["reviewId"],
-                     "expectedPublishedId": changed, "expectedGrantId": rollback_held["grantId"]},
-                    second_csrf), 200))
+                loaded = json.loads(need(*send(second_client, second_origin +
+                    f"/api/management/configuration/rollback/{imported_id}/load", "POST",
+                    rollback_held, second_csrf), 200))
+                assert loaded["sourceSnapshotId"] == imported_id
+                assert json.loads(need(*send(second_client, second_origin +
+                    "/api/management/configuration/current"), 200))["published"]["localId"] == changed
+                rolled = publish_draft(second_client, second_origin, second_csrf,
+                                       candidate(rollback_held, loaded))
                 assert rolled["localId"] not in (imported_id, changed, snapshot)
                 assert rolled["sourceId"] == imported_id
                 need(*send(second_client, second_origin + "/api/management/editing/draft"), 404)

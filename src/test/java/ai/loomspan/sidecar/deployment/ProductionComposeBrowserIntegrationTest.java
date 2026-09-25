@@ -69,14 +69,19 @@ class ProductionComposeBrowserIntegrationTest {
             Page editing = signIn(editor, origin, editorEmail, password);
             editing.navigate(origin + "/management/configuration/edit");
             editing.locator("#editor-acquire").click();
-            editing.locator("#editor-owner").getByText("You are editing in this tab.").waitFor();
+            editing.locator("#editor-owner").getByText("You hold editing control.").waitFor();
             String original = editing.locator("#editor-rest").inputValue();
-            editing.locator("#editor-rest").fill(original + "\n# private compose browser edit");
-            editing.locator("#editor-save").getByText("Saved to private draft").waitFor();
+            var saved = editing.waitForResponse(response -> response.url().endsWith("/api/management/editing/draft")
+                    && response.request().method().equals("PUT"),
+                    () -> editing.locator("#editor-rest").fill(original + "\n# private compose browser edit"));
+            assertThat(saved.status()).isEqualTo(200);
+            String staleSave = saved.request().postData();
+            editing.locator("#editor-save").getByText("Saved draft revision",
+                    new com.microsoft.playwright.Locator.GetByTextOptions().setExact(false)).waitFor();
 
             Page takeover = signIn(admin, origin, adminEmail, password);
             takeover.navigate(origin + "/management/configuration/edit");
-            takeover.locator("#editor-owner").getByText("Another editor is editing.").waitFor();
+            takeover.locator("#editor-owner").getByText("Editing control: Console.").waitFor();
             assertThat(takeover.locator("#editor-rest").inputValue()).doesNotContain("private compose browser edit");
             assertThat(takeover.locator("#editor-rest").isEditable()).isFalse();
             assertThat(takeover.evaluate("""
@@ -84,14 +89,25 @@ class ProductionComposeBrowserIntegrationTest {
                     """)).isEqualTo(404);
             takeover.onDialog(dialog -> dialog.accept());
             takeover.locator("#editor-takeover").click();
-            takeover.locator("#editor-owner").getByText("You are editing in this tab.").waitFor();
-            editing.locator("#editor-rest").fill(original + "\n# stale browser write");
-            editing.locator("#editor-message").getByText("Editing state changed", new com.microsoft.playwright.Locator.GetByTextOptions()
-                    .setExact(false)).waitFor();
+            takeover.locator("#editor-owner").getByText("You hold editing control.").waitFor();
+            assertThat(editing.evaluate("""
+                    async body => {
+                      const session = await (await fetch('/api/management/session')).json();
+                      const draft = await (await fetch('/api/management/editing/draft')).json();
+                      const request = {...JSON.parse(body), revision: draft.revision};
+                      return (await fetch('/api/management/editing/draft', {method: 'PUT', body: JSON.stringify(request),
+                        headers: {'Content-Type': 'application/json', 'X-CSRF-TOKEN': session.csrfToken}})).status;
+                    }
+                    """, staleSave)).isEqualTo(409);
+            editing.waitForFunction("() => document.getElementById('editor-rest').readOnly");
+            assertThat(editing.locator("#editor-rest").inputValue()).contains("private compose browser edit");
             takeover.locator("#editor-rest").fill(original + "\n# accepted compose browser update");
+            takeover.locator("#editor-save").getByText("Saved draft revision",
+                    new com.microsoft.playwright.Locator.GetByTextOptions().setExact(false)).waitFor();
+            takeover.locator("#editor-recheck").click();
             takeover.locator("#editor-validation-state").getByText("Valid").waitFor();
             takeover.locator("#editor-publish").click();
-            takeover.locator("#editor-outcome").getByText("Published successfully.",
+            takeover.locator("#editor-message").getByText("Published configuration",
                     new com.microsoft.playwright.Locator.GetByTextOptions().setExact(false)).waitFor();
             assertThat(takeover.locator("#editor-publish").isDisabled()).isTrue();
             assertThat(takeover.evaluate("""
@@ -117,7 +133,7 @@ class ProductionComposeBrowserIntegrationTest {
             page.navigate(origin + "/management/configuration/import");
             assertThat(page.locator("#import-file").isVisible()).isTrue();
             assertThat(page.locator("#import-warning").textContent())
-                    .contains("discards every private draft", "breaks the editing lease");
+                    .contains("replaces only your saved draft", "validate and publish from the editor");
         }
     }
 }
