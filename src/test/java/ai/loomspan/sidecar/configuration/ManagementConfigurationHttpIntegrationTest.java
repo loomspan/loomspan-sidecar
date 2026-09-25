@@ -65,952 +65,122 @@ class ManagementConfigurationHttpIntegrationTest {
     private final ObjectMapper json = new ObjectMapper();
     private static final String PASSWORD = "Long Password 123!";
 
-    @BeforeEach void clearEditing() { synchronized (editing) { editing.clearAll(); } }
+    @BeforeEach void clearEditing() { synchronized (editing) { editing.clearLease(); } }
 
-    @Test void editorReviewsAndConfirmsRetainedFailedSnapshotAsFreshPublication() throws Exception {
-        String email = "rollback-" + UUID.randomUUID() + "@example.test";
-        seed(email, "editor");
-        Browser editor = login(email);
-        var original = runtime.publishedSnapshot();
-        var failed = store.submit(new ManagedConfiguration(java.util.List.of(),
-                "targets: {}\nroutes: {}\n# retained rollback source\n"), null, original.localId());
-        store.revert(failed.localId(), original.localId());
-        JsonNode review = ok(editor.post("/api/management/configuration/rollback/" + failed.localId() + "/review", "{}"));
-        assertThat(review.path("sourceStatus").asText()).isEqualTo("FAILED");
-        assertThat(review.path("validation").path("successful").asBoolean()).isTrue();
-        JsonNode accepted = ok(editor.post("/api/management/configuration/rollback/confirm", rollbackBody(review)));
-        assertThat(accepted.path("localId").asText()).isNotEqualTo(failed.localId().toString());
-        assertThat(accepted.path("sourceId").asText()).isEqualTo(failed.localId().toString());
-        assertThat(accepted.path("configuration").path("restRoutesYaml").asText()).contains("retained rollback source");
-        assertThat(store.findByLocalId(failed.localId()).status()).isEqualTo(SnapshotStatus.FAILED);
-        assertThat(store.findByLocalId(failed.localId()).configuration()).isEqualTo(failed.configuration());
-        assertThat(runtime.inspect().publishedId().toString()).isEqualTo(accepted.path("localId").asText());
-    }
-
-    @Test void rollbackRequiresEditorCsrfAndFreshSourceGrantAndRuntime() throws Exception {
-        String editorEmail = "rollback-editor-" + UUID.randomUUID() + "@example.test";
-        String viewerEmail = "rollback-viewer-" + UUID.randomUUID() + "@example.test";
-        String ownerEmail = "rollback-owner-" + UUID.randomUUID() + "@example.test";
-        seed(editorEmail, "editor"); seed(viewerEmail, "viewer"); seed(ownerEmail, "editor");
-        Browser editor = login(editorEmail), viewer = login(viewerEmail), owner = login(ownerEmail);
-        UUID source = runtime.inspect().publishedId();
-        String path = "/api/management/configuration/rollback/" + source + "/review";
-        assertThat(viewer.post(path, "{}").statusCode()).isEqualTo(403);
-        assertThat(editor.postWithoutCsrf(path, "{}").statusCode()).isEqualTo(403);
-        JsonNode review = ok(editor.post(path, "{}"));
-        String body = rollbackBody(review);
-        assertThat(viewer.post("/api/management/configuration/rollback/confirm", body).statusCode()).isEqualTo(403);
-        assertThat(editor.postWithoutCsrf("/api/management/configuration/rollback/confirm", body).statusCode()).isEqualTo(403);
-        assertThat(editor.post("/api/management/configuration/rollback/confirm", body.replace(source.toString(), UUID.randomUUID().toString()))
-                .statusCode()).isEqualTo(409);
-        String tab = UUID.randomUUID().toString();
-        JsonNode grant = ok(owner.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        var stale = editor.post("/api/management/configuration/rollback/confirm", body);
-        assertThat(stale.statusCode()).isEqualTo(409);
-        assertThat(json.readTree(stale.body()).path("observation").path("grantId").asText())
-                .isEqualTo(grant.path("grantId").asText());
-        assertThat(owner.get("/api/management/editing/draft").statusCode()).isEqualTo(200);
-        JsonNode fresh = ok(editor.post(path, "{}"));
-        assertThat(fresh.path("observation").path("leaseOwner").asText()).isEqualTo(ownerEmail);
-        ok(editor.post("/api/management/configuration/rollback/confirm", rollbackBody(fresh)));
-        assertThat(owner.get("/api/management/editing/draft").statusCode()).isEqualTo(404);
-        assertThat(editor.post("/api/management/configuration/rollback/" + UUID.randomUUID() + "/review", "{}")
-                .statusCode()).isEqualTo(409);
-    }
-
-    @Test void rollbackRejectsPrunedSourceAndChangedRuntimeBeforeCutover() throws Exception {
-        String email = "rollback-pruned-" + UUID.randomUUID() + "@example.test";
-        seed(email, "editor");
-        Browser editor = login(email);
-        var a = runtime.publishedSnapshot();
-        var source = store.submit(new ManagedConfiguration(java.util.List.of(),
-                "targets: {}\nroutes: {}\n# pruned-source\n"), null, a.localId());
-        store.revert(source.localId(), a.localId());
-        String path = "/api/management/configuration/rollback/" + source.localId() + "/review";
-        JsonNode review = ok(editor.post(path, "{}"));
-        for (int i = 0; i < 12; i++) {
-            var later = store.submit(new ManagedConfiguration(java.util.List.of(),
-                    "targets: {}\nroutes: {}\n# retained-" + i + "\n"), null, a.localId());
-            store.revert(later.localId(), a.localId());
-        }
-        store.prune(java.util.Set.of(a.localId()));
-        assertThat(store.findByLocalId(source.localId())).isNull();
-        int count = store.history().size();
-        var missing = editor.post("/api/management/configuration/rollback/confirm", rollbackBody(review));
-        assertThat(missing.statusCode()).isEqualTo(409);
-        assertThat(json.readTree(missing.body()).path("code").asText()).isEqualTo("source_not_found");
-        assertThat(store.history()).hasSize(count);
-        assertThat(runtime.inspect().publishedId()).isEqualTo(a.localId());
-
-        JsonNode fresh = ok(editor.post("/api/management/configuration/rollback/" + a.localId() + "/review", "{}"));
-        var draft = new ai.loomspan.sidecar.storage.ConfigurationDraft(a);
-        draft.replaceContent(new ManagedConfiguration(java.util.List.of(), "targets: {}\nroutes: {}\n# changed runtime\n"));
-        var frozen = draft.freeze();
-        draft.recordValidation(frozen, runtime.validate(frozen.configuration()));
-        var changed = runtime.publish(draft::validatedCandidate);
-        var stale = editor.post("/api/management/configuration/rollback/confirm", rollbackBody(fresh));
-        assertThat(stale.statusCode()).isEqualTo(409);
-        assertThat(json.readTree(stale.body()).path("code").asText()).isEqualTo("confirmation_stale");
-        assertThat(runtime.inspect().publishedId()).isEqualTo(changed.localId());
-    }
-
-    @Test
-    @DirtiesContext(methodMode = DirtiesContext.MethodMode.AFTER_METHOD)
-    void rollbackFailureStagesPreserveOrDiscardDraftsAndReportRuntimeTruth() throws Exception {
-        String requesterEmail = "rollback-fault-" + UUID.randomUUID() + "@example.test";
-        String ownerEmail = "rollback-fault-owner-" + UUID.randomUUID() + "@example.test";
-        seed(requesterEmail, "editor"); seed(ownerEmail, "editor");
-        Browser requester = login(requesterEmail), owner = login(ownerEmail);
-        UUID source = runtime.inspect().publishedId();
-        String reviewPath = "/api/management/configuration/rollback/" + source + "/review";
-        String confirmPath = "/api/management/configuration/rollback/confirm";
-        String tab = UUID.randomUUID().toString();
-        ok(owner.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        JsonNode preflight = ok(requester.post(reviewPath, "{}"));
-        runtime.hooks(new RuntimeConfigurationService.Hooks() {
-            @Override public void beforePreparation() { throw new IllegalStateException("injected"); }
-        });
-        try {
-            var failure = requester.post(confirmPath, rollbackBody(preflight));
-            assertThat(failure.statusCode()).isEqualTo(503);
-            assertThat(json.readTree(failure.body()).path("code").asText()).isEqualTo("preparation_failed");
-            assertThat(owner.get("/api/management/editing/draft").statusCode()).isEqualTo(200);
-            assertThat(runtime.inspect().publishedId()).isEqualTo(source);
-        } finally { runtime.hooks(new RuntimeConfigurationService.Hooks() {}); }
-
-        JsonNode commitReview = ok(requester.post(reviewPath, "{}"));
-        runtime.hooks(new RuntimeConfigurationService.Hooks() {
-            @Override public void beforeCommit() { throw new IllegalStateException("injected"); }
-        });
-        try {
-            var failure = requester.post(confirmPath, rollbackBody(commitReview));
-            assertThat(failure.statusCode()).isEqualTo(503);
-            assertThat(json.readTree(failure.body()).path("code").asText()).isEqualTo("commit_failed");
-            assertThat(owner.get("/api/management/editing/draft").statusCode()).isEqualTo(404);
-            assertThat(runtime.inspect().publishedId()).isEqualTo(source);
-        } finally { runtime.hooks(new RuntimeConfigurationService.Hooks() {}); }
-
-        JsonNode outcomeReview = ok(requester.post(reviewPath, "{}"));
-        runtime.hooks(new RuntimeConfigurationService.Hooks() {
-            @Override public void beforeStatus() { throw new IllegalStateException("injected"); }
-        });
-        try {
-            var failure = requester.post(confirmPath, rollbackBody(outcomeReview));
-            assertThat(failure.statusCode()).isEqualTo(503);
-            JsonNode problem = json.readTree(failure.body());
-            assertThat(problem.path("code").asText()).isEqualTo("outcome_recording_failed");
-            assertThat(problem.path("publishedId").asText()).isEqualTo(problem.path("intendedId").asText());
-            assertThat(problem.path("intendedStatus").asText()).isEqualTo("PENDING");
-            assertThat(problem.path("mutationFault").asText()).isNotBlank();
-            assertThat(requester.post(reviewPath, "{}").statusCode()).isEqualTo(503);
-        } finally { runtime.hooks(new RuntimeConfigurationService.Hooks() {}); }
-    }
-
-    @Test void acceptedRollbackContinuesAfterClientDisconnect() throws Exception {
-        String email = "rollback-disconnect-" + UUID.randomUUID() + "@example.test";
-        seed(email, "editor");
-        Browser editor = login(email);
-        UUID before = runtime.inspect().publishedId();
-        JsonNode review = ok(editor.post("/api/management/configuration/rollback/" + before + "/review", "{}"));
-        var entered = new CountDownLatch(1);
-        var release = new CountDownLatch(1);
-        runtime.hooks(new RuntimeConfigurationService.Hooks() {
-            @Override public void beforeFrameworkPublish() {
-                entered.countDown();
-                try { if (!release.await(8, TimeUnit.SECONDS)) throw new IllegalStateException("test timeout"); }
-                catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new IllegalStateException(failure); }
-            }
-        });
-        try {
-            var request = editor.postAsync("/api/management/configuration/rollback/confirm", rollbackBody(review));
-            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
-            request.cancel(true);
-            release.countDown();
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            while (runtime.publishedSnapshot().localId().equals(before) && System.nanoTime() < deadline)
-                Thread.sleep(10);
-            assertThat(runtime.publishedSnapshot().localId()).isNotEqualTo(before);
-            assertThat(runtime.publishedSnapshot().sourceId()).isEqualTo(before);
-            assertThat(store.current().localId()).isEqualTo(runtime.publishedSnapshot().localId());
-        } finally { release.countDown(); runtime.hooks(new RuntimeConfigurationService.Hooks() {}); }
-    }
-
-    private static String rollbackBody(JsonNode review) {
-        var observation = review.path("observation");
-        return "{\"sourceId\":\"" + review.path("sourceId").asText() + "\",\"reviewId\":\""
-                + review.path("reviewId").asText() + "\",\"expectedPublishedId\":\""
-                + observation.path("publishedId").asText() + "\",\"expectedGrantId\":"
-                + (observation.path("grantId").isNull() ? "null" : "\"" + observation.path("grantId").asText() + "\"") + "}";
-    }
-
-    @Test void editorReviewsFormatOneBundleWithoutMutation() throws Exception {
-        String email = "import-review-" + UUID.randomUUID() + "@example.test";
-        seed(email, "editor");
-        Browser editor = login(email);
-        UUID initial = runtime.inspect().publishedId();
-        int history = store.history().size();
-        byte[] bundle = editor.getBytes("/api/management/configuration/export").body();
-        long temporaryBefore = importTemporaryFileCount();
-        JsonNode review = ok(editor.multipart("/api/management/configuration/import/review", bundle, java.util.Map.of(), true));
-        assertThat(review.path("sourceSnapshotId").asText()).isEqualTo(initial.toString());
-        assertThat(review.path("reviewId").asText()).isNotBlank();
-        assertThat(review.path("skillDocuments").asInt()).isZero();
-        assertThat(review.path("validatedSkills").asInt()).isZero();
-        assertThat(review.path("routes").asInt()).isZero();
-        assertThat(review.path("validation").path("successful").asBoolean()).isTrue();
-        assertThat(review.path("observation").path("publishedId").asText()).isEqualTo(initial.toString());
-        assertThat(store.history()).hasSize(history);
-        assertThat(runtime.inspect().publishedId()).isEqualTo(initial);
-        assertThat(importTemporaryFileCount()).isEqualTo(temporaryBefore);
-    }
-
-    @Test void importRequiresEditorAndCsrfAndPublishesFreshLocalIds() throws Exception {
-        String editorEmail = "import-editor-" + UUID.randomUUID() + "@example.test";
-        String viewerEmail = "import-viewer-" + UUID.randomUUID() + "@example.test";
-        seed(editorEmail, "editor"); seed(viewerEmail, "viewer");
-        Browser editor = login(editorEmail);
-        Browser viewer = login(viewerEmail);
-        int accountCount = jdbc.queryForObject("SELECT COUNT(*) FROM management_account", Integer.class);
-        UUID source = runtime.inspect().publishedId();
-        byte[] bundle = editor.getBytes("/api/management/configuration/export").body();
-        String reviewPath = "/api/management/configuration/import/review";
-        assertThat(new Browser().multipart(reviewPath, bundle, java.util.Map.of(), false).statusCode()).isEqualTo(403);
-        assertThat(viewer.multipart(reviewPath, bundle, java.util.Map.of(), true).statusCode()).isEqualTo(403);
-        assertThat(editor.multipart(reviewPath, bundle, java.util.Map.of(), false).statusCode()).isEqualTo(403);
-        assertThat(viewer.get("/management/configuration/import").statusCode()).isEqualTo(403);
-        UUID prior = source;
-        for (int i = 0; i < 2; i++) {
-            JsonNode review = ok(editor.multipart(reviewPath, bundle, java.util.Map.of(), true));
-            var fields = java.util.Map.of("reviewId", review.path("reviewId").asText(),
-                    "expectedPublishedId", review.path("observation").path("publishedId").asText());
-            assertThat(editor.multipart("/api/management/configuration/import/confirm", bundle, fields, false)
-                    .statusCode()).isEqualTo(403);
-            JsonNode accepted = ok(editor.multipart("/api/management/configuration/import/confirm", bundle, fields, true));
-            UUID local = UUID.fromString(accepted.path("localId").asText());
-            assertThat(local).isNotEqualTo(prior);
-            assertThat(accepted.path("sourceId").asText()).isEqualTo(source.toString());
-            assertThat(accepted.path("status").asText()).isEqualTo("PUBLISHED");
-            assertThat(runtime.inspect().publishedId()).isEqualTo(local);
-            assertThat(editor.multipart("/api/management/configuration/import/confirm", bundle, fields, true)
-                    .statusCode()).isEqualTo(409);
-            prior = local;
-        }
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM management_account", Integer.class)).isEqualTo(accountCount);
-    }
-
-    @Test void staleImportGrantPreservesForeignDraftAndRefreshesObservation() throws Exception {
-        String editorEmail = "import-confirm-" + UUID.randomUUID() + "@example.test";
-        String ownerEmail = "import-owner-" + UUID.randomUUID() + "@example.test";
-        seed(editorEmail, "editor"); seed(ownerEmail, "editor");
-        Browser importer = login(editorEmail);
-        Browser owner = login(ownerEmail);
-        byte[] bundle = importer.getBytes("/api/management/configuration/export").body();
-        JsonNode review = ok(importer.multipart("/api/management/configuration/import/review", bundle,
+    @Test void rollbackAndImportLoadDraftWithoutPublishing() throws Exception {
+        String email = "load-" + UUID.randomUUID() + "@example.test";
+        seed(email, "editor"); Browser editor = login(email);
+        var source = runtime.publishedSnapshot();
+        byte[] bundle;
+        Path path = ConfigurationBundleV1.write(source);
+        try { bundle = java.nio.file.Files.readAllBytes(path); }
+        finally { java.nio.file.Files.deleteIfExists(path); }
+        JsonNode grant = ok(editor.post("/api/management/editing/lease", "{\"label\":\"HTTP test\"}"));
+        JsonNode draft = grant.path("draft");
+        JsonNode reviewed = ok(editor.multipart("/api/management/configuration/import/review", bundle,
                 java.util.Map.of(), true));
-        int count = store.history().size();
-        String tab = UUID.randomUUID().toString();
-        JsonNode grant = ok(owner.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        var forged = java.util.Map.of("reviewId", review.path("reviewId").asText(),
-                "expectedPublishedId", review.path("observation").path("publishedId").asText(),
-                "expectedGrantId", grant.path("grantId").asText());
-        assertThat(importer.multipart("/api/management/configuration/import/confirm", bundle, forged, true)
-                .statusCode()).isEqualTo(409);
-        assertThat(owner.get("/api/management/editing/draft").statusCode()).isEqualTo(200);
-        var fields = java.util.Map.of("reviewId", review.path("reviewId").asText(),
-                "expectedPublishedId", review.path("observation").path("publishedId").asText());
-        var conflict = importer.multipart("/api/management/configuration/import/confirm", bundle, fields, true);
-        assertThat(conflict.statusCode()).isEqualTo(409);
-        JsonNode refreshed = json.readTree(conflict.body());
-        assertThat(refreshed.path("observation").path("grantId").asText())
-                .isEqualTo(grant.path("grantId").asText());
-        assertThat(refreshed.path("observation").path("leaseOwner").asText()).isEqualTo(ownerEmail);
-        assertThat(owner.get("/api/management/editing/draft").statusCode()).isEqualTo(200);
-        assertThat(store.history()).hasSize(count);
-        var confirmed = new java.util.HashMap<>(fields);
-        confirmed.put("expectedGrantId", grant.path("grantId").asText());
-        JsonNode renewed = ok(owner.post("/api/management/editing/lease/activity",
-                "{\"tabId\":\"" + tab + "\",\"grantId\":\"" + grant.path("grantId").asText() + "\"}"));
-        assertThat(renewed.path("grantId").asText()).isEqualTo(grant.path("grantId").asText());
-        assertThat(importer.multipart("/api/management/configuration/import/confirm", bundle, confirmed, true)
-                .statusCode()).isEqualTo(200);
-        assertThat(owner.get("/api/management/editing/draft").statusCode()).isEqualTo(404);
+        assertThat(reviewed.path("validation").path("successful").asBoolean()).isTrue();
+        var fields = new java.util.HashMap<String, String>();
+        fields.put("editingSessionId", grant.path("editingSessionId").asText());
+        fields.put("generation", grant.path("generation").asText());
+        fields.put("draftId", draft.path("draftId").asText());
+        fields.put("revision", draft.path("revision").asText());
+        fields.put("baseSnapshotId", source.localId().toString());
+        JsonNode loaded = ok(editor.multipart("/api/management/configuration/import/load", bundle, fields, true));
+        assertThat(loaded.path("revision").asLong()).isGreaterThan(draft.path("revision").asLong());
+        assertThat(editor.multipart("/api/management/configuration/import/load", bundle, fields, true).statusCode())
+                .isEqualTo(409);
+        assertThat(runtime.inspect().publishedId()).isEqualTo(source.localId());
+        assertThat(editor.post("/api/management/configuration/publish", candidate(grant, loaded)).statusCode()).isEqualTo(409);
+        assertThat(editor.post("/api/management/configuration/import/confirm", "{}").statusCode()).isEqualTo(404);
+        JsonNode rollbackReview = ok(editor.post("/api/management/configuration/rollback/" + source.localId() + "/review", "{}"));
+        assertThat(rollbackReview.path("sourceId").asText()).isEqualTo(source.localId().toString());
+        JsonNode rolled = ok(editor.post("/api/management/configuration/rollback/" + source.localId() + "/load",
+                candidate(grant, loaded)));
+        assertThat(rolled.path("sourceSnapshotId").asText()).isEqualTo(source.localId().toString());
+        assertThat(runtime.inspect().publishedId()).isEqualTo(source.localId());
     }
 
-    @Test void replacementGrantFromSameOwnerInvalidatesConfirmation() throws Exception {
-        String importerEmail = "import-replaced-" + UUID.randomUUID() + "@example.test";
-        String ownerEmail = "import-replaced-owner-" + UUID.randomUUID() + "@example.test";
-        seed(importerEmail, "editor"); seed(ownerEmail, "editor");
-        Browser importer = login(importerEmail), owner = login(ownerEmail);
-        String tab = UUID.randomUUID().toString();
-        JsonNode first = ok(owner.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        byte[] bundle = importer.getBytes("/api/management/configuration/export").body();
-        JsonNode review = ok(importer.multipart("/api/management/configuration/import/review", bundle,
-                java.util.Map.of(), true));
-        var capability = "{\"tabId\":\"" + tab + "\",\"grantId\":\"" + first.path("grantId").asText() + "\"}";
-        assertThat(owner.post("/api/management/editing/lease/release", capability).statusCode()).isEqualTo(204);
-        JsonNode replacement = ok(owner.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        assertThat(replacement.path("grantId").asText()).isNotEqualTo(first.path("grantId").asText());
-        var fields = java.util.Map.of("reviewId", review.path("reviewId").asText(),
-                "expectedPublishedId", review.path("observation").path("publishedId").asText(),
-                "expectedGrantId", first.path("grantId").asText());
-        var conflict = importer.multipart("/api/management/configuration/import/confirm", bundle, fields, true);
-        assertThat(conflict.statusCode()).isEqualTo(409);
-        assertThat(json.readTree(conflict.body()).path("observation").path("grantId").asText())
-                .isEqualTo(replacement.path("grantId").asText());
-        assertThat(owner.get("/api/management/editing/draft").statusCode()).isEqualTo(200);
-    }
-
-    @Test void changedRuntimeSnapshotInvalidatesReviewedImport() throws Exception {
-        String email = "import-runtime-" + UUID.randomUUID() + "@example.test";
-        seed(email, "editor");
-        Browser browser = login(email);
-        byte[] bundle = browser.getBytes("/api/management/configuration/export").body();
-        JsonNode review = ok(browser.multipart("/api/management/configuration/import/review", bundle,
-                java.util.Map.of(), true));
-        var original = runtime.publishedSnapshot();
-        var draft = new ai.loomspan.sidecar.storage.ConfigurationDraft(original);
-        draft.replaceContent(new ManagedConfiguration(java.util.List.of(), "targets: {}\nroutes: {}\n# changed runtime\n"));
-        var frozen = draft.freeze();
-        draft.recordValidation(frozen, runtime.validate(frozen.configuration()));
-        var changed = runtime.publish(draft::validatedCandidate);
-        int history = store.history().size();
-        var fields = java.util.Map.of("reviewId", review.path("reviewId").asText(),
-                "expectedPublishedId", original.localId().toString());
-        var conflict = browser.multipart("/api/management/configuration/import/confirm", bundle, fields, true);
-        assertThat(conflict.statusCode()).isEqualTo(409);
-        assertThat(json.readTree(conflict.body()).path("observation").path("publishedId").asText())
-                .isEqualTo(changed.localId().toString());
-        assertThat(runtime.inspect().publishedId()).isEqualTo(changed.localId());
-        assertThat(store.history()).hasSize(history);
-    }
-
-    @Test void laterSessionReviewSupersedesConfirmationWaitingForPublication() throws Exception {
-        String email = "import-supersede-" + UUID.randomUUID() + "@example.test";
-        seed(email, "editor");
-        Browser browser = login(email);
-        byte[] bundle = browser.getBytes("/api/management/configuration/export").body();
-        JsonNode first = ok(browser.multipart("/api/management/configuration/import/review", bundle,
-                java.util.Map.of(), true));
-        var original = runtime.publishedSnapshot();
-        var draft = new ai.loomspan.sidecar.storage.ConfigurationDraft(original);
-        draft.replaceContent(new ManagedConfiguration(java.util.List.of(), "targets: {}\nroutes: {}\n# superseding publication\n"));
-        var frozen = draft.freeze();
-        draft.recordValidation(frozen, runtime.validate(frozen.configuration()));
-        var entered = new CountDownLatch(1);
-        var release = new CountDownLatch(1);
-        runtime.hooks(new RuntimeConfigurationService.Hooks() {
-            @Override public void beforeFrameworkPublish() {
-                entered.countDown();
-                try { if (!release.await(8, TimeUnit.SECONDS)) throw new IllegalStateException("test timeout"); }
-                catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new IllegalStateException(failure); }
-            }
-        });
+    @Test void publicationRechecksAccountAfterWaitingForGate() throws Exception {
+        String email = "wait-" + UUID.randomUUID() + "@example.test";
+        seed(email, "editor"); Browser editor = login(email);
+        JsonNode grant = ok(editor.post("/api/management/editing/lease", "{\"label\":\"HTTP test\"}"));
+        JsonNode draft = grant.path("draft");
+        ok(editor.post("/api/management/editing/draft/validate", candidate(grant, draft)));
+        var publicationField = RuntimeConfigurationService.class.getDeclaredField("publication");
+        publicationField.setAccessible(true);
+        var gate = (java.util.concurrent.locks.ReentrantLock) publicationField.get(runtime);
+        var before = runtime.inspect().publishedId();
+        gate.lock();
         try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
-            var publication = workers.submit(() -> runtime.publish(draft::validatedCandidate));
-            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
-            var fields = java.util.Map.of("reviewId", first.path("reviewId").asText(),
-                    "expectedPublishedId", original.localId().toString());
-            var queued = browser.multipartAsync("/api/management/configuration/import/confirm", bundle, fields);
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            var first = workers.submit(() -> editor.post("/api/management/configuration/publish", candidate(grant, draft)));
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
             while (runtime.queuedPublications() == 0 && System.nanoTime() < deadline) Thread.sleep(10);
             assertThat(runtime.queuedPublications()).isPositive();
-            JsonNode second = ok(browser.multipart("/api/management/configuration/import/review", bundle,
-                    java.util.Map.of(), true));
-            assertThat(second.path("reviewId").asText()).isNotEqualTo(first.path("reviewId").asText());
-            release.countDown();
-            var published = publication.get(5, TimeUnit.SECONDS);
-            var conflict = queued.get(5, TimeUnit.SECONDS);
-            assertThat(conflict.statusCode()).isEqualTo(409);
-            assertThat(json.readTree(conflict.body()).path("code").asText()).isEqualTo("review_required");
-            assertThat(runtime.inspect().publishedId()).isEqualTo(published.localId());
-        } finally { release.countDown(); runtime.hooks(new RuntimeConfigurationService.Hooks() {}); }
+            identity.alter(identity.account(email).id(), "viewer", true);
+            gate.unlock();
+            assertThat(first.get(5, TimeUnit.SECONDS).statusCode()).isEqualTo(409);
+        } finally { if (gate.isHeldByCurrentThread()) gate.unlock(); }
+        assertThat(runtime.inspect().publishedId()).isEqualTo(before);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM management_draft WHERE account_id=?", Integer.class,
+                identity.account(email).id())).isEqualTo(1);
     }
 
-    @Test void changedImportBytesAndMalformedBundleNeverCutOver() throws Exception {
-        String email = "import-bytes-" + UUID.randomUUID() + "@example.test";
-        seed(email, "editor");
-        Browser browser = login(email);
-        byte[] bundle = browser.getBytes("/api/management/configuration/export").body();
-        UUID original = runtime.inspect().publishedId();
-        int history = store.history().size();
-        assertThat(browser.multipart("/api/management/configuration/import/review", "not zip".getBytes(StandardCharsets.UTF_8),
-                java.util.Map.of(), true).statusCode()).isEqualTo(400);
-        assertThat(browser.multipart("/api/management/configuration/import/review", bundle,
-                java.util.Map.of("unexpected", "field"), true).statusCode()).isEqualTo(400);
-        JsonNode review = ok(browser.multipart("/api/management/configuration/import/review", bundle,
-                java.util.Map.of(), true));
-        var fields = java.util.Map.of("reviewId", review.path("reviewId").asText(),
-                "expectedPublishedId", original.toString());
-        byte[] changed = bundle.clone(); changed[changed.length - 1] ^= 1;
-        var conflict = browser.multipart("/api/management/configuration/import/confirm", changed, fields, true);
-        assertThat(conflict.statusCode()).isEqualTo(409);
-        assertThat(json.readTree(conflict.body()).path("code").asText()).isEqualTo("content_changed");
-        assertThat(runtime.inspect().publishedId()).isEqualTo(original);
-        assertThat(store.history()).hasSize(history);
+    @Test void viewerCanExportPublishedConfigurationButCannotLoadImport() throws Exception {
+        String email = "export-viewer-" + UUID.randomUUID() + "@example.test";
+        seed(email, "viewer"); Browser viewer = login(email);
+        var exported = viewer.getBytes("/api/management/configuration/export");
+        assertThat(exported.statusCode()).isEqualTo(200);
+        assertThat(exported.body()).isNotEmpty();
+        assertThat(viewer.post("/api/management/configuration/rollback/" + runtime.inspect().publishedId()
+                + "/review", "{}").statusCode()).isEqualTo(403);
     }
 
-    @Test void reviewRejectsUnboundDestinationVariableBeforeAnyDraftDisruption() throws Exception {
-        String importerEmail = "import-binding-" + UUID.randomUUID() + "@example.test";
-        String ownerEmail = "import-binding-owner-" + UUID.randomUUID() + "@example.test";
-        seed(importerEmail, "editor"); seed(ownerEmail, "editor");
-        Browser importer = login(importerEmail), owner = login(ownerEmail);
-        String tab = UUID.randomUUID().toString();
-        ok(owner.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        var authored = new ManagedConfiguration(java.util.List.of(),
-                "targets:\n  remote:\n    base-url: '${UNDECLARED_IMPORT_TARGET}'\nroutes: {}\n");
-        Path path = ConfigurationBundleV1.write(new ConfigurationSnapshot(UUID.randomUUID(), null, 1,
-                authored, SnapshotStatus.PUBLISHED));
-        try {
-            byte[] bundle = java.nio.file.Files.readAllBytes(path);
-            UUID before = runtime.inspect().publishedId();
-            int history = store.history().size();
-            JsonNode review = ok(importer.multipart("/api/management/configuration/import/review", bundle,
-                    java.util.Map.of(), true));
-            assertThat(review.path("validation").path("successful").asBoolean()).isFalse();
-            assertThat(review.path("reviewId").isNull()).isTrue();
-            assertThat(review.path("validation").path("issues").size()).isPositive();
-            assertThat(owner.get("/api/management/editing/draft").statusCode()).isEqualTo(200);
-            assertThat(runtime.inspect().publishedId()).isEqualTo(before);
-            assertThat(store.history()).hasSize(history);
-        } finally { java.nio.file.Files.deleteIfExists(path); }
-    }
-
-    @Test void validUploadLargerThanDefaultMultipartLimitReachesValidation() throws Exception {
-        assertThat(environment.getProperty("spring.servlet.multipart.max-file-size")).isEqualTo("100MB");
-        assertThat(environment.getProperty("spring.servlet.multipart.max-request-size")).isEqualTo("101MB");
-        String email = "import-large-" + UUID.randomUUID() + "@example.test";
-        seed(email, "editor");
-        Browser editor = login(email);
-        byte[] random = new byte[1_500_000];
-        new java.util.Random(42).nextBytes(random);
-        String rest = "targets: {}\nroutes: {}\n# " + java.util.Base64.getEncoder().encodeToString(random) + "\n";
-        Path path = ConfigurationBundleV1.write(new ConfigurationSnapshot(UUID.randomUUID(), null, 1,
-                new ManagedConfiguration(java.util.List.of(), rest), SnapshotStatus.PUBLISHED));
-        try {
-            byte[] bundle = java.nio.file.Files.readAllBytes(path);
-            assertThat(bundle.length).isGreaterThan(1_048_576);
-            JsonNode review = ok(editor.multipart("/api/management/configuration/import/review", bundle,
-                    java.util.Map.of(), true));
-            assertThat(review.path("validation").path("successful").asBoolean()).isTrue();
-            assertThat(review.path("reviewId").asText()).isNotBlank();
-        } finally { java.nio.file.Files.deleteIfExists(path); }
-    }
-
-    @Test void importServiceRejectsCompressedInputPastInclusiveBoundAndCleansStaging() throws Exception {
-        long before = importTemporaryFileCount();
-        var file = org.mockito.Mockito.mock(org.springframework.web.multipart.MultipartFile.class);
-        org.mockito.Mockito.when(file.isEmpty()).thenReturn(false);
-        org.mockito.Mockito.when(file.getInputStream()).thenReturn(new java.io.InputStream() {
-            long remaining = ConfigurationBundleV1.MAX_ZIP_BYTES + 1;
-            @Override public int read() { if (remaining-- <= 0) return -1; return 0; }
-            @Override public int read(byte[] bytes, int offset, int length) {
-                if (remaining <= 0) return -1;
-                int count = (int) Math.min(length, remaining);
-                java.util.Arrays.fill(bytes, offset, offset + count, (byte) 0);
-                remaining -= count;
-                return count;
-            }
-        });
-        var session = org.mockito.Mockito.mock(jakarta.servlet.http.HttpSession.class);
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> imports.review(session, file))
-                .isInstanceOf(ConfigurationBundleV1.BundleTooLarge.class);
-        assertThat(importTemporaryFileCount()).isEqualTo(before);
-    }
-
-    @Test void importCommitFailureClearsDraftButKeepsRuntimeAndPointer() throws Exception {
-        String importerEmail = "import-fail-" + UUID.randomUUID() + "@example.test";
-        String ownerEmail = "import-draft-" + UUID.randomUUID() + "@example.test";
-        seed(importerEmail, "editor"); seed(ownerEmail, "editor");
-        Browser importer = login(importerEmail), owner = login(ownerEmail);
-        String tab = UUID.randomUUID().toString();
-        JsonNode grant = ok(owner.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        byte[] bundle = importer.getBytes("/api/management/configuration/export").body();
-        JsonNode review = ok(importer.multipart("/api/management/configuration/import/review", bundle,
-                java.util.Map.of(), true));
-        UUID original = runtime.inspect().publishedId();
-        int history = store.history().size();
+    @Test void failedPublicationPreservesSavedDraftAndLease() throws Exception {
+        String email = "failure-" + UUID.randomUUID() + "@example.test";
+        seed(email, "editor"); Browser editor = login(email);
+        JsonNode grant = ok(editor.post("/api/management/editing/lease", "{\"label\":\"Failure test\"}"));
+        JsonNode draft = grant.path("draft");
+        ok(editor.post("/api/management/editing/draft/validate", candidate(grant, draft)));
+        var before = runtime.inspect().publishedId();
         runtime.hooks(new RuntimeConfigurationService.Hooks() {
-            @Override public void beforeCommit() { throw new IllegalStateException("test commit fault"); }
+            @Override public void beforeCommit() { throw new IllegalStateException("injected commit fault"); }
         });
         try {
-            var fields = java.util.Map.of("reviewId", review.path("reviewId").asText(),
-                    "expectedPublishedId", original.toString(), "expectedGrantId", grant.path("grantId").asText());
-            var failed = importer.multipart("/api/management/configuration/import/confirm", bundle, fields, true);
+            var failed = editor.post("/api/management/configuration/publish", candidate(grant, draft));
             assertThat(failed.statusCode()).isEqualTo(503);
-            JsonNode error = json.readTree(failed.body());
-            assertThat(error.path("code").asText()).isEqualTo("commit_failed");
-            assertThat(error.path("publishedId").asText()).isEqualTo(original.toString());
-            assertThat(error.path("intendedId").asText()).isEqualTo(original.toString());
-            assertThat(runtime.inspect().publishedId()).isEqualTo(original);
-            assertThat(store.history()).hasSize(history);
-            assertThat(owner.get("/api/management/editing/draft").statusCode()).isEqualTo(404);
+            assertThat(json.readTree(failed.body()).path("code").asText()).isEqualTo("commit_failed");
         } finally { runtime.hooks(new RuntimeConfigurationService.Hooks() {}); }
+        assertThat(runtime.inspect().publishedId()).isEqualTo(before);
+        assertThat(ok(editor.get("/api/management/editing/draft")).path("draftId").asText())
+                .isEqualTo(draft.path("draftId").asText());
+        assertThat(ok(editor.get("/api/management/editing")).path("mine").asBoolean()).isTrue();
     }
 
-    @Test void importPreparationFailurePreservesDraftAndLease() throws Exception {
-        String importerEmail = "import-prepare-" + UUID.randomUUID() + "@example.test";
-        String ownerEmail = "import-prepare-owner-" + UUID.randomUUID() + "@example.test";
-        seed(importerEmail, "editor"); seed(ownerEmail, "editor");
-        Browser importer = login(importerEmail), owner = login(ownerEmail);
-        String tab = UUID.randomUUID().toString();
-        JsonNode grant = ok(owner.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        byte[] bundle = importer.getBytes("/api/management/configuration/export").body();
-        JsonNode review = ok(importer.multipart("/api/management/configuration/import/review", bundle,
-                java.util.Map.of(), true));
-        int history = store.history().size();
-        runtime.hooks(new RuntimeConfigurationService.Hooks() {
-            @Override public void beforePreparation() { throw new IllegalStateException("test preparation fault"); }
-        });
-        try {
-            var fields = java.util.Map.of("reviewId", review.path("reviewId").asText(),
-                    "expectedPublishedId", review.path("observation").path("publishedId").asText(),
-                    "expectedGrantId", grant.path("grantId").asText());
-            var failed = importer.multipart("/api/management/configuration/import/confirm", bundle, fields, true);
-            assertThat(failed.statusCode()).isEqualTo(503);
-            assertThat(json.readTree(failed.body()).path("code").asText()).isEqualTo("preparation_failed");
-            assertThat(store.history()).hasSize(history);
-            assertThat(owner.get("/api/management/editing/draft").statusCode()).isEqualTo(200);
-            assertThat(ok(owner.get("/api/management/editing")).path("held").asBoolean()).isTrue();
-        } finally { runtime.hooks(new RuntimeConfigurationService.Hooks() {}); }
-    }
-
-    @Test void importActivationFailureRevertsPointerAndRetainsFailedHistoryAfterCutover() throws Exception {
-        String importerEmail = "import-activation-" + UUID.randomUUID() + "@example.test";
-        String ownerEmail = "import-activation-owner-" + UUID.randomUUID() + "@example.test";
-        seed(importerEmail, "editor"); seed(ownerEmail, "editor");
-        Browser importer = login(importerEmail), owner = login(ownerEmail);
-        String tab = UUID.randomUUID().toString();
-        JsonNode grant = ok(owner.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        byte[] bundle = importer.getBytes("/api/management/configuration/export").body();
-        JsonNode review = ok(importer.multipart("/api/management/configuration/import/review", bundle,
-                java.util.Map.of(), true));
-        UUID original = runtime.inspect().publishedId();
-        int history = store.history().size();
-        runtime.hooks(new RuntimeConfigurationService.Hooks() {
-            @Override public void beforeFrameworkPublish() { throw new IllegalStateException("test activation fault"); }
-        });
-        try {
-            var fields = java.util.Map.of("reviewId", review.path("reviewId").asText(),
-                    "expectedPublishedId", original.toString(), "expectedGrantId", grant.path("grantId").asText());
-            var failed = importer.multipart("/api/management/configuration/import/confirm", bundle, fields, true);
-            assertThat(failed.statusCode()).isEqualTo(503);
-            JsonNode error = json.readTree(failed.body());
-            assertThat(error.path("code").asText()).isEqualTo("activation_failed");
-            assertThat(error.path("publishedId").asText()).isEqualTo(original.toString());
-            assertThat(error.path("intendedId").asText()).isEqualTo(original.toString());
-            assertThat(error.path("intendedStatus").asText()).isEqualTo("PUBLISHED");
-            assertThat(store.history()).hasSize(Math.min(history + 1, 10));
-            assertThat(store.history().get(store.history().size() - 1).status().name()).isEqualTo("FAILED");
-            assertThat(owner.get("/api/management/editing/draft").statusCode()).isEqualTo(404);
-        } finally { runtime.hooks(new RuntimeConfigurationService.Hooks() {}); }
-    }
-
-    @Test void acceptedImportContinuesAfterClientDisconnect() throws Exception {
-        String email = "import-disconnect-" + UUID.randomUUID() + "@example.test";
-        seed(email, "editor");
-        Browser browser = login(email);
-        byte[] bundle = browser.getBytes("/api/management/configuration/export").body();
-        JsonNode review = ok(browser.multipart("/api/management/configuration/import/review", bundle,
-                java.util.Map.of(), true));
-        UUID before = runtime.inspect().publishedId();
-        var entered = new CountDownLatch(1);
-        var release = new CountDownLatch(1);
-        runtime.hooks(new RuntimeConfigurationService.Hooks() {
-            @Override public void beforeFrameworkPublish() {
-                entered.countDown();
-                try { if (!release.await(8, TimeUnit.SECONDS)) throw new IllegalStateException("test timeout"); }
-                catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new IllegalStateException(failure); }
-            }
-        });
-        try {
-            var fields = java.util.Map.of("reviewId", review.path("reviewId").asText(),
-                    "expectedPublishedId", before.toString());
-            var request = browser.multipartAsync("/api/management/configuration/import/confirm", bundle, fields);
-            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
-            request.cancel(true);
-            release.countDown();
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            while (runtime.publishedSnapshot().localId().equals(before) && System.nanoTime() < deadline)
-                Thread.sleep(10);
-            assertThat(runtime.publishedSnapshot().localId()).isNotEqualTo(before);
-            assertThat(store.current().localId()).isEqualTo(runtime.publishedSnapshot().localId());
-        } finally { release.countDown(); runtime.hooks(new RuntimeConfigurationService.Hooks() {}); }
-    }
-
-    @Test void exportUsesRunningSnapshotThroughIntendedPointerMismatchAndRequiresManagementSession() throws Exception {
-        var running = runtime.publishedSnapshot();
-        int historyCount = store.history().size();
-        String path = "/api/management/configuration/export";
-        assertThat(new Browser().get(path).statusCode()).isEqualTo(401);
-        assertThat(new Browser().getJwt(path, JwtTestTokens.token("operator", java.util.List.of())).statusCode())
-                .isEqualTo(401);
-        var intended = store.submit(new ManagedConfiguration(java.util.List.of(),
-                "targets: {}\nroutes: {}\n# intended-only\n"), null, running.localId());
-        try {
-            for (String role : java.util.List.of("viewer", "editor", "admin")) {
-                String email = "export-" + UUID.randomUUID() + "@example.test";
-                seed(email, role);
-                Browser browser = login(email);
-                var response = browser.getBytes(path);
-                assertThat(response.statusCode()).isEqualTo(200);
-                assertThat(response.headers().firstValue("Content-Disposition")).hasValueSatisfying(
-                        value -> assertThat(value).contains("attachment", ".zip"));
-                assertThat(response.headers().firstValue("Cache-Control")).hasValueSatisfying(
-                        value -> assertThat(value).contains("no-store"));
-                var bundle = ConfigurationBundleV1.read(new ByteArrayInputStream(response.body()));
-                assertThat(bundle.sourceSnapshotId()).isEqualTo(running.localId());
-                assertThat(bundle.configuration()).isEqualTo(running.configuration());
-                assertThat(bundle.configuration().restRoutesYaml()).doesNotContain("intended-only");
-            }
-            assertThat(runtime.publishedSnapshot()).isEqualTo(running);
-            assertThat(store.history()).hasSize(historyCount + 1);
-        } finally { store.revert(intended.localId(), running.localId()); }
-    }
-
-    @Test void editorValidatesExactDraftWithoutPublishing() throws Exception {
-        String email = "validate-" + UUID.randomUUID() + "@example.test";
-        String adminEmail = "foreign-admin-" + UUID.randomUUID() + "@example.test";
-        seed(email, "editor");
-        seed(adminEmail, "admin");
-        Browser editor = login(email);
-        Browser admin = login(adminEmail);
-        UUID initial = runtime.inspect().publishedId();
-        int count = store.history().size();
-        String tab = UUID.randomUUID().toString();
-        JsonNode grant = ok(editor.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        String first = grant.path("draft").path("candidateId").asText();
-        String id = grant.path("grantId").asText();
-        String capability = candidate(tab, id, first);
-        assertThat(editor.postWithoutCsrf("/api/management/editing/draft/validate", capability).statusCode())
-                .isEqualTo(403);
-        assertThat(editor.postWithoutCsrf("/api/management/configuration/publish", capability).statusCode())
-                .isEqualTo(403);
-        var unvalidated = editor.post("/api/management/configuration/publish", capability);
-        assertThat(unvalidated.statusCode()).isEqualTo(409);
-        assertThat(json.readTree(unvalidated.body()).path("code").asText()).isEqualTo("validation_required");
-        JsonNode checked = ok(editor.post("/api/management/editing/draft/validate", capability));
-        assertThat(checked.path("validation").path("successful").asBoolean()).isTrue();
-        assertThat(checked.path("applied").asBoolean()).isTrue();
-        assertThat(admin.get("/api/management/editing/draft").statusCode()).isEqualTo(404);
-        assertThat(admin.post("/api/management/editing/draft/validate", capability).statusCode()).isEqualTo(409);
-        assertThat(admin.post("/api/management/configuration/publish", capability).statusCode()).isEqualTo(409);
-        assertThat(runtime.inspect().publishedId()).isEqualTo(initial);
-        assertThat(store.history()).hasSize(count);
-        JsonNode changed = ok(editor.put("/api/management/editing/draft", "{\"tabId\":\"" + tab
-                + "\",\"grantId\":\"" + id + "\",\"expectedCandidateId\":\"" + first
-                + "\",\"skillDocuments\":[],\"restRoutesYaml\":\"targets: {}\\nroutes: {}\\n# authored-${EXAMPLE}-literal <script>alert(1)</script>\\n\"}"));
-        assertThat(changed.path("candidateId").asText()).isNotEqualTo(first);
-        assertThat(changed.path("validation").isNull()).isTrue();
-        var stale = editor.post("/api/management/editing/draft/validate", capability);
-        assertThat(stale.statusCode()).isEqualTo(409);
-        assertThat(json.readTree(stale.body()).path("code").asText()).isEqualTo("candidate_conflict");
-        assertThat(editor.post("/api/management/configuration/publish", capability).statusCode()).isEqualTo(409);
-        String next = candidate(tab, id, changed.path("candidateId").asText());
-        ok(editor.post("/api/management/editing/draft/validate", next));
-        JsonNode published = ok(editor.post("/api/management/configuration/publish", next));
-        assertThat(published.path("localId").asText()).isNotEqualTo(initial.toString());
-        assertThat(editor.get("/api/management/editing/draft").statusCode()).isEqualTo(404);
-        JsonNode current = ok(editor.get("/api/management/configuration/current"));
-        assertThat(current.path("published").path("localId").asText()).isEqualTo(published.path("localId").asText());
-        assertThat(current.path("published").path("configuration").path("restRoutesYaml").asText())
-                .contains("authored-${EXAMPLE}-literal <script>alert(1)</script>");
-        assertThat(current.path("intendedId").asText()).isEqualTo(published.path("localId").asText());
-        assertThat(current.path("intendedStatus").asText()).isEqualTo("PUBLISHED");
-        JsonNode history = ok(editor.get("/api/management/configuration/history"));
-        assertThat(history.size()).isEqualTo(Math.min(count + 1, 10));
-        assertThat(history.get(history.size() - 1).path("configuration").path("restRoutesYaml").asText())
-                .contains("authored-${EXAMPLE}-literal");
-    }
-
-    @Test void viewerCanInspectButCannotValidateOrPublishAndJwtDoesNotGrantManagementAccess() throws Exception {
-        String email = "viewer-" + UUID.randomUUID() + "@example.test";
-        seed(email, "viewer");
-        Browser viewer = login(email);
-        assertThat(viewer.get("/management/configuration/current").statusCode()).isEqualTo(200);
-        assertThat(new Browser().get("/management/configuration/current").statusCode()).isEqualTo(302);
-        assertThat(viewer.get("/api/management/configuration/current").statusCode()).isEqualTo(200);
-        assertThat(viewer.get("/api/management/configuration/history").statusCode()).isEqualTo(200);
-        assertThat(viewer.post("/api/management/editing/draft/validate", "{}").statusCode()).isEqualTo(403);
-        assertThat(viewer.post("/api/management/configuration/publish", "{}").statusCode()).isEqualTo(403);
-        assertThat(new Browser().get("/api/management/configuration/current").statusCode()).isEqualTo(401);
-        assertThat(new Browser().getJwt("/api/management/configuration/current",
-                JwtTestTokens.token("operator", java.util.List.of())).statusCode()).isEqualTo(401);
-        assertThat(viewer.get("/api/management/configuration/current").headers().firstValue("Cache-Control"))
-                .hasValue("no-store");
-        var missing = viewer.get("/api/management/configuration/history/" + UUID.randomUUID());
-        assertThat(missing.statusCode()).isEqualTo(404);
-        assertThat(json.readTree(missing.body()).path("code").asText()).isEqualTo("history_not_found");
-    }
-
-    @Test void administratorMayValidateAndPublishOnlyOwnLeasedDraft() throws Exception {
-        String email = "admin-" + UUID.randomUUID() + "@example.test";
-        seed(email, "admin");
-        Browser admin = login(email);
-        String tab = UUID.randomUUID().toString();
-        JsonNode grant = ok(admin.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        String cap = candidate(tab, grant.path("grantId").asText(), grant.path("draft").path("candidateId").asText());
-        assertThat(admin.post("/api/management/editing/draft/validate",
-                candidate(UUID.randomUUID().toString(), grant.path("grantId").asText(),
-                        grant.path("draft").path("candidateId").asText())).statusCode()).isEqualTo(409);
-        assertThat(admin.post("/api/management/configuration/publish", cap).statusCode()).isEqualTo(409);
-        ok(admin.post("/api/management/editing/draft/validate", cap));
-        assertThat(admin.post("/api/management/configuration/publish", cap).statusCode()).isEqualTo(200);
-    }
-
-    @Test void queuedPublishRechecksAccountAfterWaitingForPublicationLock() throws Exception {
-        String email = "queued-" + UUID.randomUUID() + "@example.test";
-        seed(email, "editor");
-        Browser editor = login(email);
-        UUID initial = runtime.inspect().publishedId();
-        int count = store.history().size();
-        String tab = UUID.randomUUID().toString();
-        JsonNode grant = ok(editor.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        String cap = candidate(tab, grant.path("grantId").asText(), grant.path("draft").path("candidateId").asText());
-        ok(editor.post("/api/management/editing/draft/validate", cap));
-        CountDownLatch entered = new CountDownLatch(1);
-        CountDownLatch release = new CountDownLatch(1);
-        runtime.hooks(new RuntimeConfigurationService.Hooks() {
-            @Override public void beforePreparation() {
-                entered.countDown();
-                try {
-                    if (!release.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("test timed out");
-                } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
-                throw new IllegalStateException("test first attempt fails before commit");
-            }
-        });
+    @Test void publicationRechecksOwnershipAfterWaitingForGate() throws Exception {
+        String email = "handoff-wait-" + UUID.randomUUID() + "@example.test";
+        seed(email, "editor"); Browser first = login(email), second = login(email);
+        JsonNode grant = ok(first.post("/api/management/editing/lease", "{\"label\":\"First\"}"));
+        JsonNode draft = grant.path("draft");
+        ok(first.post("/api/management/editing/draft/validate", candidate(grant, draft)));
+        var before = runtime.inspect().publishedId();
+        var publicationField = RuntimeConfigurationService.class.getDeclaredField("publication");
+        publicationField.setAccessible(true);
+        var gate = (java.util.concurrent.locks.ReentrantLock) publicationField.get(runtime);
+        gate.lock();
         try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
-            var first = workers.submit(() -> editor.post("/api/management/configuration/publish", cap));
-            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
-            var second = workers.submit(() -> editor.post("/api/management/configuration/publish", cap));
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            var publishing = workers.submit(() -> first.post("/api/management/configuration/publish", candidate(grant, draft)));
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
             while (runtime.queuedPublications() == 0 && System.nanoTime() < deadline) Thread.sleep(10);
             assertThat(runtime.queuedPublications()).isPositive();
-            var inspection = workers.submit(() -> editor.get("/api/management/configuration/current"));
-            Thread.sleep(50);
-            assertThat(inspection.isDone()).isFalse();
-            long accountId = jdbc.queryForObject("SELECT id FROM management_account WHERE email=?", Long.class, email);
-            identity.alter(accountId, "viewer", true);
-            release.countDown();
-            assertThat(first.get(5, TimeUnit.SECONDS).statusCode()).isEqualTo(503);
-            assertThat(second.get(5, TimeUnit.SECONDS).statusCode()).isEqualTo(409);
-            assertThat(inspection.get(5, TimeUnit.SECONDS).statusCode()).isEqualTo(200);
-        } finally {
-            release.countDown();
-            runtime.hooks(new RuntimeConfigurationService.Hooks() {});
-        }
-        assertThat(runtime.inspect().publishedId()).isEqualTo(initial);
-        assertThat(store.history()).hasSize(count);
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = {"release", "save", "discard", "lease-expire", "logout"})
-    void queuedPublishRejectsChangedPrivateAuthority(String change) throws Exception {
-        String email = "queued-" + change + "-" + UUID.randomUUID() + "@example.test";
-        seed(email, "editor");
-        Browser editor = login(email);
-        UUID initial = runtime.inspect().publishedId();
-        int count = store.history().size();
-        String tab = UUID.randomUUID().toString();
-        JsonNode grant = ok(editor.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        String grantId = grant.path("grantId").asText();
-        String candidateId = grant.path("draft").path("candidateId").asText();
-        String cap = candidate(tab, grantId, candidateId);
-        ok(editor.post("/api/management/editing/draft/validate", cap));
-        CountDownLatch entered = new CountDownLatch(1);
-        CountDownLatch release = new CountDownLatch(1);
-        runtime.hooks(new RuntimeConfigurationService.Hooks() {
-            @Override public void beforePreparation() {
-                entered.countDown();
-                try {
-                    if (!release.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("test timeout");
-                } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
-                throw new IllegalStateException("first attempt stops before commit");
-            }
-        });
-        try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
-            var first = workers.submit(() -> editor.post("/api/management/configuration/publish", cap));
-            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
-            var second = workers.submit(() -> editor.post("/api/management/configuration/publish", cap));
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            while (runtime.queuedPublications() == 0 && System.nanoTime() < deadline) Thread.sleep(10);
-            assertThat(runtime.queuedPublications()).isPositive();
-            switch (change) {
-                case "release" -> assertThat(editor.post("/api/management/editing/lease/release",
-                        "{\"tabId\":\"" + tab + "\",\"grantId\":\"" + grantId + "\"}").statusCode()).isEqualTo(204);
-                case "save" -> assertThat(editor.put("/api/management/editing/draft", "{\"tabId\":\"" + tab
-                        + "\",\"grantId\":\"" + grantId + "\",\"expectedCandidateId\":\"" + candidateId
-                        + "\",\"skillDocuments\":[],\"restRoutesYaml\":\"targets: {}\\nroutes: {}\\n\"}")
-                        .statusCode()).isEqualTo(200);
-                case "discard" -> assertThat(editor.delete("/api/management/editing/draft",
-                        "{\"tabId\":\"" + tab + "\",\"grantId\":\"" + grantId + "\"}").statusCode()).isEqualTo(204);
-                case "lease-expire" -> { synchronized (editing) { editing.lease.expiresAt = 0; } }
-                case "logout" -> assertThat(editor.post("/api/management/logout", "{}").statusCode()).isEqualTo(204);
-                default -> throw new AssertionError(change);
-            }
-            release.countDown();
-            assertThat(first.get(5, TimeUnit.SECONDS).statusCode()).isEqualTo(503);
-            assertThat(second.get(5, TimeUnit.SECONDS).statusCode()).isEqualTo(409);
-        } finally {
-            release.countDown();
-            runtime.hooks(new RuntimeConfigurationService.Hooks() {});
-        }
-        assertThat(runtime.inspect().publishedId()).isEqualTo(initial);
-        assertThat(store.history()).hasSize(count);
-    }
-
-    @Test
-    @DirtiesContext(methodMode = DirtiesContext.MethodMode.AFTER_METHOD)
-    void outcomeRecordingFaultReportsActivatedRuntimeTruth() throws Exception {
-        String email = "status-" + UUID.randomUUID() + "@example.test";
-        String adminEmail = "status-admin-" + UUID.randomUUID() + "@example.test";
-        seed(email, "editor");
-        seed(adminEmail, "admin");
-        Browser editor = login(email);
-        Browser admin = login(adminEmail);
-        UUID initial = runtime.inspect().publishedId();
-        String tab = UUID.randomUUID().toString();
-        JsonNode grant = ok(editor.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        String cap = candidate(tab, grant.path("grantId").asText(), grant.path("draft").path("candidateId").asText());
-        ok(editor.post("/api/management/editing/draft/validate", cap));
-        runtime.hooks(new RuntimeConfigurationService.Hooks() {
-            @Override public void beforeStatus() { throw new IllegalStateException("test status fault"); }
-        });
-        try {
-            var response = editor.post("/api/management/configuration/publish", cap);
-            assertThat(response.statusCode()).isEqualTo(503);
-            JsonNode error = json.readTree(response.body());
-            assertThat(error.path("code").asText()).isEqualTo("outcome_recording_failed");
-            String running = error.path("publishedId").asText();
-            assertThat(running).isNotEqualTo(initial.toString());
-            assertThat(error.path("intendedId").asText()).isEqualTo(running);
-            assertThat(error.path("intendedStatus").asText()).isEqualTo("PENDING");
-            assertThat(error.path("mutationFault").asText()).isNotBlank();
-            JsonNode current = ok(editor.get("/api/management/configuration/current"));
-            assertThat(current.path("published").path("localId").asText()).isEqualTo(running);
-            assertThat(current.path("published").path("status").asText()).isEqualTo("PENDING");
-            assertThat(editor.get("/api/management/editing/draft").statusCode()).isEqualTo(404);
-            assertThat(editor.post("/api/management/editing/lease", "{\"tabId\":\"" + UUID.randomUUID()
-                    + "\"}").statusCode()).isEqualTo(503);
-            assertThat(admin.get("/api/management/accounts").statusCode()).isEqualTo(200);
-        } finally { runtime.hooks(new RuntimeConfigurationService.Hooks() {}); }
-    }
-
-    @Test void commitFailureLeavesRuntimeAndHistoryUnchanged() throws Exception {
-        String email = "commit-" + UUID.randomUUID() + "@example.test";
-        seed(email, "editor");
-        Browser editor = login(email);
-        UUID initial = runtime.inspect().publishedId();
-        int count = store.history().size();
-        String tab = UUID.randomUUID().toString();
-        JsonNode grant = ok(editor.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        String cap = candidate(tab, grant.path("grantId").asText(), grant.path("draft").path("candidateId").asText());
-        ok(editor.post("/api/management/editing/draft/validate", cap));
-        jdbc.execute("CREATE TRIGGER fail_switch BEFORE UPDATE ON configuration_store_state "
-                + "BEGIN SELECT RAISE(ABORT, 'forced switch failure'); END");
-        try {
-            var response = editor.post("/api/management/configuration/publish", cap);
-            assertThat(response.statusCode()).isEqualTo(503);
-            assertThat(json.readTree(response.body()).path("code").asText()).isEqualTo("commit_failed");
-            assertThat(runtime.inspect().publishedId()).isEqualTo(initial);
-            assertThat(store.history()).hasSize(count);
-            assertThat(editor.get("/api/management/editing/draft").statusCode()).isEqualTo(200);
-        } finally { jdbc.execute("DROP TRIGGER fail_switch"); }
-    }
-
-    @Test void admittedPublicationContinuesAfterBrowserDisconnect() throws Exception {
-        String email = "disconnect-" + UUID.randomUUID() + "@example.test";
-        seed(email, "editor");
-        Browser editor = login(email);
-        UUID initial = runtime.inspect().publishedId();
-        String tab = UUID.randomUUID().toString();
-        JsonNode grant = ok(editor.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        String cap = candidate(tab, grant.path("grantId").asText(), grant.path("draft").path("candidateId").asText());
-        ok(editor.post("/api/management/editing/draft/validate", cap));
-        CountDownLatch accepted = new CountDownLatch(1);
-        CountDownLatch release = new CountDownLatch(1);
-        runtime.hooks(new RuntimeConfigurationService.Hooks() {
-            @Override public void beforePreparation() {
-                accepted.countDown();
-                try {
-                    if (!release.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("test timeout");
-                } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
-            }
-        });
-        try {
-            CompletableFuture<HttpResponse<String>> abandoned = editor.postAsync(
-                    "/api/management/configuration/publish", cap);
-            assertThat(accepted.await(5, TimeUnit.SECONDS)).isTrue();
-            abandoned.cancel(true);
-            assertThat(editor.post("/api/management/logout", "{}").statusCode()).isEqualTo(204);
-            release.countDown();
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            while (runtime.inspect().publishedId().equals(initial) && System.nanoTime() < deadline) Thread.sleep(10);
-            assertThat(runtime.inspect().publishedId()).isNotEqualTo(initial);
-            Browser reconnected = login(email);
-            assertThat(ok(reconnected.get("/api/management/configuration/current"))
-                    .path("published").path("localId").asText()).isEqualTo(runtime.inspect().publishedId().toString());
-        } finally {
-            release.countDown();
-            runtime.hooks(new RuntimeConfigurationService.Hooks() {});
-        }
-    }
-
-    @Test void rejectedActivationRetainsFailedSubmissionAndPrivateDraft() throws Exception {
-        String email = "reverted-" + UUID.randomUUID() + "@example.test";
-        seed(email, "editor");
-        Browser editor = login(email);
-        UUID initial = runtime.inspect().publishedId();
-        int count = store.history().size();
-        String tab = UUID.randomUUID().toString();
-        JsonNode grant = ok(editor.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        String cap = candidate(tab, grant.path("grantId").asText(), grant.path("draft").path("candidateId").asText());
-        ok(editor.post("/api/management/editing/draft/validate", cap));
-        runtime.hooks(new RuntimeConfigurationService.Hooks() {
-            @Override public void beforeFrameworkPublish() { throw new IllegalStateException("test publish fault"); }
-        });
-        try {
-            var response = editor.post("/api/management/configuration/publish", cap);
-            assertThat(response.statusCode()).isEqualTo(503);
-            JsonNode error = json.readTree(response.body());
-            assertThat(error.path("code").asText()).isEqualTo("activation_failed");
-            assertThat(error.path("publishedId").asText()).isEqualTo(initial.toString());
-            assertThat(error.path("intendedId").asText()).isEqualTo(initial.toString());
-            assertThat(error.path("mutationFault").isNull()).isTrue();
-            JsonNode history = ok(editor.get("/api/management/configuration/history"));
-            assertThat(history.size()).isEqualTo(Math.min(count + 1, 10));
-            assertThat(history.get(history.size() - 1).path("status").asText()).isEqualTo("FAILED");
-            assertThat(editor.get("/api/management/editing/draft").statusCode()).isEqualTo(200);
-        } finally { runtime.hooks(new RuntimeConfigurationService.Hooks() {}); }
-    }
-
-    @Test
-    @DirtiesContext(methodMode = DirtiesContext.MethodMode.AFTER_METHOD)
-    void failedRevertReportsRuntimeAAndPendingIntendedB() throws Exception {
-        String email = "revert-fault-" + UUID.randomUUID() + "@example.test";
-        seed(email, "editor");
-        Browser editor = login(email);
-        UUID initial = runtime.inspect().publishedId();
-        String tab = UUID.randomUUID().toString();
-        JsonNode grant = ok(editor.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        String cap = candidate(tab, grant.path("grantId").asText(), grant.path("draft").path("candidateId").asText());
-        ok(editor.post("/api/management/editing/draft/validate", cap));
-        runtime.hooks(new RuntimeConfigurationService.Hooks() {
-            @Override public void beforeFrameworkPublish() { throw new IllegalStateException("test publish fault"); }
-            @Override public void beforeRevert() { throw new IllegalStateException("test revert fault"); }
-        });
-        try {
-            var response = editor.post("/api/management/configuration/publish", cap);
-            assertThat(response.statusCode()).isEqualTo(503);
-            JsonNode error = json.readTree(response.body());
-            assertThat(error.path("code").asText()).isEqualTo("revert_failed");
-            assertThat(error.path("publishedId").asText()).isEqualTo(initial.toString());
-            assertThat(error.path("intendedId").asText()).isNotEqualTo(initial.toString());
-            assertThat(error.path("intendedStatus").asText()).isEqualTo("PENDING");
-            assertThat(error.path("mutationFault").asText()).isNotBlank();
-            JsonNode current = ok(editor.get("/api/management/configuration/current"));
-            assertThat(current.path("published").path("localId").asText()).isEqualTo(initial.toString());
-            assertThat(editor.post("/api/management/editing/draft/validate", cap).statusCode()).isEqualTo(503);
-        } finally { runtime.hooks(new RuntimeConfigurationService.Hooks() {}); }
+            var handoff = ok(second.post("/api/management/editing/lease/handoff", "{\"label\":\"Second\"}"));
+            assertThat(handoff.path("generation").asText()).isNotEqualTo(grant.path("generation").asText());
+            gate.unlock();
+            assertThat(publishing.get(5, TimeUnit.SECONDS).statusCode()).isEqualTo(409);
+        } finally { if (gate.isHeldByCurrentThread()) gate.unlock(); }
+        assertThat(runtime.inspect().publishedId()).isEqualTo(before);
+        assertThat(ok(second.get("/api/management/editing/draft")).path("draftId").asText())
+                .isEqualTo(draft.path("draftId").asText());
     }
 
     private void seed(String email, String role) {
@@ -1039,9 +209,12 @@ class ManagementConfigurationHttpIntegrationTest {
         assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
         return json.readTree(response.body());
     }
-    private static String candidate(String tab, String grant, String candidate) {
-        return "{\"tabId\":\"" + tab + "\",\"grantId\":\"" + grant
-                + "\",\"expectedCandidateId\":\"" + candidate + "\"}";
+    private static String candidate(JsonNode grant, JsonNode draft) {
+        return "{\"editingSessionId\":\"" + grant.path("editingSessionId").asText()
+                + "\",\"generation\":\"" + grant.path("generation").asText()
+                + "\",\"draftId\":\"" + draft.path("draftId").asText()
+                + "\",\"revision\":" + draft.path("revision").asLong()
+                + ",\"baseSnapshotId\":\"" + draft.path("baseSnapshotId").asText() + "\"}";
     }
     private final class Browser {
         private final HttpClient client = HttpClient.newBuilder()

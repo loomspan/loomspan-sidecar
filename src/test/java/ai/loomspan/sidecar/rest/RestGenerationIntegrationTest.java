@@ -73,8 +73,11 @@ class RestGenerationIntegrationTest {
             try (var destination = boundContext(destinationDb, second.getAddress().getPort())) {
                 var runtime = destination.getBean(RuntimeConfigurationService.class);
                 var imported = ConfigurationBundleV1.read(bundle);
-                var local = runtime.importConfiguration(imported.configuration(), imported.sourceSnapshotId(),
-                        runtime.publishedSnapshot().localId(), null, System::currentTimeMillis);
+                var candidate = new ConfigurationDraft(runtime.publishedSnapshot());
+                candidate.replaceContent(imported.configuration());
+                assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(runtime, candidate).successful()).isTrue();
+                var local = destination.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class)
+                        .publish(candidate, imported.sourceSnapshotId());
                 assertThat(local.sourceId()).isEqualTo(source.localId());
                 assertThat(local.configuration().restRoutesYaml()).isEqualTo(authored).contains("${TARGET_URL}");
                 assertThat(invoke(destination)).isEqualTo("second");
@@ -160,7 +163,7 @@ class RestGenerationIntegrationTest {
                 var validationOnly = new ConfigurationDraft(a);
                 validationOnly.replaceContent(new ManagedConfiguration(a.configuration().skillDocuments(),
                         routes(second.getAddress().getPort())));
-                assertThat(service.validate(validationOnly).successful()).isTrue();
+                assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(service, validationOnly).successful()).isTrue();
                 assertThat(registry.ownedCount()).isEqualTo(1);
                 var oldGeneration = reloader.snapshot().generationId();
                 var admitted = context.getBean(SkillInvocationHandoff.class).handoff("echoRest", Map.of());
@@ -168,11 +171,9 @@ class RestGenerationIntegrationTest {
                     var draft = new ConfigurationDraft(a);
                     draft.replaceContent(new ManagedConfiguration(a.configuration().skillDocuments(),
                             routes(second.getAddress().getPort())));
-                    assertThat(service.validate(draft).successful()).isTrue();
-                    var b = imported
-                            ? service.importConfiguration(draft.freeze().configuration(), java.util.UUID.randomUUID(),
-                                    a.localId(), null, System::currentTimeMillis)
-                            : service.publish(draft::validatedCandidate);
+                    assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(service, draft).successful()).isTrue();
+                    var b = context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class)
+                            .publish(draft, imported ? java.util.UUID.randomUUID() : null);
                     assertThat(registry.protectedIds()).contains(a.localId(), b.localId());
                     assertThat(registry.require(oldGeneration).isClosed()).isFalse();
                     assertThat(admitted.invoke()).isEqualTo("first");

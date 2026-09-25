@@ -101,33 +101,23 @@ checks, and import/export operations are described in
 [current configuration bundle](#current-configuration-bundle-format-1). Flyway
 version and application version are not transfer compatibility rules.
 
-### In-memory configuration drafts
+### Durable private configuration drafts
 
-`ConfigurationDraft` starts from a runtime-published `ConfigurationSnapshot`
-explicitly supplied by its caller. It retains that snapshot's local UUID as the
-base and holds the complete authored skill documents and REST YAML. The model
-does not consult the database's intended-production pointer. Each draft is an
-independent, ephemeral copy; edits replace the complete content without parsing
-YAML or resolving placeholders, so temporarily invalid text and literal values
-are retained. A frozen candidate keeps that base identity and authored content
-unchanged after later draft edits or loss of the draft reference.
+Flyway V3 adds one saved draft per management account, with ordered complete
+skill documents, REST YAML, base snapshot UUID, source provenance and a
+monotonic revision. The saved content is in the same SQLite database and must
+be included in stopped-instance backups. Leases and successful validation
+proofs remain process-local, so restart requires reacquisition and revalidation.
+Logout and credential changes revoke editing access without deleting content.
+A successful publication deletes only its owner's saved draft after framework
+activation. Other users' drafts remain stored and become stale by base UUID
+comparison. Failure before activation leaves the publishing draft intact.
 
-An edit clears the draft's validation result, including when replacement text is
-identical. A caller can attach a validation result only to the precise current
-frozen candidate; late results for older candidates and results from another
-draft are rejected. Validation issues retain severity, source label, skill name
-and available field location. The runtime service checks the complete candidate
-with the public framework validation API, checks REST routes and temporary
-clients, then releases validation-only resources without allocating a generation.
-Ordinary Publish requires that exact
-successful result and serializes fresh preparation, staging, durable commit,
-framework publication, and outcome recording. The management editing API now
-stores one private draft per authenticated server session. It copies the complete
-runtime-published snapshot, even while SQLite points at a pending selection.
-Only the session holding the instance lease and its selected browser tab may
-replace content. Successful framework publication clears prior drafts and grants,
-including when later status bookkeeping fails. Rejected publication preserves
-old-base editing state. Saving and validating do not activate a draft.
+Existing V1/V2 databases migrate additively. If an experimental local
+pre-release schema conflicts with V3, stop Sidecar, make a full backup, then
+reset only that development database and recreate local accounts/drafts. This
+reset is destructive to development data and is never a routine operation for
+a deployed database.
 
 The current database pointer records **intended production**, not the framework
 generation that handled an execution or the source for an export. A publication
@@ -173,8 +163,9 @@ Compose guide prepares a single local volume with these permissions and locking.
 The protected console links this procedure from **Configuration recovery
 guidance**. That page is explanatory and read-only: it does not execute SQL,
 retry or cancel publication, or provide import, export, or rollback controls.
-Local retained-history rollback publishes from one snapshot still held by this
-server; it cannot recover accounts, settings, or a damaged database. Configuration
+Local retained-history rollback loads one snapshot still held by this server
+into a saved draft for later validation and publication; it cannot recover
+accounts, settings, or a damaged database. Configuration
 ZIP import also cannot bypass a mutation fault.
 
 Stop the sole Sidecar instance and wait for process exit before either copy.
@@ -229,7 +220,8 @@ file for a development volume). Verify startup and
 readiness. Restore rolls current selection, statuses, and history back to the
 backup point. This full installation database backup includes authored YAML,
 management account records, and literal sensitive values without redaction or
-v1 encryption. In-memory editing drafts and sessions do not survive a restart.
+v1 encryption. Saved drafts are restored from this database backup; editing
+leases, sessions and validation proofs do not survive a restart.
 Startup activates the backup's committed pointer, including a pending selected
 record. Sign in using a restored
 management account and inspect **Current configuration** and **History** to
@@ -346,27 +338,29 @@ REST targets and routes remain one text document. URL placeholders such as
 `${REST_BASE_URL}` are kept as authored text. Java skills, deployment settings,
 model connections and destination bindings are outside this editor.
 
-Edits save automatically to a session-private draft after a short pause. The
-lower-left status says Unsaved, Saving, Saved to private draft, or Save failed;
-Saved means the server acknowledged the current text, **not** that it is live or
-recoverable after logout. A failed save retains text on the open page. Retry
-save explicitly, or make a new edit after the failure. Validation runs separately
-after an acknowledged save. Valid, Validation errors and Out of date appear
-without interrupting typing; expand Validation details to inspect labelled
-issues. Warnings alone still permit publication. Publish becomes available only
-for the current saved, successfully validated candidate. Publication switches
-the runtime catalog without a restart and clears old-base drafts on success.
+Edits save automatically to the user's durable draft after a short pause.
+The draft status distinguishes unsent local text, a saved revision and the
+published runtime. A failed save keeps the local text visible for explicit
+retry. Validation runs on the exact saved revision and shows labelled issues;
+warnings alone permit publication. Publish becomes available only for the
+current saved, successfully validated revision. Successful publication changes
+the runtime without restart, deletes only that user's draft and releases its
+lease. Other users' saved drafts remain readable but stale.
 
-Only the tab that acquired the lease can write. Release preserves this session's
-draft; reacquire to resume. Discard removes it. Admin takeover starts that admin
-from runtime configuration and does not expose another session's draft. A lost
-lease leaves still-valid local text in the open tab but stops writes. The page
-stores no draft or grant in browser storage: logout, session expiry, account
-changes, discard and a changed runtime base can invalidate edits. The page
-shows the configured login and lease idle limits and warns two minutes before
-lease expiry. Only typing, paste, clicks, scrolling and Continue editing send
-an activity report, at most once per 30 seconds. Background save, validation,
-status reads and mouse movement do not renew deadlines.
+The current editing session holds the lease. Another session of the same user
+can explicitly take control; this rotates the server grant and first reads the
+latest saved revision. Administrator takeover does not expose or delete the
+previous holder's saved draft. A lost lease stops writes, while unsent local
+text remains visible and is never automatically resubmitted. Logout, expiry,
+account changes and restart revoke grants and validation, while saved content
+remains in SQLite. After taking control again, compare retained local text with
+the server-saved draft and choose **Resume editing unsaved local text** before
+changing it; reacquisition itself does not make retained text writable.
+A changed published base keeps a draft visible as stale;
+review all fields, submit a complete current-base reconciliation, and validate
+again. Typing, paste, clicks, scrolling and explicit Continue editing report
+user activity at most once per 30 seconds. Background polling, save and
+validation do not renew deadlines.
 
 If Publish is rejected, inspect the displayed runtime, intended and fault
 state before making another explicit decision. An activation failure may leave
@@ -398,46 +392,58 @@ Secure by default; use HTTPS in deployment. Set
 management API responses use `Cache-Control: no-store` and
 `Referrer-Policy: no-referrer`.
 
-### Private editing API
+### Shared durable editing API
 
-All routes below require a management login, and unsafe methods require
-`X-CSRF-TOKEN`. Editors and admins may mutate drafts or leases; only admins may
-take over. Viewers may inspect lease status and their own session draft, if any.
-The server derives account and session identity from authentication, never from
-request JSON. A browser tab creates a UUID `tabId` and keeps it only for that tab.
+The console and future remote clients use this single management contract. All
+calls require an authenticated management user; unsafe methods require the
+browser CSRF token. This release uses browser login only; personal tokens are
+planned separately. Editors and administrators mutate; viewers may read their
+own saved draft. The server derives the owner from authentication. Client
+labels and request identifiers grant no access.
 
 | Method and path | Request | Result |
 | --- | --- | --- |
-| `GET /api/management/editing` | None | `held`, `mine`, `expiresAt`, and `mineTabId` only for this session's lease; no foreign draft or grant details. |
-| `GET /api/management/editing/draft` | None | This session's draft or 404. |
-| `POST /api/management/editing/lease` | `{"tabId":"<uuid>"}` | Acquires the sole lease and creates or resumes this session's draft. |
-| `POST /api/management/editing/lease/takeover` | `{"tabId":"<uuid>"}` | Admin only; revokes the old grant and starts the admin's fresh draft from runtime production. |
-| `POST /api/management/editing/lease/activity` | `{"tabId":"<uuid>","grantId":"<uuid>"}` | Reports meaningful activity; renews login and lease at most once per 30 seconds. |
-| `POST /api/management/editing/lease/release` | `{"tabId":"<uuid>","grantId":"<uuid>"}` | Releases ownership while retaining the eligible private draft. |
-| `PUT /api/management/editing/draft` | `tabId`, `grantId`, `expectedCandidateId`, complete `skillDocuments` and `restRoutesYaml` | Replaces exact authored content, rotates candidate ID, and clears validation. |
-| `DELETE /api/management/editing/draft` | Current `tabId`/`grantId` when holding the lease; otherwise an empty body | Discards this session's draft and lease. |
-| `POST /api/management/editing/draft/validate` | `tabId`, `grantId`, `expectedCandidateId` | Checks the complete frozen candidate and returns `draftId`, `candidateId`, `baseSnapshotId`, `applied: true` and `validation`; no activation or submission. |
+| `GET /api/management/editing` | None | Application lease `held`, `mine`, `sameUser`, display-only `holderLabel`, `expiresAt`, and `editingSessionId` only for the holder's login session. Clients compare that ID with their own grant to detect a handoff between tabs sharing a login. |
+| `GET /api/management/editing/draft` | None | Only the caller's saved draft, or 404. |
+| `POST /api/management/editing/lease` | `{"label":"Console"}` | Acquire a free lease and create a draft from the published snapshot if none exists. |
+| `POST /api/management/editing/lease/handoff` | `{"label":"Other client"}` | Explicitly take control from another session of the same user; rotate the grant. |
+| `POST /api/management/editing/lease/takeover` | `{"label":"Administrator"}` | Admin only; displace a holder while preserving that user's private draft. |
+| `POST /api/management/editing/lease/renew` | `editingSessionId`, `generation` | Explicitly renew a live lease. |
+| `POST /api/management/editing/lease/release` | `editingSessionId`, `generation` | Release editing control and validation proof, retaining saved content. |
+| `PUT /api/management/editing/draft` | Capability, `draftId`, `revision`, `baseSnapshotId`, complete `skillDocuments` and `restRoutesYaml` | Replace the saved content at the current base; increment revision and clear validation. |
+| `POST /api/management/editing/draft/reconcile` | Same complete body, with the current published `baseSnapshotId` | Explicitly submit a full configuration against the current base after it changes. |
+| `POST /api/management/editing/draft/validate` | Capability, `draftId`, `revision`, `baseSnapshotId` | Validate the exact saved revision without publishing. |
+| `DELETE /api/management/editing/draft` | Capability, `draftId`, `revision`, `baseSnapshotId` | Delete the caller's saved draft and release control. |
 
-Lease acquisition and activity responses include `grantId`, `expiresAt` and the
-owning session's `draft`. A draft includes `draftId`, `candidateId`,
-`baseSnapshotId`, `configuration` (`skillDocuments` with `sourceName`/`yaml`, and
-`restRoutesYaml`), and its current `validation` or null. A second tab may read
-its session draft but cannot write with another tab's grant. Acquisition while
-held, stale grant/tab/candidate/base, and unavailable editing return 409 without
-mutating content. Malformed input returns 400; missing login returns 401 and
-insufficient role or CSRF returns 403. Private responses are not cached.
+The capability is the server-issued `editingSessionId` and `generation`,
+returned by acquisition or handoff with `expiresAt` and the current draft.
+The draft has `draftId`, positive `revision`, `baseSnapshotId`, optional
+`sourceSnapshotId`, complete `configuration`, `stale`, and an in-process
+`validation` result or null. Identifiers are concurrency markers, never
+bearer authority. Every mutation checks the live login, account version, lease
+holder, generation, draft ID, revision and base. A delayed old-holder write,
+foreign user, stale revision, or obsolete base receives 409 without changing
+saved content. Malformed requests receive 400, missing login 401, and role or
+CSRF denial 403.
 
-`loomspan-sidecar.management.edit-lease-timeout` is positive and defaults to
-`15m`; the login idle timeout defaults to `30m`. Lease expiry or release keeps
-the private draft while its session and runtime base are valid. Reacquisition
-issues a fresh grant. Logout, login expiry, account version changes, session
-destruction, successful publication and restart clear affected editing state.
-Configuration fault state permits status, private inspection, release and
-discard, while blocking acquisition, save and activity renewal. The browser
-sends reports only for typing, paste, clicks, scrolling or explicit Continue
-editing, no more than once per 30 seconds. Mouse movement, automatic
-validation/status polling and an open idle tab do not report activity. The edit
-page warns two minutes before lease expiry; server deadlines remain authoritative.
+There is one saved draft per account in SQLite. It survives logout, credential
+expiry, account changes and restart, including ordered skill documents and REST
+YAML. A new login may read its owner's draft but must acquire a new lease and
+validate again. Validation and lease state are memory-only. The application
+lease defaults to 15 minutes and the login idle limit to 30 minutes. Polling,
+reads, saves, validation and model work do not renew either deadline. Only
+explicit user activity reported through `/api/management/session/activity`
+and explicit lease renewal extend them. The console checks saved revisions
+while read-only; it keeps unsent local text separate and never submits it on
+handoff or ownership loss.
+
+When `stale` is true, compare the saved draft with the current published
+configuration, edit the complete desired result, submit it to `/draft/reconcile`
+with the current base, then validate its new revision and publish. The server
+never merges or replaces stale content automatically. An unchanged saved
+configuration cannot be submitted solely to relabel its base. It enforces a complete
+current-base submission but cannot judge the semantic quality of the user's
+reconciliation.
 
 ### Protected configuration API
 
@@ -453,16 +459,15 @@ session and CSRF token.
 | `GET /api/management/configuration/export` | None | Format 1 ZIP of the captured runtime-published configuration; authenticated viewer, editor, or admin. 413 when the v1 size limits are exceeded; 503 when runtime state is unavailable. |
 | `GET /api/management/configuration/history` | None | Retained full submitted snapshots in ascending `submissionSequence`. |
 | `GET /api/management/configuration/history/{localId}` | None | Full retained snapshot or 404 after pruning. |
-| `POST /api/management/configuration/rollback/{localId}/review` | Empty JSON body; editor/admin session and CSRF | Exact retained source status/summary, destination validation, review ID, runtime and lease observation; 409 if source is absent. |
-| `POST /api/management/configuration/rollback/confirm` | `sourceId`, `reviewId`, `expectedPublishedId`, nullable `expectedGrantId`; editor/admin session and CSRF | Publishes source content as a fresh local snapshot with source provenance, or returns conflict/failure. |
-| `POST /api/management/configuration/publish` | `{"tabId":"<uuid>","grantId":"<uuid>","expectedCandidateId":"<uuid>"}` | Publishes an exactly validated candidate, then returns its full snapshot. |
+| `POST /api/management/configuration/rollback/{localId}/review` | Empty body; editor/admin and CSRF | Read-only source summary and destination validation. |
+| `POST /api/management/configuration/rollback/{localId}/load` | Capability, draft ID/revision, current base ID | Load the retained source into the caller's saved draft; no publication. |
+| `POST /api/management/configuration/publish` | Capability, draft ID/revision/base ID | Publish only the exact successfully validated saved revision, then return the full snapshot. |
 
 A full snapshot contains `localId`, nullable `sourceId`, `submissionSequence`,
 `status`, and `configuration` with authored `skillDocuments` and `restRoutesYaml`.
 The framework's validation returns `successful` and issues with `severity`
 (`ERROR` or `WARNING`), `sourceLabel`, optional `skillName` and `location`, and
-`message`. Warning-only results can be published; an error cannot. A save,
-including identical content, rotates the candidate ID and clears its validation.
+`message`. Warning-only results can be published; an error cannot. Every save, including identical content, advances the revision and clears validation.
 Validation is advisory: Publish prepares and stages afresh. Neither validation
 nor inspection renews login or lease inactivity deadlines.
 
@@ -480,32 +485,23 @@ connections, and SSL bundles are excluded. Editors and administrators can import
 this bundle through **Import configuration** or the management API. For full
 installation recovery, use the stopped-instance database backup procedure above.
 
-Import completely replaces authored skills, routes, and targets. It does not
-transfer source history or status. Review uploads one `bundle` file to
-`POST /api/management/configuration/import/review`; the response includes source
-identity, producer versions, skill document and validated skill counts, route
-count, destination validation feedback, a review ID, the runtime-published ID,
-and the current lease owner and grant, if any. Confirmation uploads the exact
-same ZIP to `POST /api/management/configuration/import/confirm` with `reviewId`,
-`expectedPublishedId`, and `expectedGrantId` when a lease exists. The console
-requires a separate confirmation action. Management editor/admin authorization
-and CSRF apply to both endpoints; viewers may still export and inspect.
-
-Review does not publish. Confirmation rechecks the exact bytes, destination
-validation, runtime snapshot, and editing grant. A replacement lease or runtime
-publication requires refreshed confirmation; renewal of the same grant does
-not. Rejected confirmations preserve private drafts. An accepted import prepares
-and stages again before clearing **all** private drafts and breaking the lease.
-That cutover precedes database submission, so later commit or activation failure
-does not restore drafts. Every submission receives a new destination UUID; the
-source UUID is provenance only. Destination accounts and installation settings
-remain untouched.
+Import loads the bundle's complete authored skills, routes and targets into
+the caller's saved draft. `POST /api/management/configuration/import/review`
+accepts one `bundle` multipart field and returns producer metadata and
+validation feedback without changing state. `POST
+/api/management/configuration/import/load` accepts the same bundle plus
+`editingSessionId`, `generation`, `draftId`, `revision`, and the current
+`baseSnapshotId`. The caller must hold the lease; the load advances the saved
+revision and preserves the bundle source UUID as provenance. The runtime is
+unchanged until the caller validates and publishes through the shared editing
+contract. A failed upload or load leaves the prior draft intact. The old direct
+confirmation endpoint has been removed.
 
 The destination must configure the REST URL variable allowlist, corresponding
 process environment values, and any SSL bundles required by the authored
 routes. Whole-value `${NAME}` base URLs resolve through this destination's exact
 allowlist and environment; absent, undeclared, blank, or invalid bindings reject
-before cutover. Literal URLs are supported. Protect ZIPs as sensitive data.
+before loading. Literal URLs are supported. Protect ZIPs as sensitive data.
 
 The inclusive format limits are 100 MiB compressed, 512 MiB expanded, and
 10,000 ZIP entries. Uploads spool to temporary files and are removed after each
@@ -568,28 +564,16 @@ skill and REST YAML. Authored placeholders, markup-like text, and literal
 sensitive values are preserved and rendered as text; protect all management
 accounts accordingly.
 
-Editors and administrators can select any retained snapshot, including one
-recorded as failed, pending, or current, then choose **Review rollback**. Review
-shows the source's recorded status, summary, destination validation, running
-snapshot, and lease owner. Source status is historical and does not establish
-destination validity. Separate confirmation rereads that exact retained source
-under the publication gate and publishes a fresh local snapshot whose `sourceId`
-records provenance. The original content and status remain historical. Review
-and confirmation do not require lease ownership. Confirmation checks the same
-source, session, runtime snapshot, and lease grant or absence. Renewal keeps a
-grant; replacement requires another review. Invalid content or failed preparation
-preserves drafts. Accepted cutover clears all private drafts and the lease even
-if commit or activation later fails. A missing source returns 409 and requires
-refreshed history. A disconnected confirmation has an unknown outcome: inspect
-Current configuration and History before retrying.
-
-Submitted history is global to authenticated management users. A saved or
-validated but unsubmitted draft remains private to its server session—even for
-an administrator—and never appears in history. Logout, idle expiry, restart,
-or another browser session may lose access to that private draft without losing
-an accepted submission. After a disconnect or new login, inspect **Current
-configuration** and **History**; inspection does not recover a draft, retry a
-publication, or offer cancellation.
+Editors and administrators can select any retained snapshot, including a
+failed, pending or current one, and review its content and destination
+validation. The explicit Load action copies that complete retained content
+into the current holder's own saved draft at an expected revision and current
+base. Its local UUID becomes source provenance. The holder then validates and
+publishes through the same endpoint as ordinary editing. Loading does not
+activate the snapshot, bypass a lease, or erase another user's draft. A pruned
+source returns 404. Retained history is visible to all authenticated management
+users, while saved drafts are private to their owners, including against an
+administrator who takes over the lease.
 
 `PENDING` always means the recorded outcome is unknown, including when that
 snapshot is currently running. `PUBLISHED` and `FAILED` are recorded bookkeeping
@@ -613,9 +597,9 @@ snapshots, including failed attempts and current production, with protection
 for the selected snapshot and live generations. Older rollback sources can be
 pruned; local history is not a guaranteed recovery archive.
 
-The server checks the live account, session, tab, grant, base snapshot and exact
-validated candidate after the publication lock becomes available. Conflicts
-return 409 with `grant_conflict`, `candidate_conflict`, `base_conflict`,
+The server checks the live account, session, editing grant, base snapshot and exact
+validated saved revision after the publication lock becomes available. Conflicts
+return 409 with `grant_conflict`, `revision_conflict`, `base_conflict`,
 `validation_required`, `account_conflict`, `session_conflict`, `role_conflict`, or generic
 `editing_conflict`. Authentication and role/CSRF failures
 return 401 or 403. Malformed input returns 400. Missing or pruned history
@@ -717,7 +701,7 @@ framework-only tests are not used as Sidecar acceptance evidence.
 
 Use a stopped full database backup for installation recovery, a configuration
 ZIP for authored-content transfer between instances, and retained-history
-rollback to publish a new snapshot from the same instance. ZIP and rollback do
+rollback to load a retained snapshot into a draft for later publication. ZIP and rollback do
 not restore management accounts or repair an unusable database. Protect the
 database backup and exported ZIP because authored values may contain secrets.
 

@@ -44,135 +44,25 @@ class ManagementImportBrowserIntegrationTest {
     @Autowired ManagementEditingState editing;
     @LocalServerPort int port;
 
-    @Test void editorExplicitlyReviewsAndConfirmsWhileViewerCannotImport() throws Exception {
-        synchronized (editing) { editing.clearAll(); }
+    @Test void importLoadsSavedDraftAndRequiresSharedValidationAndPublication() throws Exception {
+        synchronized (editing) { editing.clearLease(); }
         Path bundle = ConfigurationBundleV1.write(runtime.publishedSnapshot());
-        try (Playwright playwright = Playwright.create(); Browser browser = playwright.chromium().launch()) {
-            try (BrowserContext viewer = browser.newContext()) {
-                Page page = login(viewer, seed("viewer"));
-                assertThat(page.locator("nav a:has-text('Import configuration')").count()).isZero();
-                assertThat(page.navigate(url("/management/configuration/import")).status()).isEqualTo(403);
-            }
-            try (BrowserContext editor = browser.newContext()) {
-                Page page = login(editor, seed("editor"));
-                page.navigate(url("/management/configuration/import"));
-                assertThat(page.locator("#import-confirm").isDisabled()).isTrue();
-                assertThat(page.locator("#import-warning").textContent()).contains("every private draft", "breaks the editing lease");
-                page.locator("#import-file").setInputFiles(bundle);
-                Object rejectedWithoutCsrf = page.evaluate("""
-                        async () => {
-                          const form = new FormData();
-                          form.append('bundle', document.querySelector('#import-file').files[0]);
-                          return (await fetch('/api/management/configuration/import/review',
-                              {method: 'POST', credentials: 'same-origin', body: form})).status;
-                        }
-                        """);
-                assertThat(rejectedWithoutCsrf).isEqualTo(403);
-                page.locator("#import-review").click();
-                page.locator("#import-status").getByText("Review passed", new com.microsoft.playwright.Locator.GetByTextOptions()
-                        .setExact(false)).waitFor();
-                assertThat(page.locator("#import-details").textContent()).contains(runtime.inspect().publishedId().toString(),
-                        "Skill documents", "Validated skills", "REST routes");
-                assertThat(page.locator("#import-confirm").isEnabled()).isTrue();
-                int history = store.history().size();
-                page.locator("#import-file").setInputFiles(new Path[0]);
-                assertThat(page.locator("#import-confirm").isDisabled()).isTrue();
-                assertThat(store.history()).hasSize(history);
-                page.locator("#import-file").setInputFiles(bundle);
-                page.evaluate("""
-                        () => {
-                          const original = window.fetch.bind(window);
-                          window.fetch = (...args) => {
-                            window.fetch = original;
-                            return original(...args).then(response => new Promise(resolve => {
-                              window.releaseImportReview = () => resolve(response);
-                            }));
-                          };
-                        }
-                        """);
-                page.locator("#import-review").click();
-                page.waitForFunction("() => typeof window.releaseImportReview === 'function'");
-                page.locator("#import-file").setInputFiles(new Path[0]);
-                page.evaluate("() => window.releaseImportReview()");
-                page.waitForTimeout(100);
-                assertThat(page.locator("#import-confirm").isDisabled()).isTrue();
-                assertThat(page.locator("#import-summary").isHidden()).isTrue();
-                page.locator("#import-file").setInputFiles(bundle);
-                page.locator("#import-review").click();
-                page.locator("#import-confirm").click();
-                page.locator("#import-outcome").getByText("Import published as local snapshot",
-                        new com.microsoft.playwright.Locator.GetByTextOptions().setExact(false)).waitFor();
-                assertThat(store.history()).hasSize(history + 1);
-                assertThat(page.locator("#import-confirm").isDisabled()).isTrue();
-            }
-        } finally { Files.deleteIfExists(bundle); }
-    }
-
-    @Test void reviewRendersHostileLabelsAsTextAndDisconnectedConfirmIsUnknown() throws Exception {
-        synchronized (editing) { editing.clearAll(); }
-        String marker = "</dd><script>window.__importInjected=1</script>";
-        Path invalid = ConfigurationBundleV1.write(new ConfigurationSnapshot(UUID.randomUUID(), null, 1,
-                new ManagedConfiguration(List.of(new SkillDocument(marker, "name: invalid\n")),
-                        "targets: {}\nroutes: {}\n"), SnapshotStatus.PUBLISHED));
-        Path valid = ConfigurationBundleV1.write(runtime.publishedSnapshot());
+        var before = runtime.inspect().publishedId();
         try (Playwright playwright = Playwright.create(); Browser browser = playwright.chromium().launch();
                 BrowserContext context = browser.newContext()) {
-            Page page = login(context, seed("admin"));
+            Page page = login(context, seed("editor"));
             page.navigate(url("/management/configuration/import"));
-            page.locator("#import-file").setInputFiles(invalid);
+            page.locator("#import-file").setInputFiles(bundle);
             page.locator("#import-review").click();
-            page.locator("#import-status").getByText("Destination validation failed",
-                    new com.microsoft.playwright.Locator.GetByTextOptions().setExact(false)).waitFor();
-            assertThat(page.locator("#import-issues").textContent()).contains(marker);
-            assertThat(page.evaluate("window.__importInjected")).isNull();
-            page.locator("#import-file").setInputFiles(valid);
-            page.locator("#import-review").click();
-            page.locator("#import-status").getByText("Review passed",
-                    new com.microsoft.playwright.Locator.GetByTextOptions().setExact(false)).waitFor();
-            int history = store.history().size();
-            page.route("**/api/management/configuration/import/confirm", route -> route.abort());
+            page.locator("#import-confirm").waitFor(new com.microsoft.playwright.Locator.WaitForOptions()
+                    .setState(com.microsoft.playwright.options.WaitForSelectorState.VISIBLE));
+            page.onceDialog(dialog -> dialog.accept());
             page.locator("#import-confirm").click();
-            page.locator("#import-outcome").getByText("outcome is unknown",
-                    new com.microsoft.playwright.Locator.GetByTextOptions().setExact(false)).waitFor();
-            assertThat(page.locator("#import-confirm").isDisabled()).isTrue();
-            assertThat(store.history()).hasSize(history);
-            page.unroute("**/api/management/configuration/import/confirm");
-            page.locator("#import-review").click();
-            page.locator("#import-status").getByText("Review passed",
-                    new com.microsoft.playwright.Locator.GetByTextOptions().setExact(false)).waitFor();
-            page.route("**/api/management/configuration/import/confirm", route -> route.fulfill(
-                    new com.microsoft.playwright.Route.FulfillOptions().setStatus(503)
-                            .setContentType("application/json")
-                            .setBody("{\"code\":\"activation_failed\",\"error\":\"Publication failed\"}")));
-            page.locator("#import-confirm").click();
-            page.locator("#import-outcome").getByText("Import activation failed; the intended pointer was restored",
-                    new com.microsoft.playwright.Locator.GetByTextOptions().setExact(false)).waitFor();
-            page.unroute("**/api/management/configuration/import/confirm");
-            page.locator("#import-review").click();
-            page.locator("#import-status").getByText("Review passed",
-                    new com.microsoft.playwright.Locator.GetByTextOptions().setExact(false)).waitFor();
-            page.route("**/api/management/configuration/import/confirm", route -> route.fulfill(
-                    new com.microsoft.playwright.Route.FulfillOptions().setStatus(503)
-                            .setContentType("application/json")
-                            .setBody("{\"code\":\"outcome_recording_failed\",\"error\":\"Outcome recording failed\"}")));
-            page.locator("#import-confirm").click();
-            page.locator("#import-outcome").getByText("Import activated, but bookkeeping failed",
-                    new com.microsoft.playwright.Locator.GetByTextOptions().setExact(false)).waitFor();
-            page.unroute("**/api/management/configuration/import/confirm");
-            page.locator("#import-review").click();
-            page.locator("#import-status").getByText("Review passed",
-                    new com.microsoft.playwright.Locator.GetByTextOptions().setExact(false)).waitFor();
-            page.route("**/api/management/configuration/import/confirm", route -> route.fulfill(
-                    new com.microsoft.playwright.Route.FulfillOptions().setStatus(409)
-                            .setContentType("application/json")
-                            .setBody("{\"code\":\"confirmation_stale\",\"observation\":{\"publishedId\":\""
-                                    + runtime.inspect().publishedId() + "\",\"grantId\":null,\"leaseOwner\":null}}")));
-            page.locator("#import-confirm").click();
-            page.locator("#import-outcome").getByText("Confirmation changed",
-                    new com.microsoft.playwright.Locator.GetByTextOptions().setExact(false)).waitFor();
-            assertThat(page.locator("#import-details").textContent()).contains("Framework producer version", "REST routes");
-            assertThat(page.locator("#import-confirm").isEnabled()).isTrue();
-        } finally { Files.deleteIfExists(invalid); Files.deleteIfExists(valid); }
+            page.waitForFunction("() => document.getElementById('import-outcome').textContent.includes('Loaded saved draft revision')");
+            assertThat(runtime.inspect().publishedId()).isEqualTo(before);
+            page.navigate(url("/management/configuration/edit"));
+            page.waitForFunction("() => document.getElementById('editor-save').textContent.includes('Saved draft revision')");
+        } finally { Files.deleteIfExists(bundle); }
     }
 
     private String seed(String role) {

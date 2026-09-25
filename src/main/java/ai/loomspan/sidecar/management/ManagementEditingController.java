@@ -2,111 +2,106 @@ package ai.loomspan.sidecar.management;
 
 import ai.loomspan.api.SkillDocument;
 import ai.loomspan.sidecar.storage.ManagedConfiguration;
-import ai.loomspan.sidecar.storage.ConfigurationValidationResult;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
-import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PutMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/management/editing")
 public final class ManagementEditingController {
-    public record Tab(String tabId) {}
-    public record Capability(String tabId, UUID grantId) {}
-    public record Save(String tabId, UUID grantId, UUID expectedCandidateId,
-            List<SkillDocument> skillDocuments, String restRoutesYaml) {}
-    public record Candidate(String tabId, UUID grantId, UUID expectedCandidateId) {}
-    public record ValidationResponse(UUID draftId, UUID candidateId, UUID baseSnapshotId,
-            boolean applied, ConfigurationValidationResult validation) {}
+    public record Capability(UUID editingSessionId, UUID generation) {}
+    public record Candidate(UUID editingSessionId, UUID generation, UUID draftId, long revision, UUID baseSnapshotId) {}
+    public record Save(UUID editingSessionId, UUID generation, UUID draftId, long revision,
+            UUID baseSnapshotId, List<SkillDocument> skillDocuments, String restRoutesYaml) {}
 
     private final ManagementEditingService editing;
-    private final ManagementSessionGuard sessions;
-
-    public ManagementEditingController(ManagementEditingService editing, ManagementSessionGuard sessions) {
-        this.editing = editing;
-        this.sessions = sessions;
-    }
+    public ManagementEditingController(ManagementEditingService editing) { this.editing = editing; }
 
     @GetMapping
     public ManagementEditingService.Status status(Authentication auth, HttpServletRequest request) {
-        return editing.status(session(request), ManagementController.principal(auth));
+        return editing.status(request.getSession(false), ManagementController.principal(auth));
     }
 
     @GetMapping("/draft")
     public ResponseEntity<ManagementEditingService.Draft> draft(Authentication auth, HttpServletRequest request) {
-        var draft = editing.read(session(request), ManagementController.principal(auth));
-        return draft == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(draft);
+        var found = editing.read(request.getSession(false), ManagementController.principal(auth));
+        return found == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(found);
     }
 
     @PostMapping("/lease")
-    public ManagementEditingService.Grant acquire(@RequestBody Tab body, Authentication auth, HttpServletRequest request) {
-        return editing.acquire(session(request), ManagementController.principal(auth), body.tabId(), false);
+    public ManagementEditingService.Grant acquire(@RequestBody Map<String, Object> body, Authentication auth, HttpServletRequest request) {
+        return editing.acquire(request.getSession(false), ManagementController.principal(auth), label(body), false, false);
+    }
+
+    @PostMapping("/lease/handoff")
+    public ManagementEditingService.Grant handoff(@RequestBody Map<String, Object> body, Authentication auth, HttpServletRequest request) {
+        return editing.acquire(request.getSession(false), ManagementController.principal(auth), label(body), false, true);
     }
 
     @PostMapping("/lease/takeover")
-    public ManagementEditingService.Grant takeover(@RequestBody Tab body, Authentication auth, HttpServletRequest request) {
-        return editing.acquire(session(request), ManagementController.principal(auth), body.tabId(), true);
+    public ManagementEditingService.Grant takeover(@RequestBody Map<String, Object> body, Authentication auth, HttpServletRequest request) {
+        return editing.acquire(request.getSession(false), ManagementController.principal(auth), label(body), true, false);
     }
 
-    @PostMapping("/lease/activity")
-    public ManagementEditingService.Grant activity(@RequestBody Capability body, Authentication auth,
-            HttpServletRequest request) {
-        synchronized (sessions) {
-            var result = editing.activity(session(request), ManagementController.principal(auth),
-                    body.tabId(), body.grantId(), sessions.lastReportAt(request));
-            sessions.report(request);
-            return result;
-        }
+    @PostMapping("/lease/renew")
+    public ManagementEditingService.Grant renew(@RequestBody Capability body, Authentication auth, HttpServletRequest request) {
+        return editing.renew(request.getSession(false), ManagementController.principal(auth),
+                body.editingSessionId(), body.generation());
     }
 
     @PostMapping("/lease/release")
     public ResponseEntity<Void> release(@RequestBody Capability body, Authentication auth, HttpServletRequest request) {
-        editing.release(session(request), ManagementController.principal(auth), body.tabId(), body.grantId());
+        editing.release(request.getSession(false), ManagementController.principal(auth),
+                body.editingSessionId(), body.generation());
         return ResponseEntity.noContent().build();
     }
 
     @PutMapping("/draft")
     public ManagementEditingService.Draft save(@RequestBody Save body, Authentication auth, HttpServletRequest request) {
-        if (body.skillDocuments() == null || body.restRoutesYaml() == null)
-            throw new IllegalArgumentException("Missing configuration content");
-        ManagedConfiguration configuration;
-        try { configuration = new ManagedConfiguration(body.skillDocuments(), body.restRoutesYaml()); }
-        catch (NullPointerException invalid) { throw new IllegalArgumentException("Invalid configuration content"); }
-        return editing.save(session(request), ManagementController.principal(auth), body.tabId(), body.grantId(),
-                body.expectedCandidateId(), configuration);
+        return editing.save(request.getSession(false), ManagementController.principal(auth),
+                body.editingSessionId(), body.generation(), body.draftId(), body.revision(), body.baseSnapshotId(),
+                content(body));
+    }
+
+    @PostMapping("/draft/reconcile")
+    public ManagementEditingService.Draft reconcile(@RequestBody Save body, Authentication auth, HttpServletRequest request) {
+        return editing.reconcile(request.getSession(false), ManagementController.principal(auth),
+                body.editingSessionId(), body.generation(), body.draftId(), body.revision(), body.baseSnapshotId(),
+                content(body));
     }
 
     @PostMapping("/draft/validate")
-    public ValidationResponse validate(@RequestBody Candidate body, Authentication auth,
-            HttpServletRequest request) {
-        var draft = editing.validate(session(request), ManagementController.principal(auth), body.tabId(),
-                body.grantId(), body.expectedCandidateId());
-        return new ValidationResponse(draft.draftId(), draft.candidateId(), draft.baseSnapshotId(),
-                true, draft.validation());
+    public ManagementEditingService.Draft validate(@RequestBody Candidate body, Authentication auth, HttpServletRequest request) {
+        return editing.validate(request.getSession(false), ManagementController.principal(auth),
+                body.editingSessionId(), body.generation(), body.draftId(), body.revision(), body.baseSnapshotId());
     }
 
     @DeleteMapping("/draft")
-    public ResponseEntity<Void> discard(@RequestBody(required = false) Capability body,
-            Authentication auth, HttpServletRequest request) {
-        editing.discard(session(request), ManagementController.principal(auth),
-                body == null ? null : body.tabId(), body == null ? null : body.grantId());
+    public ResponseEntity<Void> discard(@RequestBody Candidate body, Authentication auth, HttpServletRequest request) {
+        editing.discard(request.getSession(false), ManagementController.principal(auth),
+                body.editingSessionId(), body.generation(), body.draftId(), body.revision());
         return ResponseEntity.noContent().build();
+    }
+
+    private static ManagedConfiguration content(Save body) {
+        if (body.skillDocuments() == null || body.restRoutesYaml() == null)
+            throw new IllegalArgumentException("Complete configuration required");
+        return new ManagedConfiguration(body.skillDocuments(), body.restRoutesYaml());
+    }
+
+    private static String label(Map<String, Object> body) {
+        if (!body.keySet().equals(java.util.Set.of("label")) || !(body.get("label") instanceof String label)
+                || label.isBlank()) throw new IllegalArgumentException("Display label required");
+        return label;
     }
 
     @ExceptionHandler(ManagementEditingService.Conflict.class)
     ResponseEntity<Map<String, String>> conflict(ManagementEditingService.Conflict conflict) {
-        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("code", conflict.code(),
+        return ResponseEntity.status(409).body(Map.of("code", conflict.code(),
                 "error", "Editing state changed or is unavailable"));
     }
 
@@ -119,9 +114,5 @@ public final class ManagementEditingController {
     ResponseEntity<Map<String, String>> unavailable() {
         return ResponseEntity.status(503).body(Map.of("code", "configuration_unavailable",
                 "error", "Configuration mutations are unavailable"));
-    }
-
-    private static jakarta.servlet.http.HttpSession session(HttpServletRequest request) {
-        return request.getSession(false);
     }
 }

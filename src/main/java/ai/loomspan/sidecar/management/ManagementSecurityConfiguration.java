@@ -63,7 +63,7 @@ public class ManagementSecurityConfiguration {
                         .requestMatchers("/api/management/editing/lease/takeover").hasAuthority("MGT_ADMIN")
                         .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/management/editing", "/api/management/editing/draft").authenticated()
                         .requestMatchers("/api/management/editing/lease", "/api/management/editing/lease/**",
-                                "/api/management/editing/draft", "/api/management/editing/draft/validate",
+                                "/api/management/editing/draft", "/api/management/editing/draft/**",
                                 "/api/management/configuration/publish").hasAuthority("MGT_EDITOR")
                         .anyRequest().authenticated())
                 .formLogin(login -> login.loginPage("/management/login").loginProcessingUrl("/management/login")

@@ -218,8 +218,8 @@ public class ManagementPagesController
                         + "<p id='rollback-status' class='notice' role='status' aria-live='polite' tabindex='-1'>Select a retained snapshot to review.</p>"
                         + "<div id='rollback-summary' hidden><h4>Rollback review</h4><dl id='rollback-details' class='facts'></dl>"
                         + "<h4>Destination validation</h4><ul id='rollback-issues' class='issues'></ul>"
-                        + "<p class='notice warning'>Confirming discards every private draft and breaks the editing lease, including another editor’s lease. The retained source status does not establish destination validity.</p>"
-                        + "<button id='rollback-confirm' class='btn-danger' type='button' disabled>Confirm and publish rollback</button></div></section>";
+                        + "<p class='notice warning'>Loading replaces only your saved draft. Review, validate, then publish it from the editor. The retained source status does not establish destination validity.</p>"
+                        + "<button id='rollback-confirm' type='button' disabled>Load into my draft</button></div></section>";
         return console("Configuration history", "Retained submissions, oldest first. Select one to inspect its exact content.", user, request,
                 "<button id='history-refresh' type='button'>Refresh retained history</button>",
                 "<section data-console='history'>"
@@ -256,10 +256,16 @@ public class ManagementPagesController
                         + "<div class='card editor-lease'><div class='editor-lease-info'><p id='editor-message' class='notice' role='status' aria-live='polite'>Loading configuration…</p>"
                         + "<p id='editor-owner' class='editor-owner'></p><p id='editor-deadline' class='hint'></p></div>"
                         + "<div class='editor-actions'><button id='editor-acquire' class='btn-primary' type='button'>Start editing or resume draft</button>"
-                        + "<button id='editor-takeover' type='button' hidden>Take over editing</button>"
+                        + "<button id='editor-handoff' type='button' hidden>Take control of my draft</button>"
+                        + "<button id='editor-takeover' type='button' hidden>Administrator takeover</button>"
                         + "<button id='editor-continue' type='button' hidden>Continue editing</button>"
                         + "<button id='editor-release' type='button' hidden>Release editing</button>"
+                        + "<button id='editor-resume-local' type='button' hidden>Resume editing unsaved local text</button>"
                         + "<button id='editor-discard' class='btn-ghost-danger' type='button' hidden>Discard my draft</button></div></div>"
+                        + "<div class='card'><p>Your saved draft is private and durable. Published configuration is shown separately below. A stale draft requires a complete current-base submission and fresh validation.</p>"
+                        + "<button id='editor-reconcile' type='button' hidden>Submit complete draft against current base</button></div>"
+                        + "<details id='editor-saved-preview' class='card' hidden><summary>Server-saved draft content</summary>"
+                        + "<pre id='editor-saved-content' class='code'></pre></details>"
                         + "<div id='editor-fields' class='stack-lg' hidden><div><div class='section-head'><div><h2 class='section-title'>Skill YAML documents</h2>"
                         + "<p class='hint'>Each source name is a diagnostic label. Edit complete YAML documents.</p></div>"
                         + "<button id='editor-add' type='button'>Add skill document</button></div><div id='editor-skills' class='stack'></div></div>"
@@ -279,16 +285,16 @@ public class ManagementPagesController
     @GetMapping(value = "/management/configuration/import", produces = MediaType.TEXT_HTML_VALUE)
     String importPage(Authentication auth, HttpServletRequest request)
     {
-        return console("Import configuration", "Replace the running configuration with a bundle exported from this or another Sidecar.", ManagementController.principal(auth), request, "",
-                "<section data-console='import' class='stack-lg'><ol class='stepper'><li>Choose bundle</li><li>Review on this Sidecar</li><li>Confirm and publish</li></ol>"
+        return console("Import configuration", "Load an exported bundle into your saved draft, then validate and publish it.", ManagementController.principal(auth), request, "",
+                "<section data-console='import' class='stack-lg'><ol class='stepper'><li>Choose bundle</li><li>Review on this Sidecar</li><li>Load into draft</li></ol>"
                         + "<div class='card stack'><h2>Configuration bundle</h2><p class='muted'>Choose a format-1 current-configuration bundle exported from this or another Sidecar.</p>"
                         + "<label class='dropzone'><span>Bundle file (.zip)</span><input id='import-file' type='file' accept='.zip,application/zip'></label>"
                         + "<div class='row'><button id='import-review' class='btn-primary' type='button'>Review on this destination</button></div>"
                         + "<p id='import-status' class='notice' role='status' aria-live='polite'>Choose a bundle to review.</p></div>"
                         + "<div id='import-summary' class='card stack' hidden><h2>Review</h2><dl id='import-details' class='facts'></dl>"
                         + "<h3>Validation feedback</h3><ul id='import-issues' class='issues'></ul>"
-                        + "<p id='import-warning' class='notice warning'>Confirming discards every private draft and breaks the editing lease, including another editor’s lease. The imported content completely replaces the running configuration.</p>"
-                        + "<div class='row'><button id='import-confirm' class='btn-danger' type='button' disabled>Confirm and publish import</button></div></div>"
+                        + "<p id='import-warning' class='notice warning'>Loading replaces only your saved draft. It does not change the running configuration until you validate and publish from the editor.</p>"
+                        + "<div class='row'><button id='import-confirm' type='button' disabled>Load into my draft</button></div></div>"
                         + "<div id='import-outcome' class='notice' role='status' aria-live='polite'></div></section>"
                         + "<script src='/management/assets/import.js' defer></script>");
     }

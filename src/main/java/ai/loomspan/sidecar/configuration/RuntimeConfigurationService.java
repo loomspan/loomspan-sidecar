@@ -7,12 +7,11 @@ import ai.loomspan.sidecar.execution.ExecutionCoordinator;
 import ai.loomspan.sidecar.management.ManagementEditingState;
 import ai.loomspan.sidecar.rest.GenerationRestResources;
 import ai.loomspan.sidecar.rest.RestRouteCatalogValidator;
-import ai.loomspan.sidecar.storage.ConfigurationDraft;
+import ai.loomspan.sidecar.storage.ConfigurationDraftStore;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshot;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshotStore;
 import ai.loomspan.sidecar.storage.ConfigurationValidationIssue;
 import ai.loomspan.sidecar.storage.ConfigurationValidationResult;
-import ai.loomspan.sidecar.storage.FrozenConfigurationCandidate;
 import ai.loomspan.sidecar.storage.ManagedConfiguration;
 import ai.loomspan.sidecar.storage.SnapshotStatus;
 import org.springframework.boot.ApplicationArguments;
@@ -52,6 +51,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     private final RestRouteCatalogValidator routes;
     private final ExecutionCoordinator executions;
     private final ManagementEditingState editing;
+    private final ConfigurationDraftStore drafts;
     private final ReentrantLock publication = new ReentrantLock(true);
     private final ReentrantLock transition = new ReentrantLock(true);
     private volatile ConfigurationSnapshot published;
@@ -63,13 +63,14 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
 
     public RuntimeConfigurationService(ConfigurationSnapshotStore store, SkillReloader reloader,
             GenerationRestResources resources, RestRouteCatalogValidator routes, ExecutionCoordinator executions,
-            ManagementEditingState editing) {
+            ManagementEditingState editing, ConfigurationDraftStore drafts) {
         this.store = store;
         this.reloader = reloader;
         this.resources = resources;
         this.routes = routes;
         this.executions = executions;
         this.editing = editing;
+        this.drafts = drafts;
     }
 
     void hooks(Hooks hooks) { this.hooks = java.util.Objects.requireNonNull(hooks); }
@@ -122,13 +123,6 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
         }
     }
 
-    public ConfigurationValidationResult validate(ConfigurationDraft draft) {
-        FrozenConfigurationCandidate candidate = draft.freeze();
-        ConfigurationValidationResult result = validate(candidate.configuration());
-        draft.recordValidation(candidate, result);
-        return result;
-    }
-
     public ConfigurationValidationResult validate(ManagedConfiguration configuration) {
         var checked = reloader.validate(configuration.skillDocuments());
         var issues = new java.util.ArrayList<ConfigurationValidationIssue>();
@@ -150,81 +144,27 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                 issue.severity() == ConfigurationValidationIssue.Severity.ERROR), issues);
     }
 
-    /** The callback runs after acquiring the publication lock, at the admission point. */
-    public ConfigurationSnapshot publish(java.util.function.Supplier<ConfigurationDraft.ValidatedCandidate> admission) {
+    public record PublicationAdmission(long accountId, UUID draftId, long revision,
+            ManagedConfiguration configuration, UUID sourceId, UUID baseId) {}
+
+    /** Admission is re-evaluated after the publication gate is acquired. */
+    public ConfigurationSnapshot publish(java.util.function.Supplier<PublicationAdmission> admission) {
         publication.lock();
         try {
             requireHealthy();
-            FrozenConfigurationCandidate candidate = admission.get().candidate();
-            UUID predecessor = published == null ? null : published.localId();
-            if (predecessor == null || !predecessor.equals(candidate.baseSnapshotId()))
-                throw new IllegalStateException("Draft is based on a stale runtime snapshot");
-
-            return publishCandidate(candidate.configuration(), null, predecessor, false);
-        } finally {
-            publication.unlock();
-        }
-    }
-
-    public static final class ImportConflict extends RuntimeException {}
-    public static final class SourceMissing extends RuntimeException {}
-    public static final class SourceValidationChanged extends RuntimeException {}
-
-    /** A confirmed import owns both gates until its outcome is known. */
-    public ConfigurationSnapshot importConfiguration(ManagedConfiguration configuration, UUID sourceId,
-            UUID expectedPublishedId, UUID expectedGrantId, java.util.function.LongSupplier nowMillis) {
-        return importConfiguration(configuration, sourceId, expectedPublishedId, expectedGrantId, nowMillis, () -> {});
-    }
-
-    /** Resolve the exact retained source only after acquiring both publication gates. */
-    public ConfigurationSnapshot rollbackConfiguration(UUID sourceId, UUID expectedPublishedId, UUID expectedGrantId,
-            java.util.function.LongSupplier nowMillis, Runnable admission) {
-        publication.lock();
-        try {
             transition.lock();
             try {
-                requireHealthy();
-                admission.run();
+                PublicationAdmission candidate = admission.get();
                 UUID predecessor = published == null ? null : published.localId();
-                synchronized (editing) {
-                    if (editing.lease != null && nowMillis.getAsLong() >= editing.lease.expiresAt) editing.lease = null;
-                    UUID grant = editing.lease == null ? null : editing.lease.grantId;
-                    if (!java.util.Objects.equals(predecessor, expectedPublishedId)
-                            || !java.util.Objects.equals(grant, expectedGrantId)) throw new ImportConflict();
-                }
-                if (predecessor == null) throw new IllegalStateException("Runtime configuration is unavailable");
-                ConfigurationSnapshot source = store.findByLocalId(sourceId);
-                if (source == null) throw new SourceMissing();
-                if (!validate(source.configuration()).successful()) throw new SourceValidationChanged();
-                return publishCandidate(source.configuration(), source.localId(), predecessor, true);
-            } finally { transition.unlock(); }
-        } finally { publication.unlock(); }
-    }
-
-    public ConfigurationSnapshot importConfiguration(ManagedConfiguration configuration, UUID sourceId,
-            UUID expectedPublishedId, UUID expectedGrantId, java.util.function.LongSupplier nowMillis,
-            Runnable admission) {
-        publication.lock();
-        try {
-            transition.lock();
-            try {
-                requireHealthy();
-                admission.run();
-                UUID predecessor = published == null ? null : published.localId();
-                synchronized (editing) {
-                    if (editing.lease != null && nowMillis.getAsLong() >= editing.lease.expiresAt) editing.lease = null;
-                    UUID grant = editing.lease == null ? null : editing.lease.grantId;
-                    if (!java.util.Objects.equals(predecessor, expectedPublishedId)
-                            || !java.util.Objects.equals(grant, expectedGrantId)) throw new ImportConflict();
-                }
-                if (predecessor == null) throw new IllegalStateException("Runtime configuration is unavailable");
-                return publishCandidate(configuration, sourceId, predecessor, true);
+                if (predecessor == null || !predecessor.equals(candidate.baseId()))
+                    throw new IllegalStateException("Draft is based on a stale runtime snapshot");
+                return publishCandidate(candidate.configuration(), candidate.sourceId(), predecessor, candidate);
             } finally { transition.unlock(); }
         } finally { publication.unlock(); }
     }
 
     private ConfigurationSnapshot publishCandidate(ManagedConfiguration configuration, UUID sourceId,
-            UUID predecessor, boolean importCutover) {
+            UUID predecessor, PublicationAdmission admission) {
 
             PreparedSkillUpdate prepared;
             GenerationRestResources.Resources staged;
@@ -243,7 +183,6 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
             }
             ConfigurationSnapshot submitted;
             try {
-                if (importCutover) synchronized (editing) { editing.clearAll(); }
                 hooks.beforeCommit();
                 submitted = store.submit(configuration, sourceId, predecessor);
             } catch (RuntimeException failure) {
@@ -262,7 +201,6 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                 try {
                     reloader.publish(prepared);
                     published = submitted;
-                    synchronized (editing) { editing.clearAll(); }
                 } finally {
                     transition.unlock();
                 }
@@ -285,6 +223,18 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                         mutationFault == null ? "Configuration publication failed; intended selection reverted" : mutationFault);
             }
 
+            // Activation has happened. A cleanup fault is a mutation fault, never a rollback claim.
+            boolean draftCleared = false;
+            try {
+                if (!drafts.delete(admission.accountId(), admission.draftId(), admission.revision()))
+                    throw new IllegalStateException("Published draft changed during activation");
+                synchronized (editing) { editing.clearLease(); }
+                draftCleared = true;
+            } catch (RuntimeException cleanupFailure) {
+                mutationFault = "Published configuration draft could not be cleared";
+                LOG.error("Configuration mutation fault: published draft cleanup failed", cleanupFailure);
+            }
+
             boolean statusRecorded = false;
             try {
                 hooks.beforeStatus();
@@ -298,7 +248,8 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
             }
             pruneAfterAttempt();
             if (mutationFault != null) throw new PublicationFailure(
-                    statusRecorded ? "history_pruning_failed" : "outcome_recording_failed", mutationFault);
+                    !draftCleared ? "draft_cleanup_failed"
+                            : statusRecorded ? "history_pruning_failed" : "outcome_recording_failed", mutationFault);
             return new ConfigurationSnapshot(submitted.localId(), submitted.sourceId(),
                     submitted.submissionSequence(), submitted.configuration(), SnapshotStatus.PUBLISHED);
     }
@@ -401,7 +352,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
         }
     }
 
-    /** Serialize session and account invalidation with confirmed import cutover. */
+    /** Serialize session and account invalidation with the publication transition. */
     public void withEditingTransition(Runnable operation) {
         transition.lock();
         try { operation.run(); }

@@ -64,8 +64,8 @@ class ExecutionConfigurationCorrelationIntegrationTest {
                 assertThat(terminal.status()).isEqualTo(ExecutionStatus.COMPLETED);
                 var draft = new ConfigurationDraft(a);
                 draft.replaceContent(new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES));
-                assertThat(service.validate(draft).successful()).isTrue();
-                service.publish(draft::validatedCandidate);
+                assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(service, draft).successful()).isTrue();
+                context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(draft);
                 assertThat(coordinator.find(id, owner).orElseThrow().configurationSnapshotId()).isEqualTo(a.localId());
             }
         }
@@ -111,8 +111,8 @@ class ExecutionConfigurationCorrelationIntegrationTest {
                 var a = store.current();
                 var draft = new ConfigurationDraft(a);
                 draft.replaceContent(new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES));
-                assertThat(service.validate(draft).successful()).isTrue();
-                coordinator.afterHandoff(admitted -> service.publish(draft::validatedCandidate));
+                assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(service, draft).successful()).isTrue();
+                coordinator.afterHandoff(admitted -> context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(draft));
                 var jwt = Jwt.withTokenValue("test-token").header("alg", "none")
                         .issuer("https://issuer.test").subject("owner")
                         .issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(300)).build();

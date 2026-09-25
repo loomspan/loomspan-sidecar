@@ -97,11 +97,10 @@ class ManagementAdminCommandTest {
             assertThat(busy.status()).isNotZero();
             assertThat(busy.stdout()).isEmpty();
         }
-        editing.drafts.put("old-session", new ManagementEditingState.Entry(before.id(), null));
-        editing.lease = new ManagementEditingState.Lease("old-session", "tab", Clock.systemUTC().millis() + 10000);
+        editing.lease = new ManagementEditingState.Lease(before.id(), "old-session", "Console",
+                Clock.systemUTC().millis() + 10000);
         identity.redeem("reset", second.stdout().trim(), "Another Long Password 1!");
         assertThat(accounts.byEmail("admin@example.test").version()).isGreaterThan(before.version());
-        assertThat(editing.drafts).isEmpty();
         assertThat(editing.lease).isNull();
     }
 }

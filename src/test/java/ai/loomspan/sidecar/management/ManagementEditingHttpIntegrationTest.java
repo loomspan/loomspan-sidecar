@@ -2,7 +2,6 @@ package ai.loomspan.sidecar.management;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import ai.loomspan.sidecar.support.JwtTestTokens;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
 import java.net.URI;
@@ -16,9 +15,10 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.Map;
 import java.util.UUID;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -31,228 +31,169 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.Pbkdf2PasswordEncoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-        "management.server.port=0", "server.servlet.session.cookie.secure=false",
-        "loomspan-sidecar.management.session-idle-timeout=30m",
-        "loomspan-sidecar.management.edit-lease-timeout=15m",
-        "loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
-        "loomspan-sidecar.auth.jwt.audience=sidecar",
-        "loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem"
+    "management.server.port=0", "server.servlet.session.cookie.secure=false",
+    "loomspan-sidecar.management.session-idle-timeout=30m", "loomspan-sidecar.management.edit-lease-timeout=15m",
+    "loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+    "loomspan-sidecar.auth.jwt.audience=sidecar",
+    "loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem"
 })
 @Import(ManagementEditingHttpIntegrationTest.TimeConfiguration.class)
 class ManagementEditingHttpIntegrationTest {
-    @TempDir static Path storageDirectory;
-    @DynamicPropertySource static void storage(DynamicPropertyRegistry properties) {
-        properties.add("loomspan-sidecar.storage.database-path", () -> storageDirectory.resolve("sidecar.db").toString());
+    @TempDir static Path directory;
+    @DynamicPropertySource static void storage(DynamicPropertyRegistry registry) {
+        registry.add("loomspan-sidecar.storage.database-path", () -> directory.resolve("sidecar.db").toString());
     }
     static final class MutableClock extends Clock {
         private Instant now = Instant.parse("2026-09-18T00:00:00Z");
         @Override public ZoneId getZone() { return ZoneId.of("UTC"); }
         @Override public Clock withZone(ZoneId zone) { return this; }
         @Override public Instant instant() { return now; }
-        void advance(Duration amount) { now = now.plus(amount); }
+        void advance(Duration duration) { now = now.plus(duration); }
         void reset() { now = Instant.parse("2026-09-18T00:00:00Z"); }
     }
     @TestConfiguration(proxyBeanMethods = false)
-    static class TimeConfiguration {
-        @Bean @Primary MutableClock testClock() { return new MutableClock(); }
-    }
+    static class TimeConfiguration { @Bean @Primary MutableClock clock() { return new MutableClock(); } }
     @Autowired JdbcTemplate jdbc;
     @Autowired MutableClock clock;
+    @Autowired ManagementEditingState state;
     @Autowired ManagementIdentityService identity;
-    @Autowired ManagementEditingState editing;
-    @Autowired ai.loomspan.sidecar.configuration.RuntimeConfigurationService runtime;
-    private final ObjectMapper json = new ObjectMapper();
     @LocalServerPort int port;
+    private final ObjectMapper mapper = new ObjectMapper();
     private static final String PASSWORD = "Long Password 123!";
 
-    @BeforeEach void resetEditing() {
-        synchronized (editing) { editing.clearAll(); }
-        clock.reset();
+    @BeforeEach void reset() { synchronized (state) { state.clearLease(); } clock.reset(); }
+
+    @Test void sharedPrivateDraftSurvivesLogoutAndHandoffRejectsDelayedWrite() throws Exception {
+        String email = "owner-" + UUID.randomUUID() + "@example.test";
+        String foreign = "foreign-" + UUID.randomUUID() + "@example.test";
+        seed(email, "editor"); seed(foreign, "editor");
+        Browser first = login(email), second = login(email), other = login(foreign);
+        JsonNode grant = ok(first.post("/api/management/editing/lease", "{\"label\":\"First\"}"));
+        JsonNode draft = grant.path("draft");
+        JsonNode saved = ok(first.put("/api/management/editing/draft", save(grant, draft, "# secret")));
+        assertThat(saved.path("revision").asLong()).isEqualTo(draft.path("revision").asLong() + 1);
+        assertThat(ok(second.get("/api/management/editing/draft")).path("configuration").toString()).contains("secret");
+        assertThat(other.get("/api/management/editing/draft").statusCode()).isEqualTo(404);
+        assertThat(other.put("/api/management/editing/draft", save(grant, saved, "# forged")).statusCode())
+                .isEqualTo(409);
+        JsonNode handoff = ok(second.post("/api/management/editing/lease/handoff", "{\"label\":\"Second\"}"));
+        assertThat(handoff.path("generation").asText()).isNotEqualTo(grant.path("generation").asText());
+        assertThat(first.put("/api/management/editing/draft", save(grant, saved, "# delayed")).statusCode()).isEqualTo(409);
+        assertThat(second.put("/api/management/editing/draft", save(handoff, saved, "# next")).statusCode()).isEqualTo(200);
+        assertThat(first.post("/api/management/logout", "{}").statusCode()).isEqualTo(204);
+        Browser resumed = login(email);
+        assertThat(ok(resumed.get("/api/management/editing/draft")).path("configuration").toString()).contains("next");
+        assertThat(ok(resumed.get("/api/management/editing")).path("mine").asBoolean()).isFalse();
     }
 
-    @Test void draftAcquisitionIsPrivateToItsManagementSession() throws Exception {
-        seed("private-a@example.test", "editor");
-        seed("private-b@example.test", "editor");
-        seed("private-admin@example.test", "admin");
-        Browser a = login("private-a@example.test");
-        Browser b = login("private-b@example.test");
-        Browser sameAccount = login("private-a@example.test");
-        Browser admin = login("private-admin@example.test");
+    @Test void staleBaseRequiresCompleteReconciliationAndFreshValidation() throws Exception {
+        String aEmail = "a-" + UUID.randomUUID() + "@example.test", bEmail = "b-" + UUID.randomUUID() + "@example.test";
+        seed(aEmail, "editor"); seed(bEmail, "editor");
+        Browser a = login(aEmail), b = login(bEmail);
+        JsonNode ga = ok(a.post("/api/management/editing/lease", "{\"label\":\"A\"}"));
+        JsonNode da = ok(a.put("/api/management/editing/draft", save(ga, ga.path("draft"), "# A")));
+        assertThat(a.post("/api/management/editing/lease/release", cap(ga)).statusCode()).isEqualTo(204);
+        JsonNode gb = ok(b.post("/api/management/editing/lease", "{\"label\":\"B\"}"));
+        JsonNode db = ok(b.put("/api/management/editing/draft", save(gb, gb.path("draft"), "# B")));
+        assertThat(b.post("/api/management/editing/lease/release", cap(gb)).statusCode()).isEqualTo(204);
+        ga = ok(a.post("/api/management/editing/lease", "{\"label\":\"A\"}"));
+        ok(a.post("/api/management/editing/draft/validate", candidate(ga, da)));
+        JsonNode published = ok(a.post("/api/management/configuration/publish", candidate(ga, da)));
+        assertThat(published.path("localId").asText()).isNotBlank();
         assertThat(a.get("/api/management/editing/draft").statusCode()).isEqualTo(404);
-        String tab = UUID.randomUUID().toString();
-        JsonNode grant = body(a.post("/api/management/editing/lease", "{\"tabId\":\"" + tab
-                + "\",\"accountId\":999999}"));
-        assertThat(grant.path("grantId").asText()).isNotBlank();
-        String candidate = grant.path("draft").path("candidateId").asText();
-        var runningBeforeSave = runtime.inspect().publishedId();
-        String secret = "private-${SECRET}-literal";
-        String save = "{\"tabId\":\"" + tab + "\",\"grantId\":\"" + grant.path("grantId").asText()
-                + "\",\"expectedCandidateId\":\"" + candidate
-                + "\",\"skillDocuments\":[{\"sourceName\":\"literal.yaml\",\"yaml\":\"" + secret
-                + "\"}],\"restRoutesYaml\":\"routes: {}\\n" + secret + "\"}";
-        assertThat(a.put("/api/management/editing/draft", save).statusCode()).isEqualTo(200);
-        assertThat(runtime.inspect().publishedId()).isEqualTo(runningBeforeSave);
-        assertThat(body(a.get("/api/management/editing")).path("mineTabId").asText()).isEqualTo(tab);
-        synchronized (editing) {
-            var entry = editing.drafts.values().stream().filter(value -> value.accountId == identity.account("private-a@example.test").id())
-                    .findFirst().orElseThrow();
-            var frozen = entry.draft.freeze();
-            assertThat(entry.draft.recordValidation(frozen, new ai.loomspan.sidecar.storage.ConfigurationValidationResult(false,
-                    java.util.List.of(new ai.loomspan.sidecar.storage.ConfigurationValidationIssue(
-                            ai.loomspan.sidecar.storage.ConfigurationValidationIssue.Severity.ERROR,
-                            "literal.yaml", null, null, "private-validation-marker"))))).isTrue();
-        }
-        assertThat(a.get("/api/management/editing/draft").body()).contains(secret, "private-validation-marker");
-        for (Browser other : new Browser[] {b, sameAccount, admin}) {
-            assertThat(other.get("/api/management/editing/draft").statusCode()).isEqualTo(404);
-            var status = other.get("/api/management/editing");
-            assertThat(status.statusCode()).isEqualTo(200);
-            assertThat(status.body()).contains("\"held\":true", "\"mine\":false")
-                    .doesNotContain(secret, candidate, grant.path("grantId").asText(), "private-validation-marker", tab);
-            assertThat(other.post("/api/management/editing/lease", "{\"tabId\":\"" + UUID.randomUUID()
-                    + "\"}").statusCode()).isEqualTo(409);
-        }
-        assertThat(a.get("/api/management/editing/draft").headers().firstValue("Cache-Control")).hasValue("no-store");
+        assertThat(ok(a.get("/api/management/editing")).path("held").asBoolean()).isFalse();
+        assertThat(ok(b.get("/api/management/editing/draft")).path("stale").asBoolean()).isTrue();
+        gb = ok(b.post("/api/management/editing/lease", "{\"label\":\"B\"}"));
+        assertThat(b.post("/api/management/editing/draft/validate", candidate(gb, db)).statusCode()).isEqualTo(409);
+        assertThat(b.put("/api/management/editing/draft", save(gb, db, "# B2")).statusCode()).isEqualTo(409);
+        assertThat(b.post("/api/management/editing/draft/reconcile",
+                candidate(gb, db).replace(db.path("baseSnapshotId").asText(), published.path("localId").asText()))
+                .statusCode()).isEqualTo(400);
+        assertThat(ok(b.get("/api/management/editing/draft")).path("stale").asBoolean()).isTrue();
+        JsonNode reconciled = ok(b.post("/api/management/editing/draft/reconcile",
+                save(gb, db, "# B", published.path("localId").asText())));
+        assertThat(reconciled.path("revision").asLong()).isGreaterThan(db.path("revision").asLong());
+        assertThat(b.post("/api/management/configuration/publish", candidate(gb, reconciled)).statusCode()).isEqualTo(409);
+        ok(b.post("/api/management/editing/draft/validate", candidate(gb, reconciled)));
+        ok(b.post("/api/management/configuration/publish", candidate(gb, reconciled)));
+        assertThat(b.get("/api/management/editing/draft").statusCode()).isEqualTo(404);
     }
 
-    @Test void staleTabGrantCandidateAndTakeoverCannotMutateForeignDraft() throws Exception {
-        seed("stale-a@example.test", "editor");
-        seed("stale-admin@example.test", "admin");
-        Browser a = login("stale-a@example.test");
-        Browser admin = login("stale-admin@example.test");
-        String tab = UUID.randomUUID().toString();
-        JsonNode first = body(a.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        String grant = first.path("grantId").asText();
-        String candidate = first.path("draft").path("candidateId").asText();
-        assertThat(a.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}").statusCode()).isEqualTo(409);
-        assertThat(a.post("/api/management/editing/lease/takeover", "{\"tabId\":\"" + tab + "\"}")
-                .statusCode()).isEqualTo(403);
-        assertThat(a.put("/api/management/editing/draft", save(UUID.randomUUID().toString(), grant, candidate, "wrong-tab"))
-                .statusCode()).isEqualTo(409);
-        JsonNode edited = body(a.put("/api/management/editing/draft", save(tab, grant, candidate, "kept-literal")));
-        assertThat(edited.path("candidateId").asText()).isNotEqualTo(candidate);
-        JsonNode equalReplacement = body(a.put("/api/management/editing/draft", save(tab, grant,
-                edited.path("candidateId").asText(), "kept-literal")));
-        assertThat(equalReplacement.path("candidateId").asText()).isNotEqualTo(edited.path("candidateId").asText());
-        assertThat(equalReplacement.path("validation").isNull()).isTrue();
-        assertThat(a.put("/api/management/editing/draft", save(tab, grant, candidate, "stale-edit"))
-                .statusCode()).isEqualTo(409);
-        assertThat(a.get("/api/management/editing/draft").body()).contains("kept-literal").doesNotContain("stale-edit");
-        assertThat(a.post("/api/management/editing/lease/release", cap(tab, grant)).statusCode()).isEqualTo(204);
-        JsonNode resumed = body(a.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        assertThat(resumed.path("grantId").asText()).isNotEqualTo(grant);
-        assertThat(resumed.path("draft").path("draftId").asText()).isEqualTo(first.path("draft").path("draftId").asText());
-        assertThat(a.put("/api/management/editing/draft", save(tab, grant,
-                equalReplacement.path("candidateId").asText(), "old-grant")).statusCode()).isEqualTo(409);
-        JsonNode taken = body(admin.post("/api/management/editing/lease/takeover",
-                "{\"tabId\":\"" + UUID.randomUUID() + "\"}"));
-        assertThat(taken.path("draft").path("configuration").toString()).doesNotContain("kept-literal");
-        assertThat(a.get("/api/management/editing/draft").body()).contains("kept-literal");
-        assertThat(a.put("/api/management/editing/draft", save(tab, resumed.path("grantId").asText(),
-                equalReplacement.path("candidateId").asText(), "after-takeover")).statusCode()).isEqualTo(409);
-        assertThat(a.delete("/api/management/editing/draft", null).statusCode()).isEqualTo(204);
-        assertThat(a.get("/api/management/editing/draft").statusCode()).isEqualTo(404);
-    }
-
-    @Test void activityExpiryLogoutAndRolesAreEnforced() throws Exception {
-        long editorId = seed("activity-a@example.test", "editor");
-        seed("activity-viewer@example.test", "viewer");
-        Browser a = login("activity-a@example.test");
-        Browser viewer = login("activity-viewer@example.test");
-        String tab = UUID.randomUUID().toString();
-        JsonNode grant = body(a.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        String grantId = grant.path("grantId").asText();
-        assertThat(viewer.post("/api/management/editing/lease", "{\"tabId\":\"" + UUID.randomUUID()
-                + "\"}").statusCode()).isEqualTo(403);
-        assertThat(viewer.get("/api/management/editing").statusCode()).isEqualTo(200);
-        assertThat(viewer.get("/api/management/editing/draft").statusCode()).isEqualTo(404);
-        assertThat(a.postWithoutCsrf("/api/management/editing/lease/activity", cap(tab, grantId)).statusCode())
-                .isEqualTo(403);
-        assertThat(a.put("/api/management/editing/draft", "{\"tabId\":\"" + tab
-                + "\",\"grantId\":\"" + grantId + "\",\"expectedCandidateId\":\""
-                + grant.path("draft").path("candidateId").asText() + "\"}").statusCode()).isEqualTo(400);
-        assertThat(new Browser().get("/api/management/editing").statusCode()).isEqualTo(401);
-        assertThat(new Browser().getJwt("/api/management/editing", JwtTestTokens.token("operator", java.util.List.of()))
-                .statusCode()).isEqualTo(401);
-        clock.advance(Duration.ofSeconds(29));
-        assertThat(a.post("/api/management/editing/lease/activity", cap(tab, grantId)).statusCode()).isEqualTo(200);
-        clock.advance(Duration.ofMinutes(14).plusSeconds(31));
-        assertThat(a.get("/api/management/editing").body()).contains("\"held\":false");
-        assertThat(a.post("/api/management/editing/lease/activity", cap(tab, grantId)).statusCode()).isEqualTo(409);
-        assertThat(a.get("/api/management/editing/draft").statusCode()).isEqualTo(200);
-        JsonNode resumed = body(a.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        assertThat(resumed.path("grantId").asText()).isNotEqualTo(grantId);
-        assertThat(a.post("/api/management/session/activity", "{}").statusCode()).isEqualTo(204);
-        clock.advance(Duration.ofMinutes(29));
-        assertThat(a.get("/api/management/editing").statusCode()).isEqualTo(200);
-        clock.advance(Duration.ofMinutes(1));
-        assertThat(a.post("/api/management/editing/lease/activity", cap(tab,
-                resumed.path("grantId").asText())).statusCode()).isIn(401, 403);
-        assertThat(a.get("/api/management/editing/draft").statusCode()).isEqualTo(401);
-        assertThat(editorId).isPositive();
-    }
-
-    @Test void acceptedActivityRenewsBothDeadlinesAndPollingDoesNot() throws Exception {
-        seed("renew-a@example.test", "editor");
-        Browser a = login("renew-a@example.test");
-        String tab = UUID.randomUUID().toString();
-        JsonNode first = body(a.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        String cap = cap(tab, first.path("grantId").asText());
-        String originalExpiry = first.path("expiresAt").asText();
+    @Test void pollingAndSavingDoNotRenewLeaseAndCsrfIsRequired() throws Exception {
+        String email = "expiry-" + UUID.randomUUID() + "@example.test"; seed(email, "editor");
+        Browser browser = login(email);
+        assertThat(browser.postWithoutCsrf("/api/management/editing/lease", "{\"label\":\"X\"}").statusCode()).isEqualTo(403);
+        assertThat(browser.post("/api/management/editing/lease", "{\"tabId\":\"" + UUID.randomUUID() + "\"}").statusCode())
+                .isEqualTo(400);
+        JsonNode grant = ok(browser.post("/api/management/editing/lease", "{\"label\":\"X\"}"));
         clock.advance(Duration.ofMinutes(14));
-        JsonNode renewed = body(a.post("/api/management/editing/lease/activity", cap));
-        assertThat(renewed.path("grantId").asText()).isEqualTo(first.path("grantId").asText());
-        assertThat(renewed.path("expiresAt").asText()).isNotEqualTo(originalExpiry);
-        clock.advance(Duration.ofSeconds(10));
-        assertThat(body(a.post("/api/management/editing/lease/activity", cap)).path("expiresAt").asText())
-                .isEqualTo(renewed.path("expiresAt").asText());
-        synchronized (editing) {
-            var draft = editing.drafts.values().iterator().next().draft;
-            assertThat(runtime.validate(draft).successful()).isTrue();
-        }
-        clock.advance(Duration.ofMinutes(14).plusSeconds(49));
-        assertThat(a.get("/api/management/editing").body()).contains("\"held\":true");
-        clock.advance(Duration.ofSeconds(1));
-        assertThat(a.get("/api/management/editing").body()).contains("\"held\":false");
-        assertThat(a.post("/api/management/editing/lease/activity", cap).statusCode()).isEqualTo(409);
-        assertThat(a.get("/api/management/editing/draft").statusCode()).isEqualTo(200);
-        clock.advance(Duration.ofMinutes(15));
-        assertThat(a.get("/api/management/editing/draft").statusCode()).isEqualTo(401);
+        ok(browser.get("/api/management/editing"));
+        ok(browser.get("/api/management/editing/draft"));
+        JsonNode saved = ok(browser.put("/api/management/editing/draft", save(grant, grant.path("draft"), "# before-expiry")));
+        clock.advance(Duration.ofMinutes(2));
+        assertThat(browser.put("/api/management/editing/draft", save(grant, saved, "# late")).statusCode()).isEqualTo(409);
+        assertThat(browser.post("/api/management/editing/lease/renew", cap(grant)).statusCode()).isEqualTo(409);
+        assertThat(ok(browser.get("/api/management/editing/draft")).path("configuration").toString()).contains("before-expiry");
     }
 
-    @Test void accountChangeAndLogoutClearEditingWithoutOwnerRequest() throws Exception {
-        long changed = seed("changed-a@example.test", "editor");
-        seed("changed-b@example.test", "editor");
-        Browser a = login("changed-a@example.test");
-        Browser b = login("changed-b@example.test");
-        String tab = UUID.randomUUID().toString();
-        body(a.post("/api/management/editing/lease", "{\"tabId\":\"" + tab + "\"}"));
-        identity.alter(changed, "viewer", true);
-        synchronized (editing) {
-            assertThat(editing.drafts).isEmpty();
-            assertThat(editing.lease).isNull();
-        }
-        assertThat(a.get("/api/management/editing/draft").statusCode()).isEqualTo(401);
-        String bTab = UUID.randomUUID().toString();
-        body(b.post("/api/management/editing/lease", "{\"tabId\":\"" + bTab + "\"}"));
-        assertThat(b.post("/api/management/logout", "{}").statusCode()).isEqualTo(204);
-        synchronized (editing) {
-            assertThat(editing.drafts).isEmpty();
-            assertThat(editing.lease).isNull();
-        }
-        assertThat(b.get("/api/management/editing/draft").statusCode()).isEqualTo(401);
-        Browser form = login("changed-b@example.test");
-        body(form.post("/api/management/editing/lease", "{\"tabId\":\"" + UUID.randomUUID() + "\"}"));
-        assertThat(form.postForm("/management/logout", "_csrf=" + URLEncoder.encode(form.csrf, StandardCharsets.UTF_8))
-                .statusCode()).isEqualTo(302);
-        synchronized (editing) {
-            assertThat(editing.drafts).isEmpty();
-            assertThat(editing.lease).isNull();
-        }
+    @Test void administratorTakeoverPreservesDisplacedPrivateDraft() throws Exception {
+        String ownerEmail = "displaced-" + UUID.randomUUID() + "@example.test";
+        String adminEmail = "admin-" + UUID.randomUUID() + "@example.test";
+        seed(ownerEmail, "editor"); seed(adminEmail, "admin");
+        Browser owner = login(ownerEmail), admin = login(adminEmail);
+        JsonNode grant = ok(owner.post("/api/management/editing/lease", "{\"label\":\"Owner\"}"));
+        JsonNode saved = ok(owner.put("/api/management/editing/draft", save(grant, grant.path("draft"), "# owner-private")));
+        JsonNode takeover = ok(admin.post("/api/management/editing/lease/takeover", "{\"label\":\"Admin\"}"));
+        assertThat(takeover.path("draft").path("configuration").toString()).doesNotContain("owner-private");
+        assertThat(owner.put("/api/management/editing/draft", save(grant, saved, "# delayed")).statusCode()).isEqualTo(409);
+        assertThat(ok(owner.get("/api/management/editing/draft")).path("configuration").toString()).contains("owner-private");
+        assertThat(ok(admin.get("/api/management/editing/draft")).path("configuration").toString()).doesNotContain("owner-private");
+    }
+
+    @Test void explicitLeaseRenewalDoesNotExtendLoginIdleDeadline() throws Exception {
+        String email = "idle-" + UUID.randomUUID() + "@example.test";
+        seed(email, "editor"); Browser browser = login(email);
+        JsonNode grant = ok(browser.post("/api/management/editing/lease", "{\"label\":\"Idle\"}"));
+        clock.advance(Duration.ofMinutes(14));
+        ok(browser.post("/api/management/editing/lease/renew", cap(grant)));
+        clock.advance(Duration.ofMinutes(14));
+        ok(browser.post("/api/management/editing/lease/renew", cap(grant)));
+        clock.advance(Duration.ofMinutes(3));
+        assertThat(browser.get("/api/management/editing/draft").statusCode()).isEqualTo(401);
+        assertThat(ok(login(email).get("/api/management/editing/draft")).path("draftId").asText())
+                .isEqualTo(grant.path("draft").path("draftId").asText());
+    }
+
+    @Test void viewerCanReadOwnSavedDraftButCannotAcquireOrPublish() throws Exception {
+        String email = "viewer-" + UUID.randomUUID() + "@example.test";
+        long id = seed(email, "editor");
+        Browser first = login(email);
+        JsonNode grant = ok(first.post("/api/management/editing/lease", "{\"label\":\"Editor\"}"));
+        JsonNode draft = ok(first.put("/api/management/editing/draft", save(grant, grant.path("draft"), "# saved")));
+        identity.alter(id, "viewer", true);
+        Browser viewer = login(email);
+        assertThat(ok(viewer.get("/api/management/editing/draft")).path("draftId").asText())
+                .isEqualTo(draft.path("draftId").asText());
+        assertThat(viewer.post("/api/management/editing/lease", "{\"label\":\"Viewer\"}").statusCode())
+                .isEqualTo(403);
+        assertThat(viewer.post("/api/management/configuration/publish", candidate(grant, draft)).statusCode())
+                .isEqualTo(403);
+    }
+
+    @Test void concurrentExpectedRevisionSavesHaveOneWinner() throws Exception {
+        String email = "concurrent-" + UUID.randomUUID() + "@example.test";
+        seed(email, "editor"); Browser browser = login(email);
+        JsonNode grant = ok(browser.post("/api/management/editing/lease", "{\"label\":\"Concurrent\"}"));
+        JsonNode initial = grant.path("draft");
+        var first = browser.putAsync("/api/management/editing/draft", save(grant, initial, "# first"));
+        var second = browser.putAsync("/api/management/editing/draft", save(grant, initial, "# second"));
+        var outcomes = java.util.List.of(first.get().statusCode(), second.get().statusCode());
+        assertThat(outcomes).containsExactlyInAnyOrder(200, 409);
+        assertThat(ok(browser.get("/api/management/editing/draft")).path("revision").asLong())
+                .isEqualTo(initial.path("revision").asLong() + 1);
     }
 
     private long seed(String email, String role) {
@@ -264,52 +205,59 @@ class ManagementEditingHttpIntegrationTest {
     }
     private Browser login(String email) throws Exception {
         Browser browser = new Browser();
-        String page = browser.get("/management/login").body();
-        String csrf = page.split("name='_csrf' value='")[1].split("'")[0];
+        String csrf = browser.get("/management/login").body().split("name='_csrf' value='")[1].split("'")[0];
         assertThat(browser.postForm("/management/login", "email=" + URLEncoder.encode(email, StandardCharsets.UTF_8)
                 + "&password=" + URLEncoder.encode(PASSWORD, StandardCharsets.UTF_8)
                 + "&_csrf=" + URLEncoder.encode(csrf, StandardCharsets.UTF_8)).statusCode()).isEqualTo(302);
-        browser.csrf = body(browser.get("/api/management/session")).path("csrfToken").asText();
+        browser.csrf = ok(browser.get("/api/management/session")).path("csrfToken").asText();
         return browser;
     }
-    private JsonNode body(HttpResponse<String> response) throws Exception {
-        assertThat(response.statusCode()).isEqualTo(200);
-        return json.readTree(response.body());
+    private JsonNode ok(HttpResponse<String> response) throws Exception {
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
+        return mapper.readTree(response.body());
     }
-    private static String cap(String tab, String grant) {
-        return "{\"tabId\":\"" + tab + "\",\"grantId\":\"" + grant + "\"}";
+    private String cap(JsonNode grant) throws Exception {
+        return mapper.writeValueAsString(Map.of("editingSessionId", grant.path("editingSessionId").asText(),
+                "generation", grant.path("generation").asText()));
     }
-    private static String save(String tab, String grant, String candidate, String yaml) {
-        return "{\"tabId\":\"" + tab + "\",\"grantId\":\"" + grant
-                + "\",\"expectedCandidateId\":\"" + candidate
-                + "\",\"skillDocuments\":[{\"sourceName\":\"literal.yaml\",\"yaml\":\"" + yaml
-                + "\"}],\"restRoutesYaml\":\"routes: {}\"}";
+    private String candidate(JsonNode grant, JsonNode draft) throws Exception {
+        return mapper.writeValueAsString(Map.of("editingSessionId", grant.path("editingSessionId").asText(),
+                "generation", grant.path("generation").asText(), "draftId", draft.path("draftId").asText(),
+                "revision", draft.path("revision").asLong(), "baseSnapshotId", draft.path("baseSnapshotId").asText()));
+    }
+    private String save(JsonNode grant, JsonNode draft, String marker) throws Exception {
+        return save(grant, draft, marker, draft.path("baseSnapshotId").asText());
+    }
+    private String save(JsonNode grant, JsonNode draft, String marker, String baseId) throws Exception {
+        return mapper.writeValueAsString(Map.of("editingSessionId", grant.path("editingSessionId").asText(),
+                "generation", grant.path("generation").asText(), "draftId", draft.path("draftId").asText(),
+                "revision", draft.path("revision").asLong(), "baseSnapshotId", baseId,
+                "skillDocuments", java.util.List.of(), "restRoutesYaml", "targets: {}\nroutes: {}\n" + marker + "\n"));
     }
     private final class Browser {
-        private final HttpClient client = HttpClient.newBuilder()
-                .cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ALL))
+        private final HttpClient client = HttpClient.newBuilder().cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ALL))
                 .followRedirects(HttpClient.Redirect.NEVER).build();
         private String csrf;
         HttpResponse<String> get(String path) throws Exception { return send("GET", path, null, true); }
-        HttpResponse<String> getJwt(String path, String jwt) throws Exception {
-            return client.send(HttpRequest.newBuilder(uri(path)).header("Authorization", "Bearer " + jwt)
-                    .GET().build(), HttpResponse.BodyHandlers.ofString());
-        }
         HttpResponse<String> post(String path, String body) throws Exception { return send("POST", path, body, true); }
         HttpResponse<String> postWithoutCsrf(String path, String body) throws Exception { return send("POST", path, body, false); }
         HttpResponse<String> put(String path, String body) throws Exception { return send("PUT", path, body, true); }
-        HttpResponse<String> delete(String path, String body) throws Exception { return send("DELETE", path, body, true); }
-        HttpResponse<String> postForm(String path, String body) throws Exception {
-            return client.send(HttpRequest.newBuilder(uri(path)).header("Content-Type", "application/x-www-form-urlencoded")
-                    .POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
+        java.util.concurrent.CompletableFuture<HttpResponse<String>> putAsync(String path, String body) {
+            return client.sendAsync(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                    .header("Content-Type", "application/json").header("X-CSRF-TOKEN", csrf)
+                    .PUT(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
         }
         HttpResponse<String> send(String method, String path, String body, boolean token) throws Exception {
-            var builder = HttpRequest.newBuilder(uri(path));
+            var builder = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path));
             if (body != null) builder.header("Content-Type", "application/json");
             if (token && csrf != null) builder.header("X-CSRF-TOKEN", csrf);
             builder.method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body));
             return client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
         }
+        HttpResponse<String> postForm(String path, String body) throws Exception {
+            return client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
+        }
     }
-    private URI uri(String path) { return URI.create("http://127.0.0.1:" + port + path); }
 }

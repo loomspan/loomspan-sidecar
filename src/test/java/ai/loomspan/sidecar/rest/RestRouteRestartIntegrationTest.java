@@ -53,8 +53,9 @@ class RestRouteRestartIntegrationTest {
                 var draft = new ConfigurationDraft(store.current());
                 draft.replaceContent(new ManagedConfiguration(List.of(new SkillDocument(skill.getFileName().toString(),
                         Files.readString(skill))), Files.readString(routes)));
-                assertThat(context.getBean(RuntimeConfigurationService.class).validate(draft).successful()).isTrue();
-                context.getBean(RuntimeConfigurationService.class).publish(draft::validatedCandidate);
+                assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(
+                        context.getBean(RuntimeConfigurationService.class), draft).successful()).isTrue();
+                context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(draft);
                 assertThat(handler.handle(new RestSkillInvocation("echoRest", Map.of("message", "x"), reloader.snapshot().generationId())))
                         .isEqualTo("second");
                 assertThat(reloader.snapshot().skill("echoRest").orElseThrow().description())

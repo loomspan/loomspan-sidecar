@@ -183,17 +183,15 @@
     const issues = document.getElementById('rollback-issues');
     details.replaceChildren(); issues.replaceChildren();
     details.append(...facts([['Source snapshot', data.sourceId, true],
-    ['Source recorded status', recordedStatus(data.sourceStatus)], ['Submission sequence', data.submissionSequence],
-    ['Skill documents', data.skillDocuments], ['Validated skills', data.validatedSkills], ['REST routes', data.routes],
-    ['Runtime-published snapshot', data.observation.publishedId, true], ['Editing grant', data.observation.grantId, true],
-    ['Lease owner', data.observation.leaseOwner]]).childNodes);
+      ['Source recorded status', recordedStatus(data.sourceStatus)], ['Submission sequence', data.submissionSequence],
+      ['Skill documents', data.skillDocuments]]).childNodes);
     for (const issue of data.validation.issues) issues.append(el('li',
       [issue.severity, issue.sourceLabel, issue.skillName, issue.location, issue.message].filter(Boolean).join(' · ')));
     if (!data.validation.issues.length) issues.append(el('li', 'No validation issues.'));
     document.getElementById('rollback-summary').hidden = false;
-    rollbackReview = data.reviewId && data.validation.successful ? data : null;
+    rollbackReview = data;
     document.getElementById('rollback-confirm').disabled = !rollbackReview;
-    status('rollback-status', rollbackReview ? 'Review passed. Read the draft-loss warning before confirming.'
+    status('rollback-status', rollbackReview ? 'Review complete. Loading will replace your saved draft; validate and publish from the editor.'
       : 'Destination validation failed. A rollback cannot be confirmed.', !rollbackReview);
   };
   const renderHistoryList = snapshots => {
@@ -311,43 +309,24 @@
   const confirmRollback = async () => {
     const accepted = rollbackReview;
     if (!accepted || selectedHistoryId !== accepted.sourceId) return;
+    if (!confirm('Load this retained snapshot into your saved draft? Validate and publish it from the editor.')) return;
     rollbackReview = null;
     document.getElementById('rollback-confirm').disabled = true;
-    status('rollback-status', 'Publishing a new local snapshot from the retained source…');
-    let outcome = null;
+    status('rollback-status', 'Loading retained content into your saved draft…');
+    let resultMessage;
     try {
-      const snapshot = await api('/configuration/rollback/confirm', 'POST', {
-        sourceId: accepted.sourceId, reviewId: accepted.reviewId,
-        expectedPublishedId: accepted.observation.publishedId, expectedGrantId: accepted.observation.grantId
+      const ownership = await api('/editing');
+      if (ownership.held && !ownership.sameUser) throw new Error('Another user holds editing control.');
+      const grant = await api(ownership.held ? '/editing/lease/handoff' : '/editing/lease', 'POST', { label: 'History console' });
+      const current = await api('/configuration/current');
+      const draft = grant.draft;
+      const loaded = await api('/configuration/rollback/' + encodeURIComponent(accepted.sourceId) + '/load', 'POST', {
+        editingSessionId: grant.editingSessionId, generation: grant.generation,
+        draftId: draft.draftId, revision: draft.revision, baseSnapshotId: current.published.localId
       });
-      outcome = ['Rollback published as new local snapshot ' + snapshot.localId + '.', false];
-    } catch (error) {
-      if (error.message === 'Access denied' || error.message === 'Session expired') {
-        outcome = ['Management session or rollback access ended. Sign in again.', true];
-      } else if (error.code === 'confirmation_stale') {
-        outcome = ['Runtime or editing grant changed. Review the selected source again before confirming.', true];
-      } else if (error.code === 'source_not_found') {
-        selectedHistoryId = null; clearRollback();
-        outcome = ['Source is no longer retained. History and current state were refreshed.', true];
-      } else if (error.status) {
-        const detail = {
-          outcome_recording_failed: 'Rollback activated, but outcome recording failed and configuration mutations stopped.',
-          history_pruning_failed: 'Rollback activated, but history pruning failed and configuration mutations stopped.',
-          revert_failed: 'Rollback activation failed and the intended pointer could not be restored; configuration mutations stopped.',
-          activation_failed: 'Rollback activation failed; the intended pointer was restored.',
-          commit_failed: 'Rollback commit failed before runtime activation.',
-          preparation_failed: 'Rollback preparation failed before drafts were discarded.'
-        }[error.code];
-        outcome = [(detail || 'Rollback did not return success (' + (error.code || error.status) + ').')
-          + ' Inspect current runtime and history before another attempt.', true];
-      } else {
-        outcome = ['Connection lost; rollback outcome is unknown. Inspect current runtime and history. Do not retry blindly.', true];
-      }
-    } finally {
-      await refreshRollbackState();
-      if (outcome) status('rollback-status', ...outcome);
-      document.getElementById('rollback-status')?.focus();
-    }
+      resultMessage = [`Loaded saved draft revision ${loaded.revision}. Open the editor to validate and publish.`, false];
+    } catch (error) { resultMessage = [error.message, true]; }
+    finally { await refreshRollbackState(); status('rollback-status', ...resultMessage); }
   };
   const loadCurrent = async () => {
     const revision = ++currentRevision;

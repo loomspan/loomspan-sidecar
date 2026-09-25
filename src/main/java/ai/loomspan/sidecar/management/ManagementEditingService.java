@@ -2,11 +2,10 @@ package ai.loomspan.sidecar.management;
 
 import ai.loomspan.sidecar.config.SidecarManagementProperties;
 import ai.loomspan.sidecar.configuration.RuntimeConfigurationService;
-import ai.loomspan.sidecar.storage.ConfigurationDraft;
+import ai.loomspan.sidecar.storage.ConfigurationDraftStore;
+import ai.loomspan.sidecar.storage.ConfigurationSnapshot;
 import ai.loomspan.sidecar.storage.ConfigurationValidationResult;
 import ai.loomspan.sidecar.storage.ManagedConfiguration;
-import ai.loomspan.sidecar.storage.FrozenConfigurationCandidate;
-import ai.loomspan.sidecar.storage.ConfigurationSnapshot;
 import jakarta.servlet.http.HttpSession;
 import java.time.Clock;
 import java.time.Instant;
@@ -17,43 +16,38 @@ import org.springframework.stereotype.Service;
 public final class ManagementEditingService {
     public static final class Conflict extends RuntimeException {
         private final String code;
-        public Conflict() { this("editing_conflict"); }
-        public Conflict(String code) {
-            super("Editing state changed or is unavailable");
-            this.code = code;
-        }
+        public Conflict(String code) { super("Editing state changed or is unavailable"); this.code = code; }
         public String code() { return code; }
     }
-    public record Status(boolean held, boolean mine, Instant expiresAt, String mineTabId) {}
-    public record Grant(UUID grantId, Instant expiresAt, Draft draft) {}
-    public record Draft(UUID draftId, UUID candidateId, UUID baseSnapshotId,
-            ManagedConfiguration configuration, ConfigurationValidationResult validation) {}
+    public record Status(boolean held, boolean mine, boolean sameUser, String holderLabel, Instant expiresAt,
+            UUID editingSessionId) {}
+    public record Grant(UUID editingSessionId, UUID generation, Instant expiresAt, Draft draft) {}
+    public record Draft(UUID draftId, long revision, UUID baseSnapshotId, UUID sourceSnapshotId,
+            ManagedConfiguration configuration, boolean stale, ConfigurationValidationResult validation) {}
 
     private final RuntimeConfigurationService runtime;
     private final ManagementEditingState state;
+    private final ConfigurationDraftStore drafts;
     private final ManagementIdentityService identity;
     private final SidecarManagementProperties settings;
     private final Clock clock;
 
     public ManagementEditingService(RuntimeConfigurationService runtime, ManagementEditingState state,
-            ManagementIdentityService identity, SidecarManagementProperties settings, Clock clock) {
-        this.runtime = runtime;
-        this.state = state;
-        this.identity = identity;
-        this.settings = settings;
-        this.clock = clock;
+            ConfigurationDraftStore drafts, ManagementIdentityService identity,
+            SidecarManagementProperties settings, Clock clock) {
+        this.runtime = runtime; this.state = state; this.drafts = drafts; this.identity = identity;
+        this.settings = settings; this.clock = clock;
     }
 
     public Status status(HttpSession session, ManagementUserDetailsService.Principal user) {
         return runtime.withEditingState(false, base -> {
             synchronized (state) {
-                String sessionId = active(session);
-                checkAccount(user);
-                expire();
+                String id = active(session); checkAccount(user); expire();
                 var lease = state.lease;
-                boolean mine = lease != null && lease.sessionId.equals(sessionId);
-                return new Status(lease != null, mine, lease == null ? null : at(lease.expiresAt),
-                        mine ? lease.tabId : null);
+                return new Status(lease != null, lease != null && lease.sessionId.equals(id),
+                        lease != null && lease.accountId == user.id(), lease == null ? null : lease.label,
+                        lease == null ? null : at(lease.expiresAt),
+                        lease != null && lease.sessionId.equals(id) ? lease.editingSessionId : null);
             }
         });
     }
@@ -61,146 +55,159 @@ public final class ManagementEditingService {
     public Draft read(HttpSession session, ManagementUserDetailsService.Principal user) {
         return runtime.withEditingState(false, base -> {
             synchronized (state) {
-                String sessionId = active(session);
-                checkAccount(user);
-                var entry = eligible(sessionId, base.localId());
-                return entry == null ? null : view(entry);
+                active(session); checkAccount(user); expire();
+                return view(drafts.read(user.id()), base);
             }
         });
     }
 
-    public Grant acquire(HttpSession session, ManagementUserDetailsService.Principal user, String tabId, boolean takeover) {
-        requireTab(tabId);
+    public Grant acquire(HttpSession session, ManagementUserDetailsService.Principal user,
+            String label, boolean takeover, boolean handoff) {
         return mutation(base -> {
-            String sessionId = active(session);
-            checkAccount(user);
-            if (takeover && !"admin".equals(user.role())) throw new Conflict();
-            if (!takeover && "viewer".equals(user.role())) throw new Conflict();
-            expire();
-            if (!takeover && state.lease != null) throw new Conflict();
-            ManagementEditingState.Entry entry = takeover ? null : eligible(sessionId, base.localId());
-            if (entry == null) {
-                entry = new ManagementEditingState.Entry(user.id(), new ConfigurationDraft(base));
-                state.drafts.put(sessionId, entry);
-            }
-            state.lease = new ManagementEditingState.Lease(sessionId, tabId,
+            String id = activeForAdmission(session); checkEditor(user); expire();
+            if (takeover && !"admin".equals(user.role())) throw new Conflict("role_conflict");
+            if (!takeover && state.lease != null && (!handoff || state.lease.accountId != user.id()))
+                throw new Conflict("grant_conflict");
+            if (handoff && state.lease == null) throw new Conflict("grant_conflict");
+            var saved = drafts.createIfAbsent(user.id(), base);
+            state.clearLease();
+            state.lease = new ManagementEditingState.Lease(user.id(), id,
+                    label == null || label.isBlank() ? "Editor" : label.substring(0, Math.min(label.length(), 80)),
                     clock.millis() + settings.getEditLeaseTimeout().toMillis());
-            return grant(state.lease, entry);
+            return grant(state.lease, view(saved, base));
         });
     }
 
-    public Grant activity(HttpSession session, ManagementUserDetailsService.Principal user,
-            String tabId, UUID grantId, long lastReportAt) {
+    public Grant renew(HttpSession session, ManagementUserDetailsService.Principal user,
+            UUID editingSessionId, UUID generation) {
         return mutation(base -> {
-            String sessionId = active(session);
-            checkAccount(user);
-            var entry = eligible(sessionId, base.localId());
-            var lease = ownLease(sessionId, tabId, grantId);
-            if (entry == null) throw new Conflict();
-            if (clock.millis() - lastReportAt >= 30_000L)
-                lease.expiresAt = clock.millis() + settings.getEditLeaseTimeout().toMillis();
-            return grant(lease, entry);
+            var lease = ownLease(session, user, editingSessionId, generation);
+            lease.expiresAt = clock.millis() + settings.getEditLeaseTimeout().toMillis();
+            return grant(lease, view(drafts.read(user.id()), base));
         });
     }
 
-    public Draft save(HttpSession session, ManagementUserDetailsService.Principal user, String tabId,
-            UUID grantId, UUID expectedCandidateId, ManagedConfiguration configuration) {
-        if (configuration == null || expectedCandidateId == null) throw new IllegalArgumentException("Missing candidate");
+    public void release(HttpSession session, ManagementUserDetailsService.Principal user,
+            UUID editingSessionId, UUID generation) {
+        transition(false, base -> { ownLease(session, user, editingSessionId, generation); state.clearLease(); return null; });
+    }
+
+    public Draft save(HttpSession session, ManagementUserDetailsService.Principal user,
+            UUID editingSessionId, UUID generation, UUID draftId, long revision, UUID expectedBaseId,
+            ManagedConfiguration configuration) {
+        return replace(session, user, editingSessionId, generation, draftId, revision, expectedBaseId,
+                configuration, null, false);
+    }
+
+    public Draft reconcile(HttpSession session, ManagementUserDetailsService.Principal user,
+            UUID editingSessionId, UUID generation, UUID draftId, long revision, UUID currentBaseId,
+            ManagedConfiguration configuration) {
+        return replace(session, user, editingSessionId, generation, draftId, revision, currentBaseId,
+                configuration, null, true);
+    }
+
+    public Draft load(HttpSession session, ManagementUserDetailsService.Principal user,
+            UUID editingSessionId, UUID generation, UUID draftId, long revision, UUID currentBaseId,
+            ManagedConfiguration configuration, UUID sourceId) {
+        return replace(session, user, editingSessionId, generation, draftId, revision, currentBaseId,
+                configuration, sourceId, true);
+    }
+
+    private Draft replace(HttpSession session, ManagementUserDetailsService.Principal user,
+            UUID editingSessionId, UUID generation, UUID draftId, long revision, UUID baseId,
+            ManagedConfiguration configuration, UUID sourceId, boolean rebase) {
+        if (configuration == null || draftId == null || baseId == null || revision < 1)
+            throw new IllegalArgumentException("Missing complete draft submission");
         return mutation(base -> {
-            String sessionId = active(session);
-            checkAccount(user);
-            ownLease(sessionId, tabId, grantId);
-            var entry = eligible(sessionId, base.localId());
-            if (entry == null || !entry.candidateId.equals(expectedCandidateId))
-                throw new Conflict("candidate_conflict");
-            entry.draft.replaceContent(configuration);
-            entry.candidateId = UUID.randomUUID();
-            return view(entry);
-        });
-    }
-
-    public void release(HttpSession session, ManagementUserDetailsService.Principal user, String tabId, UUID grantId) {
-        runtime.withEditingState(false, base -> {
-            synchronized (state) {
-                String sessionId = active(session);
-                checkAccount(user);
-                ownLease(sessionId, tabId, grantId);
-                state.lease = null;
-                return null;
-            }
+            ownLease(session, user, editingSessionId, generation);
+            var saved = requireDraft(user.id(), draftId, revision);
+            if (!base.localId().equals(baseId)) throw new Conflict("base_conflict");
+            if (!rebase && !saved.baseSnapshotId().equals(baseId)) throw new Conflict("base_conflict");
+            try {
+                saved = drafts.replace(user.id(), draftId, revision, saved.baseSnapshotId(), baseId,
+                        configuration, sourceId);
+            } catch (IllegalStateException changed) { throw new Conflict("revision_conflict"); }
+            state.validation = null;
+            return view(saved, base);
         });
     }
 
     public void discard(HttpSession session, ManagementUserDetailsService.Principal user,
-            String tabId, UUID grantId) {
-        runtime.withEditingState(false, base -> {
-            synchronized (state) {
-                String sessionId = active(session);
-                checkAccount(user);
-                expire();
-                if (state.lease != null && state.lease.sessionId.equals(sessionId))
-                    ownLease(sessionId, tabId, grantId);
-                state.clearSession(sessionId);
-                return null;
-            }
+            UUID editingSessionId, UUID generation, UUID draftId, long revision) {
+        transition(false, base -> {
+            ownLease(session, user, editingSessionId, generation);
+            if (!drafts.delete(user.id(), draftId, revision)) throw new Conflict("revision_conflict");
+            state.clearLease(); return null;
         });
     }
 
     public Draft validate(HttpSession session, ManagementUserDetailsService.Principal user,
-            String tabId, UUID grantId, UUID expectedCandidateId) {
-        var captured = runtime.withEditingState(true, base -> {
-            synchronized (state) {
-                var entry = authorized(session, user, tabId, grantId, expectedCandidateId, base);
-                return new ValidationWork(entry, entry.candidateId, entry.draft.freeze());
-            }
+            UUID editingSessionId, UUID generation, UUID draftId, long revision, UUID baseId) {
+        var captured = mutation(base -> {
+            ownLease(session, user, editingSessionId, generation);
+            var saved = exact(user.id(), draftId, revision, baseId, base);
+            return saved;
         });
-        ConfigurationValidationResult result = runtime.validate(captured.candidate.configuration());
-        return runtime.withEditingState(true, base -> {
-            synchronized (state) {
-                var entry = authorized(session, user, tabId, grantId, expectedCandidateId, base);
-                if (entry != captured.entry || !entry.candidateId.equals(captured.candidateId)
-                        || entry.draft.freeze() != captured.candidate) throw new Conflict();
-                entry.draft.recordValidation(captured.candidate, result);
-                return view(entry);
-            }
+        ConfigurationValidationResult result = runtime.validate(captured.configuration());
+        return mutation(base -> {
+            ownLease(session, user, editingSessionId, generation);
+            var saved = exact(user.id(), draftId, revision, baseId, base);
+            if (!saved.equals(captured)) throw new Conflict("revision_conflict");
+            state.validation = new ManagementEditingState.Validation(draftId, revision, baseId, generation, result);
+            return view(saved, base);
         });
     }
 
     public ConfigurationSnapshot publish(HttpSession session, ManagementUserDetailsService.Principal user,
-            String tabId, UUID grantId, UUID expectedCandidateId) {
+            UUID editingSessionId, UUID generation, UUID draftId, long revision, UUID baseId) {
         return runtime.publish(() -> runtime.withEditingState(true, base -> {
             synchronized (state) {
-                var entry = authorized(session, user, tabId, grantId, expectedCandidateId, base);
-                try { return entry.draft.validatedCandidate(); }
-                catch (IllegalStateException missing) { throw new Conflict("validation_required"); }
+                ownLease(session, user, editingSessionId, generation);
+                var saved = exact(user.id(), draftId, revision, baseId, base);
+                var validated = state.validation;
+                if (validated == null || !validated.draftId().equals(draftId)
+                        || validated.revision() != revision || !validated.baseId().equals(baseId)
+                        || !validated.generation().equals(generation) || !validated.result().successful())
+                    throw new Conflict("validation_required");
+                return new RuntimeConfigurationService.PublicationAdmission(saved.accountId(), draftId,
+                        revision, saved.configuration(), saved.sourceSnapshotId(), baseId);
             }
         }));
     }
 
-    private record ValidationWork(ManagementEditingState.Entry entry, UUID candidateId,
-            FrozenConfigurationCandidate candidate) {}
-
-    private ManagementEditingState.Entry authorized(HttpSession session, ManagementUserDetailsService.Principal user,
-            String tabId, UUID grantId, UUID expectedCandidateId, ConfigurationSnapshot base) {
-        String sessionId = activeForAdmission(session);
-        checkAccount(user);
-        if ("viewer".equals(user.role())) throw new Conflict("role_conflict");
-        ownLease(sessionId, tabId, grantId);
-        var existing = state.drafts.get(sessionId);
-        if (existing != null && !existing.draft.baseSnapshotId().equals(base.localId())) {
-            state.clearSession(sessionId);
+    private ConfigurationDraftStore.Saved exact(long accountId, UUID draftId, long revision,
+            UUID baseId, ConfigurationSnapshot base) {
+        var saved = requireDraft(accountId, draftId, revision);
+        if (!saved.baseSnapshotId().equals(baseId) || !base.localId().equals(baseId))
             throw new Conflict("base_conflict");
-        }
-        var entry = eligible(sessionId, base.localId());
-        if (entry == null || expectedCandidateId == null || !entry.candidateId.equals(expectedCandidateId))
-            throw new Conflict("candidate_conflict");
-        return entry;
+        return saved;
     }
 
-    private <T> T mutation(java.util.function.Function<ai.loomspan.sidecar.storage.ConfigurationSnapshot, T> action) {
-        return runtime.withEditingState(true, base -> {
-            synchronized (state) { return action.apply(base); }
-        });
+    private ConfigurationDraftStore.Saved requireDraft(long accountId, UUID draftId, long revision) {
+        var saved = drafts.read(accountId);
+        if (saved == null || !saved.draftId().equals(draftId) || saved.revision() != revision)
+            throw new Conflict("revision_conflict");
+        return saved;
+    }
+
+    private ManagementEditingState.Lease ownLease(HttpSession session,
+            ManagementUserDetailsService.Principal user, UUID editingSessionId, UUID generation) {
+        String id = activeForAdmission(session); checkEditor(user); expire();
+        var lease = state.lease;
+        if (lease == null || editingSessionId == null || generation == null
+                || !lease.sessionId.equals(id) || lease.accountId != user.id()
+                || !lease.editingSessionId.equals(editingSessionId) || !lease.generation.equals(generation))
+            throw new Conflict("grant_conflict");
+        return lease;
+    }
+
+    private void expire() {
+        if (state.lease != null && clock.millis() >= state.lease.expiresAt) state.clearLease();
+    }
+
+    private void checkEditor(ManagementUserDetailsService.Principal user) {
+        checkAccount(user);
+        if ("viewer".equals(user.role())) throw new Conflict("role_conflict");
     }
 
     private void checkAccount(ManagementUserDetailsService.Principal user) {
@@ -210,57 +217,43 @@ public final class ManagementEditingService {
     }
 
     private static String active(HttpSession session) {
-        try {
-            session.getCreationTime();
-            return session.getId();
-        }
-        catch (IllegalStateException invalidated) { throw new Conflict(); }
+        if (session == null) throw new Conflict("session_conflict");
+        try { session.getCreationTime(); return session.getId(); }
+        catch (IllegalStateException invalidated) { throw new Conflict("session_conflict"); }
     }
 
     private String activeForAdmission(HttpSession session) {
-        String sessionId = active(session);
+        String id = active(session);
         try {
             Long activity = (Long) session.getAttribute(ManagementSessionGuard.ACTIVITY);
             if (activity == null || clock.millis() - activity >= settings.getSessionIdleTimeout().toMillis())
                 throw new Conflict("session_conflict");
-            return sessionId;
-        } catch (IllegalStateException invalidated) { throw new Conflict(); }
+            return id;
+        } catch (IllegalStateException invalidated) { throw new Conflict("session_conflict"); }
     }
 
-    private void expire() {
-        if (state.lease != null && clock.millis() >= state.lease.expiresAt) state.lease = null;
+    private <T> T mutation(java.util.function.Function<ConfigurationSnapshot, T> action) {
+        return transition(true, action);
     }
 
-    private ManagementEditingState.Entry eligible(String sessionId, UUID baseId) {
-        var entry = state.drafts.get(sessionId);
-        if (entry != null && !entry.draft.baseSnapshotId().equals(baseId)) {
-            state.clearSession(sessionId);
-            return null;
-        }
-        return entry;
+    private <T> T transition(boolean mutating, java.util.function.Function<ConfigurationSnapshot, T> action) {
+        return runtime.withEditingState(mutating, base -> { synchronized (state) { return action.apply(base); } });
     }
 
-    private ManagementEditingState.Lease ownLease(String sessionId, String tabId, UUID grantId) {
-        requireTab(tabId);
-        expire();
-        var lease = state.lease;
-        if (lease == null || grantId == null || !lease.sessionId.equals(sessionId)
-                || !lease.tabId.equals(tabId) || !lease.grantId.equals(grantId)) throw new Conflict("grant_conflict");
-        return lease;
-    }
-
-    private static void requireTab(String tabId) {
-        try { UUID.fromString(tabId); }
-        catch (RuntimeException invalid) { throw new IllegalArgumentException("Invalid tab ID"); }
+    private Draft view(ConfigurationDraftStore.Saved saved, ConfigurationSnapshot base) {
+        if (saved == null) return null;
+        var proof = state.validation;
+        ConfigurationValidationResult validation = proof != null && proof.draftId().equals(saved.draftId())
+                && proof.revision() == saved.revision() && proof.baseId().equals(saved.baseSnapshotId())
+                && saved.baseSnapshotId().equals(base.localId())
+                && state.lease != null && proof.generation().equals(state.lease.generation)
+                ? proof.result() : null;
+        return new Draft(saved.draftId(), saved.revision(), saved.baseSnapshotId(), saved.sourceSnapshotId(),
+                saved.configuration(), !saved.baseSnapshotId().equals(base.localId()), validation);
     }
 
     private static Instant at(long millis) { return Instant.ofEpochMilli(millis); }
-    private static Grant grant(ManagementEditingState.Lease lease, ManagementEditingState.Entry entry) {
-        return new Grant(lease.grantId, at(lease.expiresAt), view(entry));
-    }
-    private static Draft view(ManagementEditingState.Entry entry) {
-        var candidate = entry.draft.freeze();
-        return new Draft(entry.draftId, entry.candidateId, entry.draft.baseSnapshotId(),
-                candidate.configuration(), entry.draft.validationFor(candidate));
+    private static Grant grant(ManagementEditingState.Lease lease, Draft draft) {
+        return new Grant(lease.editingSessionId, lease.generation, at(lease.expiresAt), draft);
     }
 }

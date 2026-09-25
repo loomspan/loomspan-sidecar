@@ -31,10 +31,9 @@ import org.springframework.web.multipart.MultipartFile;
 @RestController
 @RequestMapping("/api/management/configuration")
 public final class ManagementConfigurationController {
-    public record Publish(String tabId, UUID grantId, UUID expectedCandidateId) {}
+    public record Publish(UUID editingSessionId, UUID generation, UUID draftId, long revision, UUID baseSnapshotId) {}
     public record Problem(String code, String error, UUID publishedId, UUID intendedId,
             String intendedStatus, String mutationFault) {}
-    public record ImportProblem(String code, String error, ManagementConfigurationImportService.Observation observation) {}
 
     private final RuntimeConfigurationService runtime;
     private final ManagementEditingService editing;
@@ -112,34 +111,31 @@ public final class ManagementConfigurationController {
                 "error", "Snapshot is unknown or no longer retained")) : ResponseEntity.ok(snapshot);
     }
 
-    public record RollbackConfirm(UUID sourceId, UUID reviewId, UUID expectedPublishedId, UUID expectedGrantId) {}
+    public record Load(UUID editingSessionId, UUID generation, UUID draftId, long revision, UUID baseSnapshotId) {}
 
     @PostMapping("/rollback/{id}/review")
     public ManagementConfigurationRollbackService.Review rollbackReview(@PathVariable("id") UUID id,
-            Authentication auth, HttpServletRequest request, HttpServletResponse response) {
+            HttpServletResponse response) {
         response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
-        return rollbacks.review(request.getSession(false), ManagementController.principal(auth), id);
+        return rollbacks.review(id);
     }
 
-    @PostMapping("/rollback/confirm")
-    public ConfigurationSnapshot rollbackConfirm(@RequestBody RollbackConfirm body, Authentication auth,
-            HttpServletRequest request, HttpServletResponse response) {
-        response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
-        return rollbacks.confirm(request.getSession(false), ManagementController.principal(auth),
-                body.sourceId(), body.reviewId(), body.expectedPublishedId(), body.expectedGrantId());
+    @PostMapping("/rollback/{id}/load")
+    public ManagementEditingService.Draft rollbackLoad(@PathVariable("id") UUID id, @RequestBody Load body,
+            Authentication auth, HttpServletRequest request) {
+        return rollbacks.load(request.getSession(false), ManagementController.principal(auth), id,
+                body.editingSessionId(), body.generation(), body.draftId(), body.revision(), body.baseSnapshotId());
     }
 
-    @ExceptionHandler(ManagementConfigurationRollbackService.Conflict.class)
-    ResponseEntity<ImportProblem> rollbackConflict(ManagementConfigurationRollbackService.Conflict conflict) {
-        return ResponseEntity.status(409).header(HttpHeaders.CACHE_CONTROL, "no-store")
-                .body(new ImportProblem(conflict.code(), "Rollback source or confirmation is no longer current",
-                        conflict.observation()));
+    @ExceptionHandler(ManagementConfigurationRollbackService.SourceMissing.class)
+    ResponseEntity<Map<String, String>> rollbackMissing() {
+        return ResponseEntity.status(404).body(Map.of("code", "source_not_found", "error", "Snapshot is not retained"));
     }
 
     @PostMapping("/publish")
     public ConfigurationSnapshot publish(@RequestBody Publish body, Authentication auth, HttpServletRequest request) {
         return editing.publish(request.getSession(false), ManagementController.principal(auth),
-                body.tabId(), body.grantId(), body.expectedCandidateId());
+                body.editingSessionId(), body.generation(), body.draftId(), body.revision(), body.baseSnapshotId());
     }
 
     @PostMapping(value = "/import/review", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -147,19 +143,18 @@ public final class ManagementConfigurationController {
             HttpServletRequest request, HttpServletResponse response) throws IOException, ServletException {
         response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
         requireParts(request, "bundle");
-        return imports.review(request.getSession(false), bundle);
+        return imports.review(bundle);
     }
 
-    @PostMapping(value = "/import/confirm", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ConfigurationSnapshot confirm(@RequestPart("bundle") MultipartFile bundle,
-            @RequestParam("reviewId") UUID reviewId, @RequestParam("expectedPublishedId") UUID publishedId,
-            @RequestParam(value = "expectedGrantId", required = false) UUID grantId,
-            Authentication auth, HttpServletRequest request, HttpServletResponse response)
+    @PostMapping(value = "/import/load", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ManagementEditingService.Draft importLoad(@RequestPart("bundle") MultipartFile bundle,
+            @RequestParam("editingSessionId") UUID editingSessionId, @RequestParam("generation") UUID generation,
+            @RequestParam("draftId") UUID draftId, @RequestParam("revision") long revision,
+            @RequestParam("baseSnapshotId") UUID baseId, Authentication auth, HttpServletRequest request)
             throws IOException, ServletException {
-        response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
-        requireParts(request, "bundle", "reviewId", "expectedPublishedId", "expectedGrantId");
-        return imports.confirm(request.getSession(false), ManagementController.principal(auth), bundle,
-                reviewId, publishedId, grantId);
+        requireParts(request, "bundle", "editingSessionId", "generation", "draftId", "revision", "baseSnapshotId");
+        return imports.load(request.getSession(false), ManagementController.principal(auth), bundle,
+                editingSessionId, generation, draftId, revision, baseId);
     }
 
     private static void requireParts(HttpServletRequest request, String... allowed) throws IOException, ServletException {
@@ -171,15 +166,6 @@ public final class ManagementConfigurationController {
                 throw new ManagementConfigurationImportService.InvalidUpload();
         }
         if (!seen.contains("bundle")) throw new ManagementConfigurationImportService.InvalidUpload();
-    }
-
-    @ExceptionHandler(ManagementConfigurationImportService.Conflict.class)
-    ResponseEntity<ImportProblem> importConflict(ManagementConfigurationImportService.Conflict conflict) {
-        var observation = conflict.code().equals("account_conflict") || conflict.code().equals("session_conflict")
-                ? null : conflict.observation() == null ? imports.observation() : conflict.observation();
-        return ResponseEntity.status(409).header(HttpHeaders.CACHE_CONTROL, "no-store")
-                .body(new ImportProblem(conflict.code(), "Import review or confirmation is no longer current",
-                        observation));
     }
 
     @ExceptionHandler(ManagementConfigurationImportService.InvalidUpload.class)

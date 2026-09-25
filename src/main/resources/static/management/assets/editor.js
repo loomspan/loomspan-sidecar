@@ -3,20 +3,10 @@
   const root = document.querySelector('[data-console="editor"]');
   if (!root) return;
   const $ = id => document.getElementById(id);
-  const tabId = crypto.randomUUID();
-  const state = {
-    session: null, grant: null, candidateId: null, baseId: null, runtimeId: null,
-    revision: 0, acknowledged: 0, validated: -1, validationCandidate: null, validationSuccessful: false,
-    saving: false, checking: false, failed: false, checkFailed: false, publishing: false, uncertain: false,
-    editable: false, invalidated: false, fault: false, expiry: null, lastActivity: 0,
-    saveTimer: null, checkTimer: null, documents: [], rest: ''
-  };
-  const putText = (id, value) => { $(id).textContent = value; };
-  const problem = (message) => { putText('editor-message', message); $('editor-message').classList.add('error'); };
-  const info = (message) => { putText('editor-message', message); $('editor-message').classList.remove('error'); };
-  class ApiError extends Error {
-    constructor(response, body) { super(body?.error || `Request failed (${response.status})`); this.status = response.status; this.code = body?.code; this.body = body; }
-  }
+  const state = { session: null, runtimeId: null, draft: null, grant: null, ownership: null,
+    docs: [], rest: '', dirty: false, busy: false, failed: false, valid: false, fault: false,
+    editing: false, timer: null, lastActivity: 0, localVersion: 0 };
+  const message = (text, error = false) => { $('editor-message').textContent = text; $('editor-message').classList.toggle('error', error); };
   const api = async (path, method = 'GET', body) => {
     const options = { method, credentials: 'same-origin', headers: { Accept: 'application/json' } };
     if (method !== 'GET') {
@@ -26,307 +16,203 @@
     }
     const response = await fetch('/api/management' + path, options);
     let data = null;
-    if (response.status !== 204 && response.status !== 202) {
-      try { data = await response.json(); } catch (_) { /* Transport or non-JSON error. */ }
+    try { if (response.status !== 204) data = await response.json(); } catch (_) {}
+    if (!response.ok) {
+      const error = new Error(data?.error || `Request failed (${response.status})`);
+      error.status = response.status; error.code = data?.code;
+      throw error;
     }
-    if (response.status === 401) { sessionLost(); throw new ApiError(response, data); }
-    if (response.status === 403) { sessionLost(); throw new ApiError(response, data); }
-    if (!response.ok) throw new ApiError(response, data);
     return data;
   };
-  const sessionLost = () => {
-    state.invalidated = true; state.grant = null; state.editable = false;
-    state.documents = []; state.rest = ''; clearTimeout(state.saveTimer); clearTimeout(state.checkTimer);
-    renderDocuments();
-    $('editor-issues').replaceChildren(); $('editor-outcome').replaceChildren();
-    problem('Your management session or role changed. Sign in again; the private draft cannot be recovered from this page.');
-    render();
-  };
-  const config = () => ({ skillDocuments: state.documents.map(d => ({ sourceName: d.sourceName, yaml: d.yaml })), restRoutesYaml: state.rest });
-  const capability = () => ({ tabId, grantId: state.grant });
-  const currentContent = () => JSON.stringify(config());
-  const canPublish = () => state.editable && !!state.grant && !state.saving && !state.checking
-    && !state.failed && !state.checkFailed && !state.publishing && !state.uncertain && !state.invalidated && !state.fault
-    && (!state.expiry || Date.parse(state.expiry) > Date.now())
-    && state.acknowledged === state.revision && state.validated === state.revision && state.validationSuccessful
-    && state.validationCandidate === state.candidateId;
+  const capability = () => ({ editingSessionId: state.grant?.editingSessionId, generation: state.grant?.generation });
+  const candidate = () => ({ ...capability(), draftId: state.draft?.draftId,
+    revision: state.draft?.revision, baseSnapshotId: state.draft?.baseSnapshotId });
+  const content = () => ({ skillDocuments: state.docs.map(d => ({ sourceName: d.sourceName, yaml: d.yaml })), restRoutesYaml: state.rest });
   const render = () => {
-    $('editor-fields').hidden = state.invalidated || (!state.session) ? true : false;
-    for (const node of root.querySelectorAll('#editor-fields input, #editor-fields textarea')) node.readOnly = !state.editable;
-    $('editor-add').hidden = !state.editable;
-    for (const node of root.querySelectorAll('.editor-remove')) node.hidden = !state.editable;
-    $('editor-acquire').hidden = !state.session || state.session.role === 'viewer' || !!state.grant || state.invalidated || state.fault;
-    $('editor-takeover').hidden = !state.session || state.session.role !== 'admin' || !!state.grant || state.invalidated || state.fault;
+    const editable = state.editing && !state.fault && !state.busy;
+    $('editor-fields').hidden = !state.session;
+    for (const node of root.querySelectorAll('#editor-fields input, #editor-fields textarea')) node.readOnly = !editable;
+    for (const node of root.querySelectorAll('.editor-remove')) node.hidden = !editable;
+    $('editor-add').hidden = !editable;
+    $('editor-acquire').hidden = !state.session || state.session.role === 'viewer' || !!state.ownership?.held || !!state.grant || state.fault;
+    $('editor-handoff').hidden = !state.session || state.session.role === 'viewer' || !state.ownership?.held || !state.ownership?.sameUser || !!state.grant || state.fault;
+    $('editor-takeover').hidden = !state.session || state.session.role !== 'admin' || !state.ownership?.held || !!state.grant || state.fault;
     $('editor-release').hidden = !state.grant;
-    $('editor-discard').hidden = !state.session || state.session.role === 'viewer' || state.invalidated || !state.baseId;
-    $('editor-retry').hidden = !state.editable || !state.failed;
-    $('editor-recheck').hidden = !state.editable || !state.checkFailed;
-    $('editor-publish').disabled = !canPublish();
-    const saveLabel = state.publishing ? 'Publishing…' : state.saving ? 'Saving…' : state.failed ? 'Save failed — unsaved edits'
-      : !state.editable ? 'Not editing' : state.acknowledged === state.revision ? 'Saved to private draft' : 'Unsaved';
-    putText('editor-save', saveLabel);
-    const validationLabel = state.checking ? 'Checking…' : state.checkFailed ? 'Check failed' : state.validated === state.revision && state.validationCandidate === state.candidateId
-      ? $('editor-validation-state').dataset.result || 'Valid' : 'Out of date';
-    putText('editor-validation-state', validationLabel);
-    $('editor-validation-state').classList.toggle('valid', validationLabel === 'Valid');
-    $('editor-validation-state').classList.toggle('error', validationLabel === 'Validation errors');
+    $('editor-resume-local').hidden = !state.grant || !state.dirty || state.editing;
+    $('editor-discard').hidden = !state.grant || !state.draft;
+    $('editor-reconcile').hidden = !state.grant || !state.draft?.stale;
+    $('editor-continue').hidden = !state.grant;
+    $('editor-retry').hidden = !state.grant || !state.failed;
+    $('editor-recheck').hidden = !state.grant || state.dirty || state.busy;
+    $('editor-publish').disabled = !state.grant || !state.valid || state.dirty || state.busy || state.draft?.stale || state.fault;
+    $('editor-save').textContent = state.busy ? 'Working…' : state.failed ? 'Unsaved local changes' : state.dirty
+      ? 'Unsaved local changes' : state.draft ? `Saved draft revision ${state.draft.revision}` : 'Published configuration';
+    $('editor-validation-state').textContent = state.valid && !state.dirty ? 'Valid' : state.draft?.stale ? 'Stale base' : 'Out of date';
+    $('editor-owner').textContent = state.grant ? 'You hold editing control.' : state.ownership?.held
+      ? `Editing control: ${state.ownership.holderLabel || 'another client'}.` : 'No editing session holds control.';
+    $('editor-deadline').textContent = state.grant ? `Lease expires ${new Date(state.grant.expiresAt).toLocaleString()}. Renew only with explicit activity.` : '';
   };
-  const renderDocuments = () => {
+  const draw = () => {
     const list = $('editor-skills'); list.replaceChildren();
-    state.documents.forEach((doc, index) => {
+    state.docs.forEach((doc, index) => {
       const section = document.createElement('section'); section.className = 'editor-document';
       const head = document.createElement('div'); head.className = 'editor-document-head';
-      const sourceLabel = document.createElement('label'); sourceLabel.className = 'field';
-      const sourceText = document.createElement('span'); sourceText.textContent = `Source label ${index + 1}`;
-      const source = document.createElement('input'); source.value = doc.sourceName; source.setAttribute('aria-label', `Source label ${index + 1}`);
-      source.addEventListener('input', () => { doc.sourceName = source.value; changed(); }); sourceLabel.append(sourceText, source);
-      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'editor-remove btn-ghost-danger'; remove.textContent = 'Remove';
-      remove.setAttribute('aria-label', `Remove skill document ${index + 1}`);
-      remove.addEventListener('click', () => { state.documents.splice(index, 1); renderDocuments(); changed(); });
-      head.append(sourceLabel, remove);
-      const yaml = document.createElement('textarea'); yaml.value = doc.yaml; yaml.spellcheck = false; yaml.setAttribute('aria-label', `Skill YAML ${index + 1}`);
+      const label = document.createElement('label'); label.className = 'field';
+      const caption = document.createElement('span'); caption.textContent = `Source label ${index + 1}`;
+      const name = document.createElement('input'); name.value = doc.sourceName; name.setAttribute('aria-label', `Source label ${index + 1}`);
+      name.addEventListener('input', () => { doc.sourceName = name.value; changed(); }); label.append(caption, name);
+      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'editor-remove btn-ghost-danger';
+      remove.textContent = 'Remove'; remove.addEventListener('click', () => { state.docs.splice(index, 1); draw(); changed(); });
+      head.append(label, remove);
+      const yaml = document.createElement('textarea'); yaml.value = doc.yaml; yaml.spellcheck = false;
+      yaml.setAttribute('aria-label', `Skill YAML ${index + 1}`);
       yaml.addEventListener('input', () => { doc.yaml = yaml.value; changed(); });
       section.append(head, yaml); list.append(section);
     });
-    if (!state.documents.length) {
-      const empty = document.createElement('p'); empty.className = 'empty'; empty.textContent = 'No skill documents. REST routes can still be configured below.';
-      list.append(empty);
-    }
+    if (!state.docs.length) { const empty = document.createElement('p'); empty.className = 'empty'; empty.textContent = 'No skill documents.'; list.append(empty); }
     $('editor-rest').value = state.rest;
     render();
   };
-  const displayValidation = result => {
-    const list = $('editor-issues'); list.replaceChildren();
-    for (const issue of result.issues || []) {
-      const item = document.createElement('li');
-      item.textContent = [issue.severity, issue.sourceLabel, issue.skillName, issue.location, issue.message]
-        .filter(value => value !== null && value !== undefined && value !== '').join(' · ');
-      list.append(item);
+  const setDraft = (draft, overwrite = true) => {
+    state.draft = draft;
+    state.valid = !!draft?.validation?.successful && !draft?.stale;
+    $('editor-saved-preview').hidden = !draft;
+    $('editor-saved-content').textContent = draft ?
+      `Revision ${draft.revision}${draft.stale ? ' (stale)' : ''}\n`
+        + draft.configuration.skillDocuments.map(d => `--- ${d.sourceName} ---\n${d.yaml}`).join('\n')
+        + `\n--- REST routes ---\n${draft.configuration.restRoutesYaml}` : '';
+    if (overwrite) {
+      state.docs = (draft?.configuration.skillDocuments || []).map(d => ({ ...d }));
+      state.rest = draft?.configuration.restRoutesYaml || '';
+      state.dirty = false; state.failed = false;
+      draw();
     }
-    if (!list.childElementCount) { const item = document.createElement('li'); item.textContent = 'No issues.'; list.append(item); }
-    $('editor-validation-state').dataset.result = result.successful ? 'Valid' : 'Validation errors';
-    state.validationSuccessful = result.successful;
+    $('editor-issues').replaceChildren();
+    for (const issue of draft?.validation?.issues || []) {
+      const item = document.createElement('li');
+      item.textContent = [issue.severity, issue.sourceLabel, issue.location, issue.message].filter(Boolean).join(' · ');
+      $('editor-issues').append(item);
+    }
     render();
   };
   const changed = () => {
-    if (!state.editable) return;
-    state.revision++;
-    state.validated = -1; state.validationCandidate = null; state.validationSuccessful = false; state.checkFailed = false;
-    state.failed = false; state.uncertain = false;
-    clearTimeout(state.saveTimer); clearTimeout(state.checkTimer);
-    state.saveTimer = setTimeout(save, 600);
+    if (!state.editing) return;
+    state.dirty = true; state.failed = false; state.valid = false; state.localVersion++;
+    clearTimeout(state.timer);
+    if (!state.draft?.stale) state.timer = setTimeout(save, 600);
     render();
   };
-  const save = async () => {
-    if (!state.editable || state.saving || state.failed || state.acknowledged === state.revision) return;
-    const revision = state.revision, content = currentContent(), expected = state.candidateId, grant = state.grant;
-    state.saving = true; render();
+  const lose = text => {
+    state.grant = null; state.editing = false; state.valid = false;
+    clearTimeout(state.timer);
+    message(`${text} Any unsaved local text remains visible and will not be submitted automatically.`);
+    render();
+  };
+  const save = async (reconcile = false) => {
+    if (!state.grant || state.busy || !state.dirty || (!reconcile && state.draft?.stale)) return;
+    const before = state.localVersion, grant = state.grant, request = { ...candidate(), ...content() };
+    if (reconcile) request.baseSnapshotId = state.runtimeId;
+    state.busy = true; render();
     try {
-      const draft = await api('/editing/draft', 'PUT', { ...capability(), expectedCandidateId: expected, ...JSON.parse(content) });
-      if (state.grant !== grant || state.invalidated || state.baseId !== draft.baseSnapshotId) return;
-      state.candidateId = draft.candidateId;
-      if (state.revision === revision && currentContent() === content) {
-        state.acknowledged = revision; state.checkTimer = setTimeout(validate, 300);
-      }
+      const draft = await api(reconcile ? '/editing/draft/reconcile' : '/editing/draft', reconcile ? 'POST' : 'PUT', request);
+      if (grant !== state.grant) return;
+      const localChanged = before !== state.localVersion;
+      setDraft(draft, false);
+      if (!localChanged) { state.dirty = false; state.failed = false; }
+      else { state.dirty = true; state.valid = false; }
+      message(localChanged ? 'A newer local change remains unsaved.' : 'Saved to your durable draft. Validate before publishing.');
     } catch (error) {
-      if (!state.invalidated) {
-        state.failed = true;
-        if (error.status === 409 || error.code === 'configuration_unavailable') await refreshOwnership(error.code);
-        if (state.editable) problem('Save failed. Your local text is still here. Retry only after checking ownership and the runtime base.');
-      }
-    } finally {
-      state.saving = false; render();
-      if (state.editable && !state.failed && state.acknowledged !== state.revision) state.saveTimer = setTimeout(save, 0);
-    }
+      state.failed = true;
+      if (error.status === 409) await poll();
+      message('Save failed. Your local text remains visible. Inspect the saved draft before retrying.', true);
+    } finally { state.busy = false; render(); }
   };
-  const validate = async () => {
-    if (!state.editable || state.saving || state.checking || state.failed || state.acknowledged !== state.revision) return;
-    const revision = state.revision, candidate = state.candidateId, grant = state.grant;
-    state.checking = true; render();
-    try {
-      const result = await api('/editing/draft/validate', 'POST', { ...capability(), expectedCandidateId: candidate });
-      if (state.editable && state.grant === grant && revision === state.revision && candidate === state.candidateId && result.applied && result.candidateId === candidate) {
-        state.validated = revision; state.validationCandidate = candidate; displayValidation(result.validation);
-      }
-    } catch (error) {
-      if (error.status === 409 || error.code === 'configuration_unavailable') await refreshOwnership(error.code);
-      if (state.editable && revision === state.revision) {
-        state.checkFailed = true;
-        problem('Validation could not finish. Retry validation or edit to check the draft again.');
-      }
-    } finally {
-      state.checking = false; render();
-      if (state.editable && !state.failed && !state.checkFailed && state.acknowledged === state.revision && state.validated !== state.revision)
-        state.checkTimer = setTimeout(validate, 300);
-    }
-  };
-  const setDraft = (draft, writable) => {
-    state.baseId = draft.baseSnapshotId; state.candidateId = draft.candidateId;
-    state.documents = draft.configuration.skillDocuments.map(d => ({ sourceName: d.sourceName, yaml: d.yaml }));
-    state.rest = draft.configuration.restRoutesYaml;
-    state.revision = 0; state.acknowledged = 0; state.validated = draft.validation ? 0 : -1;
-    state.validationCandidate = draft.validation ? draft.candidateId : null;
-    state.validationSuccessful = !!draft.validation?.successful;
-    state.editable = writable; state.failed = false; state.checkFailed = false; state.invalidated = false;
-    $('editor-issues').replaceChildren(); delete $('editor-validation-state').dataset.result;
-    renderDocuments(); if (draft.validation) displayValidation(draft.validation);
-  };
-  const loseGrant = message => {
-    state.grant = null; state.editable = false;
-    clearTimeout(state.saveTimer); clearTimeout(state.checkTimer);
-    info(message + ' Your local text remains on this page while the session and runtime base are valid.'); render();
-  };
-  const refreshOwnership = async reason => {
-    if (state.invalidated) return;
+  const poll = async () => {
+    if (!state.session) return;
     try {
       const checkedGrant = state.grant;
       const [current, ownership] = await Promise.all([api('/configuration/current'), api('/editing')]);
-      if (checkedGrant !== state.grant || state.invalidated) return;
-      if (current.published.localId !== state.runtimeId) {
-        state.runtimeId = current.published.localId; state.grant = null; state.editable = false;
-        state.invalidated = true; state.documents = []; state.rest = ''; $('editor-issues').replaceChildren(); renderDocuments();
-        problem('The runtime configuration changed. The old-base draft and local edits are invalid; start over by reloading this page.');
-        return;
+      if (checkedGrant !== state.grant) return;
+      state.runtimeId = current.published.localId; state.fault = !!current.mutationFault;
+      state.ownership = ownership;
+      if (state.grant && (!ownership.mine || ownership.editingSessionId !== state.grant.editingSessionId
+          || Date.parse(ownership.expiresAt) <= Date.now())) lose('Editing control ended.');
+      let draft = null;
+      try { draft = await api('/editing/draft'); } catch (error) { if (error.status !== 404) throw error; }
+      if (checkedGrant !== state.grant) return;
+      if (draft && (!state.draft || draft.draftId !== state.draft.draftId || draft.revision !== state.draft.revision || draft.stale !== state.draft.stale)) {
+        if (state.dirty) {
+          setDraft(draft, false);
+          message(`Saved draft revision ${draft.revision} changed. Your unsaved local text is separate; inspect it before any new submission.`);
+        } else setDraft(draft);
+      } else if (!draft && state.draft && !state.dirty) setDraft(null);
+      if (!draft && !state.draft && !state.dirty) {
+        state.docs = current.published.configuration.skillDocuments.map(d => ({ ...d }));
+        state.rest = current.published.configuration.restRoutesYaml; draw();
       }
-      state.fault = !!current.mutationFault;
-      if (current.mutationFault) {
-        state.editable = false;
-        clearTimeout(state.saveTimer); clearTimeout(state.checkTimer);
-        info('Configuration mutations are unavailable: ' + current.mutationFault + '. Runtime inspection and lease release remain available.');
-        render(); return;
-      }
-      if (state.grant && (!ownership.mine || !ownership.held || ownership.mineTabId !== tabId
-          || Date.parse(ownership.expiresAt) <= Date.now()))
-        loseGrant('The editing lease ended.');
-      putText('editor-owner', state.grant ? 'You are editing in this tab.' : ownership.mine
-        ? 'Another tab in this session is editing. Its grant cannot be copied to this tab.'
-        : ownership.held ? 'Another editor is editing.' : 'No tab currently holds the editing lease.');
-      state.expiry = state.grant ? ownership.expiresAt : null;
-      if (reason) info('Editing state changed (' + reason + '). Check ownership before continuing.');
+      $('editor-outcome').textContent = `Published configuration: ${current.published.localId}. ${draft ? `Your saved draft: revision ${draft.revision}${draft.stale ? ' (stale)' : ''}.` : 'No saved draft.'}`;
       render();
-    } catch (error) { if (!state.invalidated) problem('Could not inspect editing state: ' + error.message); }
+    } catch (error) { message('Could not refresh saved draft: ' + error.message, true); }
   };
-  const acquire = async takeover => {
-    if (takeover && !confirm('Take over editing? Your own current draft will be replaced with the runtime configuration.')) return;
+  const acquire = async path => {
+    if (state.dirty && !confirm('Unsaved local text will remain visible, separate from the current saved draft. Continue?')) return;
     try {
-      const retained = !takeover && state.baseId === state.runtimeId && state.revision !== state.acknowledged
-        ? currentContent() : null;
-      const grant = await api(takeover ? '/editing/lease/takeover' : '/editing/lease', 'POST', { tabId });
-      state.grant = grant.grantId; state.expiry = grant.expiresAt;
-      setDraft(grant.draft, true); info(takeover ? 'Editing taken over from runtime configuration.' : 'Editing your private draft.');
-      if (retained && grant.draft.baseSnapshotId === state.runtimeId) {
-        const content = JSON.parse(retained);
-        state.documents = content.skillDocuments; state.rest = content.restRoutesYaml;
-        renderDocuments(); changed();
-        info('Editing resumed. Unsaved local text was retained and will be saved to this private draft.');
-      }
-      await refreshOwnership();
-    } catch (error) { problem('Could not acquire editing: ' + error.message); await refreshOwnership(); }
+      const grant = await api('/editing/lease' + path, 'POST', { label: 'Console' });
+      state.grant = grant; state.editing = !state.dirty;
+      // Read the server revision returned with control. Do not submit retained local text.
+      setDraft(grant.draft, !state.dirty);
+      message(state.dirty ? 'Editing control acquired. Compare your unsaved local text with the saved draft, then explicitly resume editing it.'
+        : 'Editing control acquired. Current saved revision is shown; no local text was submitted.');
+      await poll();
+    } catch (error) { message('Could not take editing control: ' + error.message, true); await poll(); }
   };
-  const release = async () => {
-    try { await api('/editing/lease/release', 'POST', capability()); loseGrant('Editing released.'); await refreshOwnership(); }
-    catch (error) { problem('Could not release editing: ' + error.message); await refreshOwnership(); }
-  };
-  const discard = async () => {
-    if (!confirm('Discard your private draft and local edits?')) return;
+  const validate = async () => {
+    if (!state.grant || state.dirty || state.busy) return;
+    state.busy = true; render();
     try {
-      await api('/editing/draft', 'DELETE', state.grant ? capability() : {});
-      state.grant = null; state.baseId = null; state.editable = false; state.documents = []; state.rest = '';
-      state.revision = 0; state.acknowledged = 0; state.validated = -1; $('editor-issues').replaceChildren(); renderDocuments();
-      info('Draft discarded. Start editing to begin again from runtime configuration.'); await refreshOwnership();
-    } catch (error) { problem('Could not discard draft: ' + error.message); await refreshOwnership(); }
-  };
-  const describeCurrent = async prefix => {
-    try {
-      const current = await api('/configuration/current');
-      putText('editor-outcome', `${prefix} Runtime: ${current.published.localId} (${current.published.status}). Intended: ${current.intendedId || 'none'} (${current.intendedStatus || 'none'}). Mutation fault: ${current.mutationFault || 'none'}.`);
-      state.fault = !!current.mutationFault;
-      if (current.published.localId !== state.runtimeId) {
-        state.runtimeId = current.published.localId; state.invalidated = true; state.grant = null;
-        state.documents = []; state.rest = ''; $('editor-issues').replaceChildren(); renderDocuments();
-      }
-      if (state.fault) { state.editable = false; render(); }
-    } catch (_) { putText('editor-outcome', prefix + ' Current runtime state could not be inspected.'); }
+      const draft = await api('/editing/draft/validate', 'POST', candidate());
+      setDraft(draft, false); message(draft.validation.successful ? 'Saved revision validated.' : 'Validation found errors.');
+    } catch (error) { if (error.status === 409) await poll(); message('Validation failed: ' + error.message, true); }
+    finally { state.busy = false; render(); }
   };
   const publish = async () => {
-    if (!canPublish()) return;
-    const candidate = state.candidateId;
-    state.publishing = true; render();
+    if (!state.grant || !state.valid || state.dirty || state.busy) return;
+    state.busy = true; render();
     try {
-      const result = await api('/configuration/publish', 'POST', { ...capability(), expectedCandidateId: candidate });
-      state.runtimeId = result.localId; state.grant = null; state.editable = false; state.invalidated = true;
-      state.documents = []; state.rest = ''; $('editor-issues').replaceChildren(); renderDocuments();
-      await describeCurrent('Published successfully.');
+      const snapshot = await api('/configuration/publish', 'POST', candidate());
+      state.grant = null; state.editing = false; setDraft(null);
+      message(`Published configuration ${snapshot.localId}.`); await poll();
     } catch (error) {
-      state.uncertain = !Number.isInteger(error.status);
-      const code = error.code || (state.uncertain ? 'unknown_connection_outcome' : 'request_rejected');
-      const outcome = {
-        preparation_failed: 'Publication stopped before activation.',
-        commit_failed: 'Publication stopped before activation.',
-        activation_failed: 'Activation failed; the previous runtime remains active.',
-        revert_failed: 'Activation failed and intended selection could not be reverted.',
-        outcome_recording_failed: 'The new configuration is active, but its outcome could not be recorded.',
-        history_pruning_failed: 'The new configuration is active, but history pruning failed.',
-        validation_required: 'The draft needs successful validation before publication.',
-        candidate_conflict: 'The saved candidate changed; save and validate the current draft again.',
-        base_conflict: 'The runtime base changed; start a new draft.'
-      }[code] || `Publish was rejected (${code}). ${error.message}.`;
-      await describeCurrent(state.uncertain
-        ? 'Connection lost after Publish. The outcome is unknown; no automatic retry will occur.'
-        : outcome);
-      if (error.status === 409) await refreshOwnership(code);
-    } finally { state.publishing = false; render(); }
+      message('Publication did not complete: ' + error.message + '. Inspect current state before retrying.', true);
+      await poll();
+    } finally { state.busy = false; render(); }
   };
   const activity = event => {
-    if (state.invalidated || !state.session || Date.now() - state.lastActivity < 30000) return;
-    if (event.type === 'keydown' && ['Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) return;
+    if (!state.session || Date.now() - state.lastActivity < 30000 || (event.type === 'keydown' && ['Shift', 'Control', 'Alt', 'Meta'].includes(event.key))) return;
     state.lastActivity = Date.now();
-    const grant = state.grant;
-    const path = grant ? '/editing/lease/activity' : '/session/activity';
-    api(path, 'POST', grant ? capability() : {}).then(result => {
-      if (state.grant === grant && result?.expiresAt) { state.expiry = result.expiresAt; renderDeadline(); }
-    }).catch(error => { if (state.grant === grant && grant && error.status === 409) loseGrant('The editing lease ended.'); });
-  };
-  const renderDeadline = () => {
-    if (!state.session) return;
-    const lease = state.session.editLeaseTimeoutSeconds / 60, login = state.session.sessionIdleTimeoutSeconds / 60;
-    const remaining = state.expiry ? Date.parse(state.expiry) - Date.now() : Infinity;
-    putText('editor-deadline', `Editing lease: ${lease} minutes; login idle limit: ${login} minutes. `
-      + (state.grant && remaining <= 120000 ? 'Editing lease expires within two minutes. Continue editing to renew it.' : ''));
-    $('editor-continue').hidden = !state.grant || remaining > 120000;
-    if (state.grant && remaining <= 0) loseGrant('The editing lease expired.');
+    api('/session/activity', 'POST').catch(() => {});
+    if (state.grant) api('/editing/lease/renew', 'POST', capability()).then(grant => {
+      if (state.grant?.generation === grant.generation) { state.grant.expiresAt = grant.expiresAt; render(); }
+    }).catch(() => lose('Editing lease ended.'));
   };
   $('editor-rest').addEventListener('input', event => { state.rest = event.target.value; changed(); });
-  $('editor-add').addEventListener('click', () => { state.documents.push({ sourceName: `skill-${state.documents.length + 1}.yaml`, yaml: '' }); renderDocuments(); changed(); });
-  $('editor-acquire').addEventListener('click', () => acquire(false));
-  $('editor-takeover').addEventListener('click', () => acquire(true));
-  $('editor-release').addEventListener('click', release);
-  $('editor-discard').addEventListener('click', discard);
+  $('editor-add').addEventListener('click', () => { state.docs.push({ sourceName: `skill-${state.docs.length + 1}.yaml`, yaml: '' }); draw(); changed(); });
+  $('editor-acquire').addEventListener('click', () => acquire(''));
+  $('editor-handoff').addEventListener('click', () => acquire('/handoff'));
+  $('editor-takeover').addEventListener('click', () => acquire('/takeover'));
+  $('editor-release').addEventListener('click', async () => { try { await api('/editing/lease/release', 'POST', capability()); lose('Editing released.'); await poll(); } catch (error) { message(error.message, true); } });
+  $('editor-resume-local').addEventListener('click', () => { state.editing = true;
+    message('Editing your retained local text. Review the server-saved draft before making changes.'); render(); });
+  $('editor-discard').addEventListener('click', async () => { if (!confirm('Discard your saved draft?')) return;
+    try { await api('/editing/draft', 'DELETE', candidate()); state.grant = null; state.editing = false; setDraft(null); await poll(); }
+    catch (error) { message(error.message, true); } });
+  $('editor-reconcile').addEventListener('click', () => { if (confirm('Submit the complete visible configuration against the current published base? Review all fields first.')) { state.dirty = true; save(true); } });
   $('editor-retry').addEventListener('click', () => { state.failed = false; save(); });
-  $('editor-recheck').addEventListener('click', () => { state.checkFailed = false; validate(); });
+  $('editor-recheck').addEventListener('click', validate);
   $('editor-publish').addEventListener('click', publish);
   $('editor-continue').addEventListener('click', () => { state.lastActivity = 0; activity({ type: 'click' }); });
   for (const type of ['keydown', 'input', 'paste', 'click', 'scroll']) document.addEventListener(type, activity, { passive: true });
-  setInterval(() => { renderDeadline(); if (state.session && !state.invalidated) refreshOwnership(); }, 10000);
-  (async () => {
-    try {
-      state.session = await api('/session');
-      const [current, ownership] = await Promise.all([api('/configuration/current'), api('/editing')]);
-      state.runtimeId = current.published.localId;
-      state.fault = !!current.mutationFault;
-      let draft = null;
-      if (state.session.role !== 'viewer') {
-        try { draft = await api('/editing/draft'); } catch (error) { if (error.status !== 404) throw error; }
-      }
-      if (draft && draft.baseSnapshotId === state.runtimeId) setDraft(draft, false);
-      else setDraft({ baseSnapshotId: state.runtimeId, candidateId: null, configuration: current.published.configuration }, false);
-      info(state.fault ? 'Configuration mutations are unavailable: ' + current.mutationFault + '. Runtime inspection remains available.'
-        : state.session.role === 'viewer' ? 'Runtime configuration is read-only for viewers.'
-        : draft ? 'Your private draft is available. Acquire a new editing lease to resume.'
-          : 'Showing runtime configuration. Acquire editing to create a private draft.');
-      putText('editor-owner', ownership.mine ? 'Another tab in this session is editing.'
-        : ownership.held ? 'Another editor is editing.' : 'No tab currently holds the editing lease.');
-      renderDeadline(); render();
-    } catch (error) { if (!state.invalidated) problem('Could not load configuration: ' + error.message); }
-  })();
+  setInterval(poll, 10000);
+  (async () => { try { state.session = await api('/session'); await poll(); message('Saved draft and published configuration loaded.'); }
+    catch (error) { message('Could not load configuration: ' + error.message, true); } })();
 })();

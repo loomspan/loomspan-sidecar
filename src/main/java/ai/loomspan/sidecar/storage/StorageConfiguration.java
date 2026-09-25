@@ -56,6 +56,13 @@ public class StorageConfiguration
     }
 
     @Bean
+    ConfigurationDraftStore configurationDraftStore(DataSource storageDataSource, Flyway storageFlyway,
+            DataSourceTransactionManager transactionManager) {
+        return new ConfigurationDraftStore(new JdbcTemplate(storageDataSource),
+                new TransactionTemplate(transactionManager));
+    }
+
+    @Bean
     DataSourceTransactionManager transactionManager(DataSource storageDataSource)
     {
         return new DataSourceTransactionManager(storageDataSource);

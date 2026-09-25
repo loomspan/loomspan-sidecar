@@ -43,7 +43,7 @@ class RuntimeConfigurationRecoveryIntegrationTest {
                         @Override public void beforeFrameworkPublish() { throw new IllegalStateException("injected"); }
                         @Override public void beforeRevert() { throw new IllegalStateException("injected"); }
                     });
-                    assertThatThrownBy(() -> service.publish(draft::validatedCandidate)).hasMessageContaining("could not be reverted");
+                    assertThatThrownBy(() -> context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(draft)).hasMessageContaining("could not be reverted");
                     b = context.getBean(ConfigurationSnapshotStore.class).current();
                     assertThat(service.inspect().publishedId()).isEqualTo(a.localId());
                 }
@@ -83,7 +83,7 @@ class RuntimeConfigurationRecoveryIntegrationTest {
             service.hooks(new RuntimeConfigurationService.Hooks() {
                 @Override public void beforeStatus() { throw new IllegalStateException("injected"); }
             });
-            assertThatThrownBy(() -> service.publish(draft::validatedCandidate)).hasMessageContaining("outcome could not be recorded");
+            assertThatThrownBy(() -> context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(draft)).hasMessageContaining("outcome could not be recorded");
             published = context.getBean(ConfigurationSnapshotStore.class).current();
             assertThat(published.status()).isEqualTo(SnapshotStatus.PENDING);
             assertThat(service.inspect().publishedId()).isEqualTo(published.localId());
@@ -103,7 +103,7 @@ class RuntimeConfigurationRecoveryIntegrationTest {
         String email = "restored-admin@example.test";
         try (var context = start(original)) {
             var service = context.getBean(RuntimeConfigurationService.class);
-            a = service.publish(validDraft(service, service.publishedSnapshot(), "backed-up configuration")::validatedCandidate);
+            a = context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(validDraft(service, service.publishedSnapshot(), "backed-up configuration"));
             var encoder = new org.springframework.security.crypto.password.Pbkdf2PasswordEncoder("", 16, 310_000,
                     org.springframework.security.crypto.password.Pbkdf2PasswordEncoder.SecretKeyFactoryAlgorithm.PBKDF2WithHmacSHA256);
             context.getBean(org.springframework.jdbc.core.JdbcTemplate.class).update(
@@ -116,7 +116,7 @@ class RuntimeConfigurationRecoveryIntegrationTest {
         try (var context = start(original)) {
             var service = context.getBean(RuntimeConfigurationService.class);
             var draft = validDraft(service, context.getBean(ConfigurationSnapshotStore.class).current(), "B");
-            service.publish(draft::validatedCandidate);
+            context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(draft);
             assertThat(context.getBean(ConfigurationSnapshotStore.class).current().localId()).isNotEqualTo(a.localId());
         }
         Path restored = directory.resolve("restored.db");
@@ -183,7 +183,7 @@ class RuntimeConfigurationRecoveryIntegrationTest {
             service.hooks(new RuntimeConfigurationService.Hooks() {
                 @Override public void beforeCommit() { throw new IllegalStateException("injected"); }
             });
-            assertThatThrownBy(() -> service.publish(draft::validatedCandidate)).hasMessageContaining("commit failed");
+            assertThatThrownBy(() -> context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(draft)).hasMessageContaining("commit failed");
             assertThat(service.inspect().publishedId()).isEqualTo(a.localId());
         }
         try (var restarted = start(database)) {
@@ -207,7 +207,7 @@ class RuntimeConfigurationRecoveryIntegrationTest {
     private ConfigurationDraft validDraft(RuntimeConfigurationService service, ConfigurationSnapshot base, String label) {
         var draft = new ConfigurationDraft(base);
         draft.replaceContent(content(label));
-        assertThat(service.validate(draft).successful()).isTrue();
+        assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(service, draft).successful()).isTrue();
         return draft;
     }
 

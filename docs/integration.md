@@ -49,11 +49,13 @@ loomspan:
 
 Keep credentials in environment variables. Model connection and URL allowlist
 changes require restart; a complete snapshot publication changes skills and
-REST routes without restart. Successful framework publication invalidates
-prior-base drafts and leases under the runtime transition gate. Publish rechecks
-live account, session, grant, candidate, validation and base after waiting for
-the publication lock. Import and rollback reuse this publication path and
-assign fresh local IDs with source provenance.
+REST routes without restart. Successful framework publication clears only the
+publishing user's saved draft and lease; other users' durable drafts become
+stale and require explicit current-base reconciliation and fresh validation.
+Publish rechecks live account, session, editing generation, saved revision,
+validation and base after waiting for the publication lock. Import and rollback
+load into the same draft workflow before validation and publication, assigning
+fresh local IDs with source provenance when published.
 
 ## REST skill routes
 
