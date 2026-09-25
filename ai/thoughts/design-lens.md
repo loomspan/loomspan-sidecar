@@ -2,6 +2,12 @@
 
 Standing design constraints for Sidecar planning, implementation and review.
 
+**Development policy: destructively replace superseded contracts, code and
+schemas. No compatibility shims, legacy adapters or parallel legacy APIs.**
+Every new roadmap and ticket must state this policy prominently and reference
+this lens. Document required development-data resets and their impact; this
+policy does not authorize deleting deployed data during planning.
+
 ## Simplicity and technical debt
 
 Standing guidance for our work together:
@@ -16,7 +22,8 @@ Standing guidance for our work together:
   concrete need; speculative future needs are insufficient justification.
   Keep code, tests, documentation and process proportional to the work.
   Replace obsolete development code, configuration and schemas directly rather
-  than preserving them with compatibility shims.
+  than preserving them with compatibility shims or migration machinery solely
+  to support obsolete development contracts.
 - **Why this matters:** Complexity consumes implementation, review and
   maintenance effort. Minimize technical debt; accept it only when its concrete
   benefit outweighs its expected maintenance and future change costs. For
@@ -52,24 +59,88 @@ Standing guidance for our work together:
 
 ## Trusted identity stays outside model inputs
 
-- **Decision:** JWT-only inbound identity is propagated through queued execution
-  via Spring Security. Ownership uses issuer and subject. Passthrough forwards
-  the captured credential; Sidecar never mints, refreshes or exchanges tokens.
+- **Decision:** Execution API identity remains JWT-only and is propagated through
+  queued execution via Spring Security. Execution ownership uses issuer and
+  subject. Passthrough forwards the captured execution credential; Sidecar never
+  mints, refreshes or exchanges execution JWTs. Management credentials do not
+  grant execution access, and execution JWTs do not grant management access.
+  Planned opaque personal access tokens belong to local management users; they
+  are not execution JWTs. Credentials, caller identity and permissions come from
+  trusted server authentication, never model inputs or a skill's instructions.
 - **Why this is non-obvious:** Request-thread authentication is lost at ordinary
   executor boundaries; input-carried identity is not a trusted substitute.
-- **Applies to:** Execution API, authorization, ownership and REST callbacks.
+- **Applies to:** Execution and management APIs, authorization, ownership,
+  authoring clients and REST callbacks.
 - **Exceptions:** Test issuers may mint local fixture tokens.
 
-## Startup activation and one framework shutdown budget
+## One management API for browser and remote authoring
 
-- **Decision:** Skills/routes load at startup and change on restart. Sidecar
-  immediately stops dispatch and discards queued work on close; framework
+- **Decision:** Planned remote authoring and the console share management
+  endpoints, payloads, editing services, validation and publication rules.
+  Browser sessions retain CSRF protection; personal tokens add scoped bearer
+  authentication. Effective token authority is the intersection of the live
+  account's permissions and the token's allowed operations. Reject ambiguous
+  mixed credentials. Enforce these rules server-side on every operation.
+  Planned token presets are cumulative Read, Edit and Publish; Publish permits
+  remote publication without mandatory UI approval, subject to live user authority
+  and all validation/publication checks. Tokens grant no account administration.
+- **Why this matters:** A separate agent API or browser-session emulation would
+  duplicate behavior and security rules. REST is the initial interface; OAuth,
+  MCP and a built-in assistant are not prerequisites.
+- **Applies to:** Planned shared management contract, console and authoring client.
+- **Exceptions:** Authentication and credential-management operations may have
+  different access policies; that does not require duplicate authoring APIs.
+
+## Editing ownership is explicit and credentials remain revocable
+
+- **Decision:** Each user has at most one saved draft containing the complete
+  skill/route configuration. It survives logout, credential expiry and restart.
+  The same user's authorized clients may read the saved draft. Editing
+  sessions bind to the user and originating login or personal token; one session
+  holds the single lease. UI/agent labels are descriptive only. Explicit same-user
+  handoff rotates the lease generation, invalidates the old holder and requires
+  the new holder to read the current revision. Identifiers alone confer no
+  authority. Retain explicit renewal and exact lease/candidate/base checks.
+  A changed runtime base makes retained drafts stale and requires explicit
+  reconciliation against current configuration and validation, without automatic
+  merging or silent content replacement. Successful publication clears the
+  published draft and releases its lease; other users' drafts remain saved but
+  stale. Failed publication preserves the draft. Credential expiry,
+  revocation, logout and account changes must prevent further unauthorized
+  operations, including after waiting on locks or model responses.
+- **Why this matters:** Sharing an API must not expose another client's draft,
+  allow stale writes, or turn background work into indefinite authenticated access.
+- **Applies to:** Planned remote authoring redesign and corresponding console updates.
+- **Exceptions:** No automatic merging or simultaneous writers. Same-user read
+  access and explicit handoff do not grant access to another user's private draft.
+
+## Users choose their clients and deployment workflows
+
+- **Decision:** Keep the authoring skill and API agent-neutral. Read/Edit/Publish
+  permissions govern actions regardless of client or environment labels. Do not
+  impose a production promotion convention, import-only activation, mandatory UI
+  approval or an agent allowlist. Export/import promotion is an example workflow.
+- **Why this matters:** Unnecessary usage restrictions add policy and maintenance
+  costs without satisfying an agreed requirement.
+- **Applies to:** Authoring guidance, management APIs, tokens and environment examples.
+- **Exceptions:** Add restrictions only for a concrete requirement through explicit
+  planning; ordinary authorization, validation and execution boundaries still apply.
+
+## Atomic configuration publication and one framework shutdown budget
+
+- **Decision:** Restore the database-selected snapshot at startup. Publish complete
+  validated skill/route snapshots through the public framework reload contract;
+  activation does not require restart. Recheck live authorization, ownership and
+  exact candidate/base under the publication gate. Preserve old generations for
+  already-admitted work. Sidecar immediately stops dispatch and discards queued
+  work on close; framework
   shutdown owns already-admitted work. Keep clients/callers alive until its
   completion/cutoff, then clean up without another drain period.
 - **Why this is non-obvious:** Queue draining, ordered listeners or early client
   teardown can defeat the framework's existing deadline and nested work.
 - **Applies to:** Configuration, workers, HTTP clients, readiness and packaging.
-- **Exceptions:** None in beta 4; reload requires new planning.
+- **Exceptions:** Deployment settings such as model connections still require
+  restart; draft validation neither activates nor executes skills.
 
 ## Preserve the available diagnostic contract
 

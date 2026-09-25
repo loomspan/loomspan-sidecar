@@ -2,6 +2,12 @@
 
 ## Simplicity and technical debt
 
+- Sidecar is still in development. Make destructive replacements of superseded
+  contracts, code and schemas; do not add compatibility shims, legacy adapters,
+  dual API paths or migration machinery solely to preserve obsolete behavior.
+  State this requirement prominently in every new roadmap and ticket, alongside
+  the design-lens reference. Document any required development-data reset; this
+  policy is not permission to delete deployed data as part of planning.
 - Choose the simplest solution that fully satisfies the current requirements.
   Keep code, tests, documentation and process proportional to the work.
 - Add complexity or accept technical debt only when its concrete benefit

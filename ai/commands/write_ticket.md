@@ -33,6 +33,13 @@ The pipeline should use the ticket filename stem when naming its research, plan,
 
 ## Required Content
 
+Every ticket must include the `Development constraints` section shown below,
+even for small changes. Link to the design lens and explicitly require simple
+solutions, minimal technical debt, destructive replacement of superseded
+development contracts, and no compatibility shims. Do not leave these constraints
+implicit in a roadmap or conversation. Adapt relative links if the ticket is
+written outside the normal tickets directory.
+
 A pipeline-ready ticket answers:
 
 1. **Outcome** — What should a user or system observe when the work is complete, and why?
@@ -86,6 +93,17 @@ Source paths, line numbers, test names, and commands belong in a ticket only whe
 ```markdown
 # <Short outcome-oriented title>
 
+## Development constraints
+
+**Sidecar is still in development. Changes must destructively replace superseded
+behavior; no compatibility shims, legacy adapters, parallel legacy APIs, or
+migration machinery solely to preserve obsolete development contracts.**
+
+Apply the [design lens](../design-lens.md). Choose the simplest solution that
+fully meets the requirements and minimize technical debt. Keep implementation,
+tests and documentation proportional. Document required development-data resets
+and their impact; this requirement does not authorize deleting deployed data.
+
 ## Outcome
 
 <Observable result and why it is needed.>
@@ -121,6 +139,8 @@ Source paths, line numbers, test names, and commands belong in a ticket only whe
 
 Before saving, confirm:
 
+- the ticket prominently includes the development constraints and design-lens
+  link, including destructive replacement and no compatibility shims;
 - the ticket is self-contained and has no placeholders, unresolved questions, or references that depend on this conversation;
 - materially different observable outcomes cannot all satisfy it;
 - required behavior, deliberate constraints, nonbinding suggestions, and scope exclusions are distinguishable;
