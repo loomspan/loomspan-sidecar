@@ -3,6 +3,7 @@ package ai.loomspan.sidecar.storage;
 import ai.loomspan.sidecar.config.SidecarStorageProperties;
 import ai.loomspan.sidecar.config.SidecarSnapshotProperties;
 import ai.loomspan.sidecar.management.ManagementAccountRepository;
+import ai.loomspan.sidecar.management.ManagementPersonalTokenRepository;
 import org.flywaydb.core.Flyway;
 import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteDataSource;
@@ -53,6 +54,11 @@ public class StorageConfiguration
     ManagementAccountRepository managementAccountRepository(DataSource storageDataSource, Flyway storageFlyway)
     {
         return new ManagementAccountRepository(new JdbcTemplate(storageDataSource));
+    }
+
+    @Bean
+    ManagementPersonalTokenRepository managementPersonalTokenRepository(DataSource storageDataSource, Flyway storageFlyway) {
+        return new ManagementPersonalTokenRepository(new JdbcTemplate(storageDataSource));
     }
 
     @Bean

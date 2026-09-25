@@ -197,6 +197,22 @@ public class ManagementPagesController
                         + "<button class='btn-primary'>Send invitation</button></form></div></section>");
     }
 
+    @GetMapping(value = "/management/personal-tokens", produces = MediaType.TEXT_HTML_VALUE)
+    String personalTokens(Authentication auth, HttpServletRequest request) {
+        return console("Personal tokens", "Create a short-lived credential for an external authoring client.",
+                ManagementController.principal(auth), request, "",
+                "<section data-console='tokens' class='stack-lg'>"
+                + "<p class='notice warning'>The secret is shown once. Copy it now and inject it into your client's environment. Never put it in a URL, command argument, or repository file.</p>"
+                + "<form id='token-form' class='card stack'><h2>Create token</h2>"
+                + field("Permission", "<select name='preset'><option value='read'>Read</option><option value='edit'>Edit</option><option value='publish'>Publish</option></select>")
+                + field("Expiry (optional, at most 30 days)", "<input name='expiresAt' type='datetime-local'>")
+                + "<button class='btn-primary'>Create token</button></form>"
+                + "<div id='token-created' class='card' hidden><h2>Copy your token now</h2><code id='token-secret'></code> "
+                + "<button id='token-copy' type='button'>Copy</button><p>After leaving this page, the secret cannot be shown again.</p></div>"
+                + "<p id='token-status' class='notice' role='status' aria-live='polite'></p>"
+                + "<div id='token-list' class='stack'></div></section>");
+    }
+
     @GetMapping(value = "/management/configuration/current", produces = MediaType.TEXT_HTML_VALUE)
     String current(Authentication auth, HttpServletRequest request)
     {
@@ -392,6 +408,8 @@ public class ManagementPagesController
                 + (editor ? link(path, "/management/configuration/edit", ICON_EDIT, "Edit configuration")
                         + link(path, "/management/configuration/import", ICON_IMPORT, "Import configuration") : "")
                 + link(path, "/management/configuration/recovery", ICON_RECOVERY, "Recovery guide")
+                + "<p class='nav-label'>Access</p>"
+                + link(path, "/management/personal-tokens", ICON_KEY, "Personal tokens")
                 + ("admin".equals(user.role()) ? "<p class='nav-label'>Administration</p>"
                         + link(path, "/management/accounts", ICON_ACCOUNTS, "Accounts") : "")
                 + "</nav>";

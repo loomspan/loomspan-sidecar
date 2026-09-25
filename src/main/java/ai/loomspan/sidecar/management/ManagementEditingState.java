@@ -9,15 +9,15 @@ import org.springframework.stereotype.Component;
 public final class ManagementEditingState {
     public static final class Lease {
         public final long accountId;
-        public final String sessionId;
+        public final String origin;
         public final UUID editingSessionId = UUID.randomUUID();
         public final UUID generation = UUID.randomUUID();
         public final String label;
         public long expiresAt;
 
-        public Lease(long accountId, String sessionId, String label, long expiresAt) {
+        public Lease(long accountId, String origin, String label, long expiresAt) {
             this.accountId = accountId;
-            this.sessionId = sessionId;
+            this.origin = origin;
             this.label = label;
             this.expiresAt = expiresAt;
         }
@@ -30,7 +30,11 @@ public final class ManagementEditingState {
     public Validation validation;
 
     public void clearSession(String sessionId) {
-        if (lease != null && lease.sessionId.equals(sessionId)) clearLease();
+        clearOrigin("browser:" + sessionId);
+    }
+
+    public void clearOrigin(String origin) {
+        if (lease != null && lease.origin.equals(origin)) clearLease();
     }
 
     public void clearAccount(long accountId) {

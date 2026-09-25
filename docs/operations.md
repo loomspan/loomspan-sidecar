@@ -749,3 +749,24 @@ the framework must be published and resolvable before final Sidecar verification
 Sidecar and framework versions advance independently. The first planned Sidecar
 release is `1.0.0-beta.1`, tagged `v1.0.0-beta.1`, bundling framework
 `1.0.0-beta.5`. Historical acceptance evidence retains the versions tested then.
+
+## Management personal tokens
+
+Remote authoring uses the same `/api/management/**` configuration and editing
+contract as the console. Require HTTPS for remote access and put the one-time
+personal token in the `Authorization: Bearer` header. Never put it in a URL,
+request body, command argument or repository file. The user must inject the
+displayed secret into the client's environment; the stored digest cannot
+supply it later. The console at `/management/personal-tokens` issues and
+revokes only the current user's tokens. No OAuth server or separate management
+API is involved.
+
+Issuance is limited to five per account per hour and 20 active tokens. Failed
+bearer authentication is limited to 20 attempts per source IP per 15 minutes,
+with a bounded in-memory counter and fail-closed capacity. Headers over 128
+characters are rejected. Tokens expire after seven days by default and at
+most 30 days after issuance. They are never refreshed. Structured management
+audit events identify action, actor account ID, known token ID and outcome;
+configuration changes also record candidate/base/published IDs where
+available. Audit events must never contain raw tokens or Authorization headers.
+Management tokens cannot call `/v1/**`; execution JWTs cannot call management.

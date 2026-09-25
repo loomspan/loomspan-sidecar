@@ -4,6 +4,7 @@
   const currentRoot = document.querySelector('[data-console="current"]');
   const historyRoot = document.querySelector('[data-console="history"]');
   const homeRoot = document.querySelector('[data-console="home"]');
+  const tokensRoot = document.querySelector('[data-console="tokens"]');
   // The editor owns its activity cadence so a lease report also renews login once.
   if (document.querySelector('[data-console="editor"]')) return;
   let csrfToken = null;
@@ -460,6 +461,51 @@
     try { csrfToken = (await api('/session')).csrfToken; }
     catch (_) { return; }
     if (homeRoot) loadHome();
+    if (tokensRoot) {
+      const list = async () => {
+        const root = document.getElementById('token-list');
+        root.replaceChildren();
+        for (const token of await api('/personal-tokens')) {
+          const card = el('div', undefined, 'card');
+          card.append(el('strong', token.preset.toUpperCase() + ' · ' + token.id),
+            el('p', 'Expires ' + new Date(token.expiresAt).toLocaleString()
+              + (token.revokedAt ? ' · Revoked' : '')));
+          if (!token.revokedAt) {
+            const revoke = el('button', 'Revoke'); revoke.type = 'button';
+            revoke.addEventListener('click', async () => {
+              try { await api('/personal-tokens/' + encodeURIComponent(token.id), 'DELETE');
+                status('token-status', 'Token revoked.'); await list(); }
+              catch (error) { status('token-status', error.message, true); }
+            });
+            card.append(revoke);
+          }
+          root.append(card);
+        }
+      };
+      document.getElementById('token-form').addEventListener('submit', async event => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        document.getElementById('token-created').hidden = true;
+        document.getElementById('token-secret').textContent = '';
+        try {
+          const expiry = form.elements.expiresAt.value;
+          const created = await api('/personal-tokens', 'POST', {
+            preset: form.elements.preset.value,
+            expiresAt: expiry ? new Date(expiry).toISOString() : null
+          });
+          document.getElementById('token-secret').textContent = created.secret;
+          document.getElementById('token-created').hidden = false;
+          status('token-status', 'Token created. Copy its secret before leaving this page.');
+          form.reset(); await list();
+        } catch (error) { status('token-status', error.message, true); }
+      });
+      document.getElementById('token-copy').addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(document.getElementById('token-secret').textContent);
+          status('token-status', 'Token copied.'); }
+        catch (_) { status('token-status', 'Copy failed. Select and copy the displayed token manually.', true); }
+      });
+      list().catch(error => status('token-status', error.message, true));
+    }
     if (currentRoot) {
       document.getElementById('current-refresh').addEventListener('click', loadCurrent);
       document.getElementById('current-export').addEventListener('click', downloadCurrent);

@@ -167,3 +167,24 @@ Successful redemption invalidates old management sessions and editing state.
 SMTP, when configured, remains available for invitations and emailed password
 recovery. Without SMTP, those email actions cannot deliver links; initial
 setup and this operator recovery still work.
+
+## Personal access tokens
+
+Sign in to the console and open **Personal tokens**. Any active account can create,
+list and revoke its own tokens. Select Read, Edit, or Publish and optionally set a
+future expiry no more than 30 days away. The default is seven days. Creation
+shows the opaque secret once; later lists contain only its identifier, preset,
+timestamps and revocation state. Copy it immediately and inject it into the
+client's environment. Sidecar stores a SHA-256 digest, so it cannot recover a
+lost secret. Revoke a lost or exposed token and issue a new one. At most five
+tokens may be issued per account per hour and 20 may be active at once.
+
+Read can inspect current configuration, exports, history, editing status and
+the owner's saved draft. Edit adds lease control, same-user handoff, draft
+changes, import and rollback loading, and validation. Publish adds activation
+of the exact validated candidate. The account's current role is always an
+additional limit: viewers can only read even with a Publish token. Personal
+tokens cannot manage accounts, tokens, sessions or administrator takeover.
+Password changes, password reset/recovery and account disablement revoke all
+tokens for that account. Re-enabling does not revive them. Role changes narrow
+effective permissions immediately. Revocation leaves saved drafts intact.

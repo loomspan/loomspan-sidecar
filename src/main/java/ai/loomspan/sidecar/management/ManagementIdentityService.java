@@ -32,6 +32,7 @@ public class ManagementIdentityService {
     private final Supplier<String> setupCredential;
     private final ManagementEditingState editing;
     private RuntimeConfigurationService runtime;
+    private ManagementPersonalTokenRepository personalTokens;
     private final Pbkdf2PasswordEncoder encoder = new Pbkdf2PasswordEncoder("", 16, 310_000,
             Pbkdf2PasswordEncoder.SecretKeyFactoryAlgorithm.PBKDF2WithHmacSHA256);
 
@@ -47,6 +48,9 @@ public class ManagementIdentityService {
 
     @org.springframework.beans.factory.annotation.Autowired
     void runtime(RuntimeConfigurationService runtime) { this.runtime = runtime; }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void personalTokens(ManagementPersonalTokenRepository personalTokens) { this.personalTokens = personalTokens; }
 
     private void withEditingLock(Runnable action) {
         Runnable locked = () -> { synchronized (editing) { action.run(); } };
@@ -95,6 +99,7 @@ public class ManagementIdentityService {
                 } else throw new Rejected();
                 accounts.password(id, "{pbkdf2@SpringSecurity_v5_8}" + encoder.encode(password));
                 accounts.consumeTokens(id, clock.millis());
+                revokePersonalTokens(id);
                 if (!accounts.activateBootstrap(id)) throw new Rejected();
             });
         } catch (org.springframework.dao.DataAccessException conflict) { throw new Rejected(); }
@@ -153,6 +158,7 @@ public class ManagementIdentityService {
                 if (!accounts.consume(digest, clock.millis())) throw new Rejected();
                 accounts.password(account.id(), "{pbkdf2@SpringSecurity_v5_8}" + encoder.encode(password));
                 accounts.consumeTokens(account.id(), clock.millis());
+                revokePersonalTokens(account.id());
                 return account.id();
             });
             editing.clearAccount(changed);
@@ -167,6 +173,7 @@ public class ManagementIdentityService {
                 if (account == null || !account.active() || !matches(current, account.passwordHash())) throw new Rejected();
                 accounts.password(id, "{pbkdf2@SpringSecurity_v5_8}" + encoder.encode(replacement));
                 accounts.consumeTokens(id, clock.millis());
+                revokePersonalTokens(id);
             });
             editing.clearAccount(id);
         });
@@ -177,7 +184,7 @@ public class ManagementIdentityService {
         withEditingLock(() -> {
             tx.executeWithoutResult(status -> {
                 if (accounts.byId(id) == null || !accounts.alter(id, role, enabled)) throw new Rejected();
-                if (!enabled) accounts.consumeTokens(id, clock.millis());
+                if (!enabled) { accounts.consumeTokens(id, clock.millis()); revokePersonalTokens(id); }
             });
             editing.clearAccount(id);
         });
@@ -192,6 +199,10 @@ public class ManagementIdentityService {
     private Issued issue(long id, String email, String purpose, Duration duration) {
         return new Issued(id, email, purpose,
                 ManagementTokens.issue(accounts, id, purpose, clock.millis(), duration));
+    }
+
+    private void revokePersonalTokens(long id) {
+        if (personalTokens != null) personalTokens.revokeAll(id, clock.millis());
     }
 
     private boolean credentialValid(String supplied) {

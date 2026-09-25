@@ -19,6 +19,7 @@ import org.springframework.security.crypto.password.Pbkdf2PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.context.SecurityContextHolderFilter;
+import org.springframework.security.web.csrf.CsrfFilter;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 @Configuration(proxyBeanMethods = false)
@@ -33,7 +34,8 @@ public class ManagementSecurityConfiguration {
     @Order(1)
     @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
     SecurityFilterChain managementSecurityFilterChain(HttpSecurity http, ManagementUserDetailsService users,
-            ManagementIdentityService identity, ManagementAttemptLimiter attempts, ManagementSessionGuard guard) throws Exception {
+            ManagementIdentityService identity, ManagementAttemptLimiter attempts, ManagementSessionGuard guard,
+            ManagementPersonalTokenService tokens) throws Exception {
         var provider = new DaoAuthenticationProvider(users);
         var protectionEncoder = new Pbkdf2PasswordEncoder("", 16, 310_000,
                 Pbkdf2PasswordEncoder.SecretKeyFactoryAlgorithm.PBKDF2WithHmacSHA256);
@@ -47,6 +49,7 @@ public class ManagementSecurityConfiguration {
         });
         http.securityMatcher("/management/**", "/api/management/**")
                 .authenticationProvider(provider)
+                .csrf(csrf -> csrf.ignoringRequestMatchers(ManagementCredential::bearerOnly))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/management/login", "/management/setup", "/management/forgot",
                                 "/management/password/set", "/management/password/reset", "/management/assets/console.css",
@@ -87,6 +90,7 @@ public class ManagementSecurityConfiguration {
                         })
                         .accessDeniedHandler((request, response, failure) -> problem(response, 403, "Forbidden")))
                 .addFilterBefore(new LoginLimitFilter(attempts), UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(new ManagementBearerFilter(tokens, users, identity, attempts), CsrfFilter.class)
                 .addFilterAfter(guard, SecurityContextHolderFilter.class);
         return http.build();
     }

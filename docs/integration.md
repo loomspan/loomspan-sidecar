@@ -231,6 +231,31 @@ queued or if capture fails; after worker handoff it is the durable UUID of the
 captured framework generation and remains on the terminal record even after
 that generation retires. Observer diagnostics do not determine this field.
 
+## Remote configuration authoring
+
+An active management user creates a Read, Edit or Publish personal token in
+`/management/personal-tokens`. The secret appears once. Provide it to the
+client through its environment and send `Authorization: Bearer <token>` over
+HTTPS. Do not place it in URLs, request JSON, command-line arguments or
+repository files. Sidecar stores only the digest and cannot return the secret
+later. Revocation and expiry stop further use; there is no refresh endpoint.
+
+Browser and bearer clients use the same `/api/management/configuration/**` and
+`/api/management/editing/**` routes and payloads. Read inspects current
+configuration, export, history, lease status and the caller's saved draft.
+Edit adds acquire, explicit same-user handoff, renewal, release, save,
+reconcile, discard, validation, import review/load and rollback review/load.
+Publish adds `POST /api/management/configuration/publish`. Publication requires
+the exact validated draft revision, lease generation and current base; no
+console approval is required. The account's live role is intersected with the
+token preset. A viewer cannot edit with a high-scope token; a token never
+permits account administration, token administration or administrator takeover.
+Browser cookie requests still require CSRF for mutations. Never mix bearer and
+session cookies in one request.
+
+Personal tokens are local management credentials. They are not execution JWTs
+and cannot invoke `/v1/**`; execution JWTs cannot manage configuration.
+
 ## Capacity, retention, and diagnostics
 
 ```yaml

@@ -25,6 +25,10 @@ public class ManagementSessionGuard extends OncePerRequestFilter {
     @Override protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
             FilterChain chain) throws ServletException, IOException {
         var authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication != null && authentication.getDetails() instanceof ManagementCredential) {
+            chain.doFilter(request, response);
+            return;
+        }
         if (authentication != null && authentication.getPrincipal() instanceof ManagementUserDetailsService.Principal principal) {
             HttpSession session = request.getSession(false);
             var account = identity.account(principal.id());
