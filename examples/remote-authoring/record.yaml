@@ -1,0 +1,11 @@
+name: readRecord
+description: Read one record owned by the authenticated caller
+rest: true
+rbac_roles: [RECORD_READER]
+input_schema:
+  type: object
+  properties:
+    recordId:
+      type: string
+  required: [recordId]
+  additionalProperties: false

@@ -394,10 +394,10 @@ management API responses use `Cache-Control: no-store` and
 
 ### Shared durable editing API
 
-The console and future remote clients use this single management contract. All
-calls require an authenticated management user; unsafe methods require the
-browser CSRF token. This release uses browser login only; personal tokens are
-planned separately. Editors and administrators mutate; viewers may read their
+The console and remote clients use this single management contract. All
+calls require an authenticated management user; unsafe browser-session methods
+require the browser CSRF token. Scoped personal tokens use bearer authentication
+without browser cookies. Editors and administrators mutate; viewers may read their
 own saved draft. The server derives the owner from authentication. Client
 labels and request identifiers grant no access.
 
@@ -420,15 +420,15 @@ returned by acquisition or handoff with `expiresAt` and the current draft.
 The draft has `draftId`, positive `revision`, `baseSnapshotId`, optional
 `sourceSnapshotId`, complete `configuration`, `stale`, and an in-process
 `validation` result or null. Identifiers are concurrency markers, never
-bearer authority. Every mutation checks the live login, account version, lease
+bearer authority. Every mutation checks the live account and originating login or token, lease
 holder, generation, draft ID, revision and base. A delayed old-holder write,
 foreign user, stale revision, or obsolete base receives 409 without changing
-saved content. Malformed requests receive 400, missing login 401, and role or
-CSRF denial 403.
+saved content. Malformed requests receive 400, missing/invalid credentials 401,
+and role, token-preset, or browser CSRF denial 403.
 
 There is one saved draft per account in SQLite. It survives logout, credential
 expiry, account changes and restart, including ordered skill documents and REST
-YAML. A new login may read its owner's draft but must acquire a new lease and
+YAML. A new authorized client may read its owner's draft but must acquire a new lease and
 validate again. Validation and lease state are memory-only. The application
 lease defaults to 15 minutes and the login idle limit to 30 minutes. Polling,
 reads, saves, validation and model work do not renew either deadline. Only
@@ -450,8 +450,8 @@ reconciliation.
 Management viewers, editors and admins can inspect literal authored snapshot
 content, including sensitive values in pending or failed submissions. Protect
 viewer accounts accordingly. Every response is private and `Cache-Control:
-no-store`; an execution JWT does not grant access. Mutations require a management
-session and CSRF token.
+no-store`; an execution JWT does not grant access. Browser mutations require a
+management session and CSRF token; scoped bearer tokens use the same API.
 
 | Method and path | Request | Result |
 | --- | --- | --- |
@@ -474,7 +474,7 @@ nor inspection renews login or lease inactivity deadlines.
 ### Current configuration bundle (format 1)
 
 Use **Download current configuration** on the current-configuration page, or
-`GET /api/management/configuration/export` with a management session. The ZIP is
+`GET /api/management/configuration/export` with a management session or Read-or-higher token. The ZIP is
 a configuration-only backup and promotion artifact. It carries the complete
 authored skill YAML, source labels, and REST routes/targets from the snapshot
 running when export begins. An active empty configuration yields an empty skill
@@ -770,3 +770,6 @@ audit events identify action, actor account ID, known token ID and outcome;
 configuration changes also record candidate/base/published IDs where
 available. Audit events must never contain raw tokens or Authorization headers.
 Management tokens cannot call `/v1/**`; execution JWTs cannot call management.
+The remote authoring package adds no persistent schema or data migration; no
+development-data reset is required for this ticket. Existing saved drafts
+remain available to their owning accounts across token loss and restart.

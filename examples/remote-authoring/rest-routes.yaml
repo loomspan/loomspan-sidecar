@@ -1,0 +1,13 @@
+targets:
+  records:
+    base-url: ${RECORDS_BASE_URL}
+    auth:
+      mode: caller-passthrough
+    connect-timeout: 1s
+    read-timeout: 5s
+    max-response-size: 16KB
+routes:
+  readRecord:
+    target: records
+    method: GET
+    path: /records/{recordId}

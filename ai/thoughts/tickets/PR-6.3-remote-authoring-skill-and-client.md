@@ -84,31 +84,31 @@ integration guidance, completing roadmap phases 3 and 4 in one ticket.
 
 ## Acceptance criteria
 
-- [ ] The shipped skill and client can be installed and invoked using documented
+- [x] The shipped skill and client can be installed and invoked using documented
   runtime requirements without a particular agent product or access allowlist.
   Guidance covers application endpoint design, data authorization and matching
   Sidecar configuration using documentation aligned with the framework version.
-- [ ] Client operations use the shared API for reading, editing, validation,
+- [x] Client operations use the shared API for reading, editing, validation,
   publication and relevant bundle transfer, with no duplicate framework validator,
   compatibility endpoint or browser-session emulation.
-- [ ] A local representative workflow creates/updates an application endpoint and
+- [x] A local representative workflow creates/updates an application endpoint and
   matching Sidecar draft, fixes a server-reported validation error, and shows saved
   agent changes in the console. It verifies both Edit-token console publication
   after explicit handoff and Publish-token remote publication without UI approval.
-- [ ] Handoff forces a current read and rejects delayed old-holder writes. Permission,
+- [x] Handoff forces a current read and rejects delayed old-holder writes. Permission,
   expiry, revocation, lease and stale-base/revision failures produce actionable
   results without secret leakage, silent retries, automatic takeover or overwrites.
-- [ ] Integrated evidence covers retained drafts after expiry/restart, reconciliation
+- [x] Integrated evidence covers retained drafts after expiry/restart, reconciliation
   after another publication, live role changes/revocation during work, competing
   clients, successful publication cleanup and failed-publication retention.
-- [ ] Published skills execute against the representative application using separate
+- [x] Published skills execute against the representative application using separate
   execution credentials; unauthorized application data access is denied. The
   walkthrough distinguishes validation from actual execution and presents bundle
   promotion as optional rather than a required environment policy.
-- [ ] Environment-based credential setup works without secrets in skill files,
+- [x] Environment-based credential setup works without secrets in skill files,
   repositories, command arguments, client output/errors or audit logs. Token
   secrets cannot be recovered from Sidecar; expired tokens are replaced explicitly.
-- [ ] Focused automated checks and the local end-to-end walkthrough pass against
+- [x] Focused automated checks and the local end-to-end walkthrough pass against
   the installed framework snapshot. Setup, permissions, handoff, recovery and
   troubleshooting documentation matches verified behavior; release/hosted CI
   checks deferred by repository policy are not represented as completed.
@@ -140,3 +140,12 @@ integration guidance, completing roadmap phases 3 and 4 in one ticket.
 - **Reassessment triggers:** None for a lighter profile under this scope. A need
   for a new framework extension, alternate API, automatic token delegation or a
   draft execution environment exceeds the agreed contract and needs a decision.
+
+## Local implementation verification (2026-09-24)
+
+- The shipped package is `agent-skills/loomspan-sidecar-authoring/`; the client uses Python 3.9+ standard library and the existing management API. The local walkthrough uses a disposable SQLite database, loopback callback, synthetic PATs and execution JWTs, and Playwright Chromium. No live application or production service was contacted.
+- `python -m unittest discover -s agent-skills/loomspan-sidecar-authoring/client -p 'test_*.py'` passed (9 tests). It covers environment-only credentials, shared routes and multipart transfer, handoff reads, actionable conflicts, no write retry, and redirect refusal.
+- `mvn -Dtest=RemoteAuthoringWorkflowIntegrationTest test -q` passed (2 tests) against the installed `1.0.0-beta.5-SNAPSHOT`: malformed server validation and repair, saved-console observation, explicit console handoff, both publication paths, published execution and denied foreign-record access, competing clients, stale-base reconciliation, lease expiry, revocation, and live-role downgrade.
+- `mvn '-Dtest=ManagementEditingHttpIntegrationTest,ManagementPersonalTokenHttpIntegrationTest,ManagementDraftRestartIntegrationTest,ManagementEditorBrowserIntegrationTest,ManagementImportBrowserIntegrationTest,ConfigurationBundleV1Test,AuthenticatedExecutionApiIntegrationTest' test -q` passed. These predecessor suites cover restart retention, publication failure retention and bundle/server security edges beyond the focused client-path tests.
+- `mvn test -q` passed (223 tests, 0 failures/errors, 3 skips reported by Surefire) against the installed snapshot. This full run preceded final client and joined-test refinements; the Python suite and joined Java workflow were rerun afterward and passed. `skill-creator`'s `quick_validate.py` reported `Skill is valid!` after PyYAML was supplied in a temporary directory.
+- This ticket adds no schema or persistent contract change, so no development-data reset is required. Release publication, the final framework release dependency switch, and hosted CI remain separate gates under `AGENTS.md`; none is claimed here.

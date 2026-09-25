@@ -233,6 +233,16 @@ that generation retires. Observer diagnostics do not determine this field.
 
 ## Remote configuration authoring
 
+An external coding agent can use the portable
+[Sidecar authoring skill](../agent-skills/loomspan-sidecar-authoring/SKILL.md) and its
+[Python 3.9+ client](../agent-skills/loomspan-sidecar-authoring/references/client-usage.md).
+The agent works in the integrating application's repository to design an
+endpoint and its authorization checks. The checked-in
+[record example](../examples/remote-authoring/README.md) pairs a REST manifest
+with a route; the local test fixture exercises both allowed and denied record
+access. Copy or load the skill in the agent environment; no specific agent
+product or access allowlist is required.
+
 An active management user creates a Read, Edit or Publish personal token in
 `/management/personal-tokens`. The secret appears once. Provide it to the
 client through its environment and send `Authorization: Bearer <token>` over
@@ -255,6 +265,15 @@ session cookies in one request.
 
 Personal tokens are local management credentials. They are not execution JWTs
 and cannot invoke `/v1/**`; execution JWTs cannot manage configuration.
+Use explicit lease renewal while actively editing. A handoff reads the current
+publication and saved draft again under the new grant; it invalidates delayed
+old-holder writes. Expired or revoked credentials require a newly issued token,
+while the saved draft remains. A changed published base requires a reviewed,
+complete reconciliation and fresh validation. After an ambiguous publication
+error, inspect current status and the draft before trying another mutation.
+Validation cannot prove endpoint connectivity or data access: verify the
+published skill through `/v1/**` with a separate execution JWT. Bundle
+export/import is an optional transfer workflow, not a deployment requirement.
 
 ## Capacity, retention, and diagnostics
 
