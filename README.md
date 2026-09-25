@@ -71,6 +71,25 @@ an unavailable or expired result. See the [integration guide](docs/integration.m
 for JWT configuration, skill and REST route authoring, request examples, results,
 and limits.
 
+## Planned SDKs
+
+Client SDKs for Sidecar's public HTTP API will live in this repository under
+`sdks/`, with independently built and published language packages. These are
+placeholder directories only; no SDKs are implemented or published yet.
+
+```text
+sdks/
+  java/     # Java; planned standalone Maven library
+  go/       # Go
+  node/     # Node.js (JavaScript)
+  ruby/     # Ruby / Ruby on Rails
+  python/   # Python
+  dotnet/   # .NET
+```
+
+The Java SDK will have its own `sdks/java/pom.xml` when implemented. The root
+`pom.xml` continues to build the Sidecar service.
+
 ## Configure and operate
 
 The embedded console lets administrators manage accounts and lets editors
