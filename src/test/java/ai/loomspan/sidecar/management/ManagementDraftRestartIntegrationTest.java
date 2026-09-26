@@ -29,7 +29,7 @@ class ManagementDraftRestartIntegrationTest {
             saved = drafts.replace(account, original.draftId(), original.revision(), base.localId(), base.localId(),
                     new ManagedConfiguration(List.of(new SkillDocument("one.yaml", "name: one"),
                             new SkillDocument("two.yaml", "name: two")),
-                            "targets: {}\nroutes: {}\n# durable\n"), null);
+                            "targets: {}\nroutes: {}\n# durable\n", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), null);
             var editing = context.getBean(ManagementEditingState.class);
             editing.lease = new ManagementEditingState.Lease(account, "old-session", "Console", Long.MAX_VALUE);
             editing.validation = new ManagementEditingState.Validation(saved.draftId(), saved.revision(),

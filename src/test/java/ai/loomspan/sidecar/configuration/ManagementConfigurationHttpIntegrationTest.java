@@ -1,7 +1,7 @@
 package ai.loomspan.sidecar.configuration;
 
 import ai.loomspan.sidecar.configuration.RuntimeConfigurationService;
-import ai.loomspan.sidecar.bundle.ConfigurationBundleV1;
+import ai.loomspan.sidecar.bundle.ConfigurationBundleV2;
 import ai.loomspan.sidecar.storage.ManagedConfiguration;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshot;
 import ai.loomspan.sidecar.storage.SnapshotStatus;
@@ -72,7 +72,7 @@ class ManagementConfigurationHttpIntegrationTest {
         seed(email, "editor"); Browser editor = login(email);
         var source = runtime.publishedSnapshot();
         byte[] bundle;
-        Path path = ConfigurationBundleV1.write(source);
+        Path path = ConfigurationBundleV2.write(source);
         try { bundle = java.nio.file.Files.readAllBytes(path); }
         finally { java.nio.file.Files.deleteIfExists(path); }
         JsonNode grant = ok(editor.post("/api/management/editing/lease", "{\"label\":\"HTTP test\"}"));

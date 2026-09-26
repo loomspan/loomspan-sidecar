@@ -8,12 +8,14 @@ import java.util.Objects;
 import java.util.Set;
 
 /** Exact authored content, without parsing or resolving placeholders. */
-public record ManagedConfiguration(List<SkillDocument> skillDocuments, String restRoutesYaml)
+public record ManagedConfiguration(List<SkillDocument> skillDocuments, String restRoutesYaml,
+        String executionConfigurationYaml)
 {
     public ManagedConfiguration
     {
         Objects.requireNonNull(skillDocuments, "skillDocuments");
         Objects.requireNonNull(restRoutesYaml, "restRoutesYaml");
+        Objects.requireNonNull(executionConfigurationYaml, "executionConfigurationYaml");
         skillDocuments = List.copyOf(skillDocuments);
         Set<String> labels = new HashSet<>();
         for (SkillDocument document : skillDocuments)

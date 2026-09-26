@@ -22,6 +22,12 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class SidecarApplicationFixture implements AutoCloseable {
     /** Seed one complete authored selection before a Spring context starts. */
     public static synchronized Path seedDatabase(Path database, java.util.List<Path> skillFiles, String routesYaml) {
+        return seedDatabase(database, skillFiles, routesYaml,
+                ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
+    }
+
+    public static synchronized Path seedDatabase(Path database, java.util.List<Path> skillFiles,
+            String routesYaml, String executionYaml) {
         if (Files.exists(database)) return database;
         var source = ai.loomspan.sidecar.storage.StorageConfiguration.dataSource(database);
         ai.loomspan.sidecar.storage.StorageConfiguration.migrate(source);
@@ -36,7 +42,7 @@ public final class SidecarApplicationFixture implements AutoCloseable {
             for (Path file : skillFiles) {
                 documents.add(new ai.loomspan.api.SkillDocument(file.getFileName().toString(), Files.readString(file)));
             }
-            store.submit(new ai.loomspan.sidecar.storage.ManagedConfiguration(documents, routesYaml),
+            store.submit(new ai.loomspan.sidecar.storage.ManagedConfiguration(documents, routesYaml, executionYaml),
                     null, initial.localId());
         } catch (java.io.IOException failure) { throw new IllegalStateException(failure); }
         return database;

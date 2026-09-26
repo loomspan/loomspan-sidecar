@@ -94,7 +94,7 @@ Standing guidance for our work together:
 ## Editing ownership is explicit and credentials remain revocable
 
 - **Decision:** Each user has at most one saved draft containing the complete
-  skill/route configuration. It survives logout, credential expiry and restart.
+  skill, REST route, and execution configuration. It survives logout, credential expiry and restart.
   The same user's authorized clients may read the saved draft. Editing
   sessions bind to the user and originating login or personal token; one session
   holds the single lease. UI/agent labels are descriptive only. Explicit same-user
@@ -129,7 +129,7 @@ Standing guidance for our work together:
 ## Atomic configuration publication and one framework shutdown budget
 
 - **Decision:** Restore the database-selected snapshot at startup. Publish complete
-  validated skill/route snapshots through the public framework reload contract;
+  validated skill, REST route, and execution snapshots through the public framework reload contract;
   activation does not require restart. Recheck live authorization, ownership and
   exact candidate/base under the publication gate. Preserve old generations for
   already-admitted work. Sidecar immediately stops dispatch and discards queued
@@ -139,8 +139,9 @@ Standing guidance for our work together:
 - **Why this is non-obvious:** Queue draining, ordered listeners or early client
   teardown can defeat the framework's existing deadline and nested work.
 - **Applies to:** Configuration, workers, HTTP clients, readiness and packaging.
-- **Exceptions:** Deployment settings such as model connections still require
-  restart; draft validation neither activates nor executes skills.
+- **Exceptions:** External credential provisioning and process settings still require
+  restart; model connections, aliases, session limits and trace persistence are
+  published with skills and REST routes. Draft validation neither activates nor executes skills.
 
 ## Preserve the available diagnostic contract
 

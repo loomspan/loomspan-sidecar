@@ -37,7 +37,7 @@ import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.dataformat.yaml.YAMLMapper;
 
 /** Portable configuration-only ZIP contract. This parser never extracts or activates content. */
-public final class ConfigurationBundleV1 {
+public final class ConfigurationBundleV2 {
     public static final long MAX_ZIP_BYTES = 100L * 1_048_576;
     public static final long MAX_EXPANDED_BYTES = 512L * 1_048_576;
     public static final int MAX_ENTRIES = 10_000;
@@ -56,10 +56,10 @@ public final class ConfigurationBundleV1 {
         public InvalidBundle(String reason, Throwable cause) { super(reason, cause); }
     }
     public static final class BundleTooLarge extends IllegalArgumentException {
-        public BundleTooLarge() { super("Configuration exceeds format 1 bundle limits"); }
+        public BundleTooLarge() { super("Configuration exceeds format 2 bundle limits"); }
     }
 
-    private ConfigurationBundleV1() {}
+    private ConfigurationBundleV2() {}
 
     /** The caller owns and deletes the returned file. No partial file is returned. */
     public static Path write(ConfigurationSnapshot snapshot) throws IOException {
@@ -68,12 +68,15 @@ public final class ConfigurationBundleV1 {
         try {
             var inventory = new ArrayList<Map<String, Object>>();
             long expanded = 0;
-            int count = snapshot.configuration().skillDocuments().size() + 2;
+            int count = snapshot.configuration().skillDocuments().size() + 3;
             if (count > MAX_ENTRIES) throw new BundleTooLarge();
             try (OutputStream output = Files.newOutputStream(file); ZipOutputStream zip = new ZipOutputStream(output)) {
                 String rest = snapshot.configuration().restRoutesYaml();
                 byte[] restBytes = JSON.writeValueAsBytes(Map.of("restRoutesYaml", rest));
                 expanded = add(zip, inventory, "rest.json", restBytes, null, expanded);
+                byte[] executionBytes = JSON.writeValueAsBytes(Map.of("executionConfigurationYaml",
+                        snapshot.configuration().executionConfigurationYaml()));
+                expanded = add(zip, inventory, "execution.json", executionBytes, null, expanded);
                 int ordinal = 0;
                 for (SkillDocument document : snapshot.configuration().skillDocuments()) {
                     String path = String.format(Locale.ROOT, "skills/%05d.yaml", ordinal++);
@@ -81,7 +84,7 @@ public final class ConfigurationBundleV1 {
                             document.sourceName(), expanded);
                 }
                 Map<String, Object> manifest = new LinkedHashMap<>();
-                manifest.put("formatVersion", 1);
+                manifest.put("formatVersion", 2);
                 manifest.put("sourceSnapshotId", snapshot.localId().toString());
                 manifest.put("producer", Map.of("sidecarVersion", version("sidecarVersion"),
                         "frameworkVersion", version("frameworkVersion")));
@@ -100,7 +103,7 @@ public final class ConfigurationBundleV1 {
         }
     }
 
-    /** Stage compressed bytes under the v1 bound before ZIP central-directory validation. */
+    /** Stage compressed bytes under the format 2 bound before ZIP central-directory validation. */
     public static Bundle read(InputStream input) {
         Path file = null;
         try {
@@ -143,7 +146,7 @@ public final class ConfigurationBundleV1 {
                 fields(manifest, Set.of("formatVersion", "sourceSnapshotId", "producer", "payloads"));
                 JsonNode format = manifest.get("formatVersion");
                 if (format == null || !format.isIntegralNumber()
-                        || !format.bigIntegerValue().equals(java.math.BigInteger.ONE))
+                        || !format.bigIntegerValue().equals(java.math.BigInteger.TWO))
                     throw new InvalidBundle("Unsupported bundle format version");
                 UUID source = uuid(text(manifest, "sourceSnapshotId"));
                 JsonNode producer = manifest.get("producer");
@@ -159,12 +162,13 @@ public final class ConfigurationBundleV1 {
                 Set<String> paths = new HashSet<>();
                 Map<Integer, SkillDocument> documents = new HashMap<>();
                 String rest = null;
+                String execution = null;
                 for (JsonNode item : payloads) {
                     if (item == null || !item.isObject()) throw new InvalidBundle("Invalid payload inventory");
                     String path = text(item, "path");
                     boolean skill = path.matches("skills/[0-9]{5}\\.yaml");
                     fields(item, skill ? Set.of("path", "sha256", "sourceLabel") : Set.of("path", "sha256"));
-                    if (!paths.add(path) || !(skill || path.equals("rest.json")))
+                    if (!paths.add(path) || !(skill || path.equals("rest.json") || path.equals("execution.json")))
                         throw new InvalidBundle("Duplicate or unexpected payload path");
                     ZipEntry entry = entriesByName.remove(path);
                     if (entry == null) throw new InvalidBundle("Missing or checksum-mismatched payload");
@@ -178,7 +182,7 @@ public final class ConfigurationBundleV1 {
                         String yaml = utf8(bytes);
                         yamlObject(yaml);
                         documents.put(ordinal, new SkillDocument(label, yaml));
-                    } else {
+                    } else if (path.equals("rest.json")) {
                         JsonNode restNode = json(bytes);
                         fields(restNode, Set.of("restRoutesYaml"));
                         rest = text(restNode, "restRoutesYaml");
@@ -186,17 +190,23 @@ public final class ConfigurationBundleV1 {
                         if (parsed.get("targets") == null || !parsed.get("targets").isObject()
                                 || parsed.get("routes") == null || !parsed.get("routes").isObject())
                             throw new InvalidBundle("Invalid REST configuration structure");
+                    } else {
+                        JsonNode executionNode = json(bytes);
+                        fields(executionNode, Set.of("executionConfigurationYaml"));
+                        execution = text(executionNode, "executionConfigurationYaml");
+                        yamlObject(execution);
                     }
                 }
-                if (rest == null || !entriesByName.isEmpty() || documents.size() != paths.size() - 1)
-                    throw new InvalidBundle("Missing REST payload");
+                if (rest == null || execution == null || !entriesByName.isEmpty()
+                        || documents.size() != paths.size() - 2)
+                    throw new InvalidBundle("Missing configuration payload");
                 var ordered = new ArrayList<SkillDocument>();
                 for (int i = 0; i < documents.size(); i++) {
                     SkillDocument document = documents.get(i);
                     if (document == null) throw new InvalidBundle("Incomplete skill sequence");
                     ordered.add(document);
                 }
-                return new Bundle(source, sidecar, framework, new ManagedConfiguration(ordered, rest));
+                return new Bundle(source, sidecar, framework, new ManagedConfiguration(ordered, rest, execution));
             }
         } catch (BundleTooLarge | InvalidBundle failure) {
             throw failure;
@@ -246,11 +256,11 @@ public final class ConfigurationBundleV1 {
         return previous + added;
     }
     private static boolean safePath(String path) {
-        return path.equals("manifest.json") || path.equals("rest.json")
+        return path.equals("manifest.json") || path.equals("rest.json") || path.equals("execution.json")
                 || path.matches("skills/[0-9]{5}\\.yaml");
     }
     private static String version(String key) {
-        try (InputStream input = ConfigurationBundleV1.class.getResourceAsStream("/bundle-producer.properties")) {
+        try (InputStream input = ConfigurationBundleV2.class.getResourceAsStream("/bundle-producer.properties")) {
             if (input == null) throw new IllegalStateException("Missing bundle producer metadata");
             Properties properties = new Properties();
             properties.load(input);

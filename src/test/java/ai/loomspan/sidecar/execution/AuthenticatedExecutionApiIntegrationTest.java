@@ -75,7 +75,19 @@ class AuthenticatedExecutionApiIntegrationTest {
                 storageDirectory.resolve("sidecar.db"), List.of(
                         SidecarApplicationFixture.resourceFile("fixtures/execution-skills/echo-rest.yml"),
                         SidecarApplicationFixture.resourceFile("fixtures/execution-skills/nested-rest.yml")),
-                readRoutes()).toString());
+                readRoutes(), """
+                        loomspan:
+                          connections:
+                            fixture:
+                              driver: openai
+                              base-url: http://127.0.0.1:%d/v1
+                              api-key-ref: fixture.model.key
+                          models:
+                            fixture-model:
+                              connection: fixture
+                              provider-model: fixture-provider-model
+                        """.formatted(FIXTURE.modelPort())).toString());
+        properties.add("fixture.model.key", () -> "local-test-key");
         properties.add("loomspan.connections.fixture.driver", () -> "openai");
         properties.add("loomspan.connections.fixture.base-url",
                 () -> "http://127.0.0.1:" + FIXTURE.modelPort() + "/v1");
@@ -365,7 +377,8 @@ class AuthenticatedExecutionApiIntegrationTest {
                     "http://127.0.0.1:" + second.getAddress().getPort());
             var draft = new ai.loomspan.sidecar.storage.ConfigurationDraft(original);
             draft.replaceContent(new ai.loomspan.sidecar.storage.ManagedConfiguration(
-                    original.configuration().skillDocuments(), newRoutes));
+                    original.configuration().skillDocuments(), newRoutes,
+                    original.configuration().executionConfigurationYaml()));
             assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(runtimeConfiguration, draft).successful()).isTrue();
             var published = publicationFixture.publish(draft);
             assertThat(restGenerations.protectedIds()).contains(original.localId(), published.localId());
@@ -412,13 +425,15 @@ class AuthenticatedExecutionApiIntegrationTest {
                     "http://127.0.0.1:" + second.getAddress().getPort());
             var draft = new ai.loomspan.sidecar.storage.ConfigurationDraft(old);
             draft.replaceContent(new ai.loomspan.sidecar.storage.ManagedConfiguration(
-                    old.configuration().skillDocuments(), newRoutes));
+                    old.configuration().skillDocuments(), newRoutes,
+                    old.configuration().executionConfigurationYaml()));
             assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(runtimeConfiguration, draft).successful()).isTrue();
             publicationFixture.publish(draft);
             for (int index = 0; index < 11; index++) {
                 var nextDraft = new ai.loomspan.sidecar.storage.ConfigurationDraft(snapshots.current());
                 nextDraft.replaceContent(new ai.loomspan.sidecar.storage.ManagedConfiguration(
-                        old.configuration().skillDocuments(), newRoutes));
+                        old.configuration().skillDocuments(), newRoutes,
+                        old.configuration().executionConfigurationYaml()));
                 assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(runtimeConfiguration, nextDraft).successful()).isTrue();
                 publicationFixture.publish(nextDraft);
             }
@@ -439,7 +454,8 @@ class AuthenticatedExecutionApiIntegrationTest {
             assertThat(restGenerations.protectedIds()).doesNotContain(old.localId());
             var finalDraft = new ai.loomspan.sidecar.storage.ConfigurationDraft(snapshots.current());
             finalDraft.replaceContent(new ai.loomspan.sidecar.storage.ManagedConfiguration(
-                    old.configuration().skillDocuments(), newRoutes));
+                    old.configuration().skillDocuments(), newRoutes,
+                    old.configuration().executionConfigurationYaml()));
             assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(runtimeConfiguration, finalDraft).successful()).isTrue();
             publicationFixture.publish(finalDraft);
             assertThat(snapshots.findByLocalId(old.localId())).isNull();
@@ -459,7 +475,7 @@ class AuthenticatedExecutionApiIntegrationTest {
         try {
             var draft = new ai.loomspan.sidecar.storage.ConfigurationDraft(snapshots.current());
             draft.replaceContent(new ai.loomspan.sidecar.storage.ManagedConfiguration(List.of(),
-                    ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_REST_ROUTES));
+                    ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
             assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(runtimeConfiguration, draft).successful()).isTrue();
             publicationFixture.publish(draft);
             assertThat(mapper.readTree(send("GET", "/v1/skills", token, null).body()).isEmpty()).isTrue();

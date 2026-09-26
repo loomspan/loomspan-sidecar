@@ -8,7 +8,7 @@ runs as UID/GID 10001:10001 and contains no SMTP capture server, model fixture,
 or private signing key. The private HTTP hop is deliberate; this stack does not
 provide end-to-end TLS to Sidecar.
 
-From the repository root, build against the installed Loomspan beta 5 snapshot:
+From the repository root, build against the installed Loomspan beta 6 snapshot:
 
 ```powershell
 .\mvnw.cmd -B -ntp package
@@ -122,8 +122,11 @@ email. The local TLS fixture verifies direct HTTP and supplied application TLS
 with no Caddy request path.
 
 Set `JWT_ISSUER_URI` and `JWT_AUDIENCE` to the real token issuer and audience.
-Configure `MODEL_DRIVER`, `MODEL_BASE_URL`, `MODEL_API_KEY`, and `MODEL_NAME` for
-the model named `primary` in authored skills. For first administrator setup,
+Provision `PROVIDER_PRIMARY_KEY` as an external property for the Console's
+`api-key-ref: provider.primary.key`. Author the driver, base URL, model alias,
+session limits and trace policy in the Console and publish them with skills.
+Changing the external secret value requires a restart; changing publishable
+execution settings does not. For first administrator setup,
 generate `SETUP_TOKEN` with the packaged image using the
 [administrator access walkthrough](../../docs/admin-access.md). SMTP is optional
 for setup and local operator recovery.

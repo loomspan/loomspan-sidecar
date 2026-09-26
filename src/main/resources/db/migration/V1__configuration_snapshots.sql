@@ -3,7 +3,8 @@ CREATE TABLE configuration_snapshot (
     local_id TEXT NOT NULL UNIQUE,
     source_id TEXT,
     document_count INTEGER NOT NULL CHECK (document_count >= 0),
-    rest_routes_yaml TEXT NOT NULL
+    rest_routes_yaml TEXT NOT NULL,
+    execution_configuration_yaml TEXT NOT NULL
 );
 
 CREATE TABLE configuration_skill_document (

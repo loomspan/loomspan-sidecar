@@ -1,7 +1,7 @@
 package ai.loomspan.sidecar.management;
 
 import ai.loomspan.sidecar.configuration.RuntimeConfigurationService;
-import ai.loomspan.sidecar.bundle.ConfigurationBundleV1;
+import ai.loomspan.sidecar.bundle.ConfigurationBundleV2;
 import ai.loomspan.sidecar.storage.ConfigurationDraft;
 import ai.loomspan.sidecar.storage.ManagedConfiguration;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshotStore;

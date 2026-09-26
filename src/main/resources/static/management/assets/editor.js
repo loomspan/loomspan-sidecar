@@ -4,7 +4,7 @@
   if (!root) return;
   const $ = id => document.getElementById(id);
   const state = { session: null, runtimeId: null, draft: null, grant: null, ownership: null,
-    docs: [], rest: '', dirty: false, busy: false, failed: false, valid: false, fault: false,
+    docs: [], rest: '', execution: '', dirty: false, busy: false, failed: false, valid: false, fault: false,
     editing: false, timer: null, lastActivity: 0, localVersion: 0 };
   const message = (text, error = false) => { $('editor-message').textContent = text; $('editor-message').classList.toggle('error', error); };
   const api = async (path, method = 'GET', body) => {
@@ -27,7 +27,8 @@
   const capability = () => ({ editingSessionId: state.grant?.editingSessionId, generation: state.grant?.generation });
   const candidate = () => ({ ...capability(), draftId: state.draft?.draftId,
     revision: state.draft?.revision, baseSnapshotId: state.draft?.baseSnapshotId });
-  const content = () => ({ skillDocuments: state.docs.map(d => ({ sourceName: d.sourceName, yaml: d.yaml })), restRoutesYaml: state.rest });
+  const content = () => ({ skillDocuments: state.docs.map(d => ({ sourceName: d.sourceName, yaml: d.yaml })),
+    restRoutesYaml: state.rest, executionConfigurationYaml: state.execution });
   const render = () => {
     const editable = state.editing && !state.fault && !state.busy;
     $('editor-fields').hidden = !state.session;
@@ -71,6 +72,7 @@
     });
     if (!state.docs.length) { const empty = document.createElement('p'); empty.className = 'empty'; empty.textContent = 'No skill documents.'; list.append(empty); }
     $('editor-rest').value = state.rest;
+    $('editor-execution').value = state.execution;
     render();
   };
   const setDraft = (draft, overwrite = true) => {
@@ -80,10 +82,12 @@
     $('editor-saved-content').textContent = draft ?
       `Revision ${draft.revision}${draft.stale ? ' (stale)' : ''}\n`
         + draft.configuration.skillDocuments.map(d => `--- ${d.sourceName} ---\n${d.yaml}`).join('\n')
-        + `\n--- REST routes ---\n${draft.configuration.restRoutesYaml}` : '';
+        + `\n--- REST routes ---\n${draft.configuration.restRoutesYaml}`
+        + `\n--- Execution settings ---\n${draft.configuration.executionConfigurationYaml}` : '';
     if (overwrite) {
       state.docs = (draft?.configuration.skillDocuments || []).map(d => ({ ...d }));
       state.rest = draft?.configuration.restRoutesYaml || '';
+      state.execution = draft?.configuration.executionConfigurationYaml || '';
       state.dirty = false; state.failed = false;
       draw();
     }
@@ -148,7 +152,8 @@
       } else if (!draft && state.draft && !state.dirty) setDraft(null);
       if (!draft && !state.draft && !state.dirty) {
         state.docs = current.published.configuration.skillDocuments.map(d => ({ ...d }));
-        state.rest = current.published.configuration.restRoutesYaml; draw();
+        state.rest = current.published.configuration.restRoutesYaml;
+        state.execution = current.published.configuration.executionConfigurationYaml; draw();
       }
       $('editor-outcome').textContent = `Published configuration: ${current.published.localId}. ${draft ? `Your saved draft: revision ${draft.revision}${draft.stale ? ' (stale)' : ''}.` : 'No saved draft.'}`;
       render();
@@ -196,6 +201,7 @@
     }).catch(() => lose('Editing lease ended.'));
   };
   $('editor-rest').addEventListener('input', event => { state.rest = event.target.value; changed(); });
+  $('editor-execution').addEventListener('input', event => { state.execution = event.target.value; changed(); });
   $('editor-add').addEventListener('click', () => { state.docs.push({ sourceName: `skill-${state.docs.length + 1}.yaml`, yaml: '' }); draw(); changed(); });
   $('editor-acquire').addEventListener('click', () => acquire(''));
   $('editor-handoff').addEventListener('click', () => acquire('/handoff'));

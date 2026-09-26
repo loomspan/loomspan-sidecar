@@ -1,6 +1,6 @@
 package ai.loomspan.sidecar.management;
 
-import ai.loomspan.sidecar.bundle.ConfigurationBundleV1;
+import ai.loomspan.sidecar.bundle.ConfigurationBundleV2;
 import ai.loomspan.sidecar.configuration.RuntimeConfigurationService;
 import ai.loomspan.sidecar.storage.ConfigurationValidationResult;
 import jakarta.servlet.http.HttpSession;
@@ -39,7 +39,7 @@ public final class ManagementConfigurationImportService {
                 bundle.configuration(), bundle.sourceSnapshotId());
     }
 
-    private static ConfigurationBundleV1.Bundle parse(MultipartFile file) {
+    private static ConfigurationBundleV2.Bundle parse(MultipartFile file) {
         if (file == null || file.isEmpty()) throw new InvalidUpload();
         Path path = null;
         try {
@@ -50,11 +50,11 @@ public final class ManagementConfigurationImportService {
                 int n;
                 while ((n = input.read(chunk)) != -1) {
                     total += n;
-                    if (total > ConfigurationBundleV1.MAX_ZIP_BYTES) throw new ConfigurationBundleV1.BundleTooLarge();
+                    if (total > ConfigurationBundleV2.MAX_ZIP_BYTES) throw new ConfigurationBundleV2.BundleTooLarge();
                     output.write(chunk, 0, n);
                 }
             }
-            return ConfigurationBundleV1.read(path);
+            return ConfigurationBundleV2.read(path);
         } catch (IOException failure) { throw new InvalidUpload(); }
         finally {
             if (path != null) try { Files.deleteIfExists(path); } catch (IOException ignored) {}

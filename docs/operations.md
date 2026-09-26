@@ -4,7 +4,7 @@ This guide covers local builds, production deployment, configuration publication
 
 ## Build from source
 
-Sidecar currently depends on `ai.loomspan:loomspan-spring-boot-starter:1.0.0-beta.5-SNAPSHOT` installed in the local Maven repository from `C:/opendev/code/loomspan-framework`. Run `./mvnw` on POSIX or `.\mvnw.cmd` on Windows.
+Sidecar currently depends on `ai.loomspan:loomspan-spring-boot-starter:1.0.0-beta.6-SNAPSHOT` installed in the local Maven repository from `C:/opendev/code/loomspan-framework`. Run `./mvnw` on POSIX or `.\mvnw.cmd` on Windows.
 
 ```powershell
 .\mvnw.cmd -B -ntp verify
@@ -68,8 +68,9 @@ framework budget and checks bounded exit without a forced kill.
 Sidecar migrates and validates a file-backed SQLite database at startup, then
 atomically creates one empty current snapshot on a new database, then activates
 and records it as **published** before opening execution dispatch.
-The empty content is no skill documents and the exact REST text
-`targets: {}\nroutes: {}\n`. Reopening retains that snapshot; an inconsistent
+The empty content is no skill documents, the exact REST text
+`targets: {}\nroutes: {}\n`, and execution YAML `loomspan: {}\n`, which uses
+framework defaults. Reopening retains that snapshot; an inconsistent
 initialized store or existing database without migration history fails startup.
 On restart the committed current pointer is prepared and published as a new
 process-local framework generation, regardless of its previous status. The
@@ -77,14 +78,15 @@ durable local UUID is preserved. Invalid content or required bookkeeping failure
 aborts startup without falling back to empty or older content.
 
 Each snapshot contains an ordered set of complete `SkillDocument` diagnostic
-labels and original YAML text, plus one original REST targets/routes YAML
-document. Labels are nonblank and exactly unique; the set may be empty. The
+labels and original YAML text, plus original REST targets/routes YAML and
+framework execution YAML. Labels are nonblank and exactly unique; the set may be empty. The
 REST text is stored before parsing or placeholder resolution, so comments,
 `${NAME}` references in `base-url`, and literal sensitive values remain exactly
 as authored. Snapshots include the full framework-supported model-backed and
 REST skill authoring surface. They do not include accounts, sessions, leases,
-deployment URL-variable declarations or environment values, model-connection
-settings, identity-provider settings, or arbitrary Spring settings. Storage
+deployment URL-variable declarations or resolved environment values,
+identity-provider settings, or arbitrary Spring settings. Publishable model
+connections, aliases, session settings and trace persistence are included. Storage
 does not sanitize or encrypt literal secrets; protect the database volume and
 exported bundles accordingly.
 
@@ -94,17 +96,17 @@ Content and identity do not change after insertion. Separate local status is
 `pending`, `published`, or `failed`; `pending` means the publication outcome is
 unknown. A source UUID never selects or overwrites a local snapshot. The
 configuration bundle carries the same complete authored content with independent
-integer `formatVersion: 1`, source identity, and informational producer
+integer `formatVersion: 2`, source identity, and informational producer
 application and framework versions. The destination allocates a new local UUID;
 imported status does not prove publication there. The archive layout, integrity
 checks, and import/export operations are described in
-[current configuration bundle](#current-configuration-bundle-format-1). Flyway
+[current configuration bundle](#current-configuration-bundle-format-2). Flyway
 version and application version are not transfer compatibility rules.
 
 ### Durable private configuration drafts
 
 Flyway V3 adds one saved draft per management account, with ordered complete
-skill documents, REST YAML, base snapshot UUID, source provenance and a
+skill documents, REST YAML, execution YAML, base snapshot UUID, source provenance and a
 monotonic revision. The saved content is in the same SQLite database and must
 be included in stopped-instance backups. Leases and successful validation
 proofs remain process-local, so restart requires reacquisition and revalidation.
@@ -113,11 +115,13 @@ A successful publication deletes only its owner's saved draft after framework
 activation. Other users' drafts remain stored and become stale by base UUID
 comparison. Failure before activation leaves the publishing draft intact.
 
-Existing V1/V2 databases migrate additively. If an experimental local
-pre-release schema conflicts with V3, stop Sidecar, make a full backup, then
-reset only that development database and recreate local accounts/drafts. This
-reset is destructive to development data and is never a routine operation for
-a deployed database.
+The pre-release V1 and V3 Flyway schemas now require execution YAML. Before
+using this development build with an earlier local database, stop Sidecar and
+preserve a complete backup, then reset only the development database and
+recreate its accounts and drafts. Earlier format 1 bundles are rejected; create
+new format 2 exports from compatible data or reauthor the content. This reset
+is destructive to development data and is never a routine operation for a
+deployed database.
 
 The current database pointer records **intended production**, not the framework
 generation that handled an execution or the source for an export. A publication
@@ -332,11 +336,14 @@ by the server even if a stale browser page still shows an action.
 
 The edit page displays the runtime configuration to every management role.
 Editors and admins can acquire the sole editing lease and change complete YAML
-skill documents (with diagnostic source labels) and the complete REST
-targets/routes YAML. Add or remove a skill document with the adjacent controls;
+skill documents (with diagnostic source labels), complete REST targets/routes
+YAML and framework execution YAML. Add or remove a skill document with the adjacent controls;
 REST targets and routes remain one text document. URL placeholders such as
-`${REST_BASE_URL}` are kept as authored text. Java skills, deployment settings,
-model connections and destination bindings are outside this editor.
+`${REST_BASE_URL}` are kept as authored text. Execution YAML accepts
+`loomspan.connections`, `models`, `session` and `execution-trace.persistence`.
+Credential fields use external `api-key-ref`, `gemini.credentials-ref` or
+`header-refs`; provision those Spring Environment properties outside the draft.
+Java skills, process settings and deployment destination bindings remain outside this editor.
 
 Edits save automatically to the user's durable draft after a short pause.
 The draft status distinguishes unsent local text, a saved revision and the
@@ -410,7 +417,7 @@ labels and request identifiers grant no access.
 | `POST /api/management/editing/lease/takeover` | `{"label":"Administrator"}` | Admin only; displace a holder while preserving that user's private draft. |
 | `POST /api/management/editing/lease/renew` | `editingSessionId`, `generation` | Explicitly renew a live lease. |
 | `POST /api/management/editing/lease/release` | `editingSessionId`, `generation` | Release editing control and validation proof, retaining saved content. |
-| `PUT /api/management/editing/draft` | Capability, `draftId`, `revision`, `baseSnapshotId`, complete `skillDocuments` and `restRoutesYaml` | Replace the saved content at the current base; increment revision and clear validation. |
+| `PUT /api/management/editing/draft` | Capability, `draftId`, `revision`, `baseSnapshotId`, complete `skillDocuments`, `restRoutesYaml` and `executionConfigurationYaml` | Replace the saved content at the current base; increment revision and clear validation. |
 | `POST /api/management/editing/draft/reconcile` | Same complete body, with the current published `baseSnapshotId` | Explicitly submit a full configuration against the current base after it changes. |
 | `POST /api/management/editing/draft/validate` | Capability, `draftId`, `revision`, `baseSnapshotId` | Validate the exact saved revision without publishing. |
 | `DELETE /api/management/editing/draft` | Capability, `draftId`, `revision`, `baseSnapshotId` | Delete the caller's saved draft and release control. |
@@ -427,8 +434,8 @@ saved content. Malformed requests receive 400, missing/invalid credentials 401,
 and role, token-preset, or browser CSRF denial 403.
 
 There is one saved draft per account in SQLite. It survives logout, credential
-expiry, account changes and restart, including ordered skill documents and REST
-YAML. A new authorized client may read its owner's draft but must acquire a new lease and
+expiry, account changes and restart, including ordered skill documents, REST
+YAML and execution YAML. A new authorized client may read its owner's draft but must acquire a new lease and
 validate again. Validation and lease state are memory-only. The application
 lease defaults to 15 minutes and the login idle limit to 30 minutes. Polling,
 reads, saves, validation and model work do not renew either deadline. Only
@@ -464,28 +471,29 @@ management session and CSRF token; scoped bearer tokens use the same API.
 | `POST /api/management/configuration/publish` | Capability, draft ID/revision/base ID | Publish only the exact successfully validated saved revision, then return the full snapshot. |
 
 A full snapshot contains `localId`, nullable `sourceId`, `submissionSequence`,
-`status`, and `configuration` with authored `skillDocuments` and `restRoutesYaml`.
+`status`, and `configuration` with authored `skillDocuments`, `restRoutesYaml`
+and `executionConfigurationYaml`.
 The framework's validation returns `successful` and issues with `severity`
 (`ERROR` or `WARNING`), `sourceLabel`, optional `skillName` and `location`, and
 `message`. Warning-only results can be published; an error cannot. Every save, including identical content, advances the revision and clears validation.
 Validation is advisory: Publish prepares and stages afresh. Neither validation
 nor inspection renews login or lease inactivity deadlines.
 
-### Current configuration bundle (format 1)
+### Current configuration bundle (format 2)
 
 Use **Download current configuration** on the current-configuration page, or
 `GET /api/management/configuration/export` with a management session or Read-or-higher token. The ZIP is
 a configuration-only backup and promotion artifact. It carries the complete
-authored skill YAML, source labels, and REST routes/targets from the snapshot
+authored skill YAML, source labels, REST routes/targets and execution YAML from the snapshot
 running when export begins. An active empty configuration yields an empty skill
-list and the authored empty REST document. If no runtime snapshot exists, export
+list, the authored empty REST document and `loomspan: {}\n`. If no runtime snapshot exists, export
 is unavailable. The intended database pointer, retained history, private drafts,
-accounts, sessions, leases, environment values, URL allowlists, SMTP/model
-connections, and SSL bundles are excluded. Editors and administrators can import
+accounts, sessions, leases, resolved environment values, URL allowlists, SMTP
+settings, and SSL bundles are excluded. Editors and administrators can import
 this bundle through **Import configuration** or the management API. For full
 installation recovery, use the stopped-instance database backup procedure above.
 
-Import loads the bundle's complete authored skills, routes and targets into
+Import loads the bundle's complete authored skills, routes, targets and execution settings into
 the caller's saved draft. `POST /api/management/configuration/import/review`
 accepts one `bundle` multipart field and returns producer metadata and
 validation feedback without changing state. `POST
@@ -514,18 +522,18 @@ for operator recovery. A bookkeeping failure after activation does not undo the
 running import. Restart follows the committed intended pointer, and admitted
 execution continues with its original generation.
 
-The ZIP contains exactly `manifest.json`, `rest.json`, and one YAML file per
+The ZIP contains exactly `manifest.json`, `rest.json`, `execution.json`, and one YAML file per
 skill under `skills/`. All entry names are fixed or generated, never taken from
-source labels. The `src/test/resources/fixtures/bundles/v1/` directory shows the
-unpacked layout and contains `manifest.schema.json` and `rest.schema.json` for
-the exact JSON fields. The schema files are documentation, not ZIP entries.
-JSON and YAML entry bytes are UTF-8. `rest.json` is
+source labels. The old `src/test/resources/fixtures/bundles/v1/` fixture remains
+only to prove that format 1 is rejected. JSON and YAML entry bytes are UTF-8. `rest.json` is
 `{"restRoutesYaml":"<exact authored YAML>"}`; it retains comments, sensitive
-literals and unresolved placeholders. The manifest schema is:
+literals and unresolved placeholders. `execution.json` is
+`{"executionConfigurationYaml":"<exact authored YAML>"}` and contains reference
+names, never resolved credential values. The manifest structure is:
 
 ```json
 {
-  "formatVersion": 1,
+  "formatVersion": 2,
   "sourceSnapshotId": "<runtime snapshot local UUID>",
   "producer": {
     "sidecarVersion": "<informational version>",
@@ -533,6 +541,7 @@ literals and unresolved placeholders. The manifest schema is:
   },
   "payloads": [
     {"path": "rest.json", "sha256": "<lowercase SHA-256 of exact entry bytes>"},
+    {"path": "execution.json", "sha256": "<lowercase SHA-256 of exact entry bytes>"},
     {"path": "skills/00000.yaml", "sha256": "<lowercase SHA-256>", "sourceLabel": "<original label>"}
   ]
 }
@@ -667,7 +676,7 @@ It also checks stale-base rejection and lease release after publication.
 ## Phase 6 local acceptance (2026-09-19)
 
 Local integration was checked against the developer-installed
-`ai.loomspan:loomspan-spring-boot-starter:1.0.0-beta.5-SNAPSHOT` with these exact
+`ai.loomspan:loomspan-spring-boot-starter:1.0.0-beta.6-SNAPSHOT` with these exact
 commands from the repository root:
 
 ```powershell
@@ -710,9 +719,9 @@ rollback to load a retained snapshot into a draft for later publication. ZIP and
 not restore management accounts or repair an unusable database. Protect the
 database backup and exported ZIP because authored values may contain secrets.
 
-Local acceptance is complete. Framework beta 5 publication remains pending.
+Local integration verification against the installed beta 6 snapshot precedes framework beta 6 publication.
 After framework publication, switch the Sidecar dependency to released
-`1.0.0-beta.5`, then run the final Sidecar build/tests and commit. Hosted CI must
+`1.0.0-beta.6`, then run the final Sidecar build/tests and commit. Hosted CI must
 resolve that published artifact and pass before the Sidecar release. None of
 those release gates, publication steps, commits, or tags are claimed by this
 local acceptance run.
@@ -728,7 +737,7 @@ Error Prone annotations use the transitive dependency version; Sidecar does not
 require a separate annotation-version override.
 
 Push and pull-request CI is prepared to override the dependency with published
-`1.0.0-beta.5` through job-level `MAVEN_ARGS`, including Maven subprocesses
+`1.0.0-beta.6` through job-level `MAVEN_ARGS`, including Maven subprocesses
 launched by the production Compose browser verifier. Local verification keeps
 the POM's snapshot default. Hosted verification is deferred until that artifact exists on
 Maven Central. The delivery order is local Sidecar integration against the
@@ -737,23 +746,23 @@ against the released artifact. This project does not build framework source in
 its own build or CI.
 
 Release tags are exactly `v<project-version>`. The guarded workflow requires a
-non-SNAPSHOT Sidecar version and framework `1.0.0-beta.5`, reruns Maven and image
+non-SNAPSHOT Sidecar version and framework `1.0.0-beta.6`, reruns Maven and image
 verification, then publishes an immutable GHCR version tag and a GitHub release
 containing the executable JAR, a reproducible ZIP archive, and SHA-256 files.
 Local preparation is intentionally nonpublishing:
 
 ```powershell
-python scripts/prepare-release.py --validate-only --project-version 1.0.0-beta.1 --loomspan-version 1.0.0-beta.5 --tag v1.0.0-beta.1
+python scripts/prepare-release.py --validate-only --project-version 1.0.0-beta.1 --loomspan-version 1.0.0-beta.6 --tag v1.0.0-beta.1
 ```
 
 Sidecar development is on `1.0.0-beta.1-SNAPSHOT` for the
 [management console roadmap](../ai/thoughts/phases/2026-09-16-management-console-roadmap.md).
-The framework dependency remains `1.0.0-beta.5-SNAPSHOT`. Final dependency changes,
+The framework dependency remains `1.0.0-beta.6-SNAPSHOT`. Final dependency changes,
 release tags and publication follow the separate release verification workflow;
 the framework must be published and resolvable before final Sidecar verification.
 Sidecar and framework versions advance independently. The first planned Sidecar
 release is `1.0.0-beta.1`, tagged `v1.0.0-beta.1`, bundling framework
-`1.0.0-beta.5`. Historical acceptance evidence retains the versions tested then.
+`1.0.0-beta.6`. Historical acceptance evidence retains the versions tested then.
 
 ## Management personal tokens
 

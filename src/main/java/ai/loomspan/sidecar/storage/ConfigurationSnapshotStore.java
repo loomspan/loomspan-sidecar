@@ -11,6 +11,7 @@ import java.util.UUID;
 public final class ConfigurationSnapshotStore
 {
     public static final String EMPTY_REST_ROUTES = "targets: {}\nroutes: {}\n";
+    public static final String EMPTY_EXECUTION_CONFIGURATION = "loomspan: {}\n";
 
     private final ConfigurationSnapshotRepository repository;
     private final TransactionTemplate transactions;
@@ -42,7 +43,8 @@ public final class ConfigurationSnapshotStore
                 {
                     throw new IllegalStateException("Uninitialized configuration store contains content");
                 }
-                ConfigurationSnapshot empty = repository.insert(new ManagedConfiguration(java.util.List.of(), EMPTY_REST_ROUTES), null);
+                ConfigurationSnapshot empty = repository.insert(new ManagedConfiguration(java.util.List.of(),
+                        EMPTY_REST_ROUTES, EMPTY_EXECUTION_CONFIGURATION), null);
                 repository.setInitialCurrent(empty.submissionSequence());
                 return empty;
             }

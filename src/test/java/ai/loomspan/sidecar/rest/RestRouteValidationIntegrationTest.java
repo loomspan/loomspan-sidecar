@@ -37,7 +37,7 @@ class RestRouteValidationIntegrationTest {
                 description: A REST skill.
                 rest: true
                 input_schema: {type: object, properties: {}}
-                """)), "targets: {}\nroutes: {}\n"), null, a.localId());
+                """)), "targets: {}\nroutes: {}\n", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), null, a.localId());
         assertThatThrownBy(() -> application(database)).hasMessageContaining("Selected configuration activation");
         assertThat(store.current().localId()).isEqualTo(b.localId());
         assertThat(store.current().status()).isEqualTo(ai.loomspan.sidecar.storage.SnapshotStatus.PENDING);
@@ -52,7 +52,7 @@ class RestRouteValidationIntegrationTest {
                 new NamedParameterJdbcTemplate(source)),
                 new TransactionTemplate(new DataSourceTransactionManager(source)));
         var a = store.initialize();
-        store.submit(new ManagedConfiguration(List.of(), "targets: [private-secret"), null, a.localId());
+        store.submit(new ManagedConfiguration(List.of(), "targets: [private-secret", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), null, a.localId());
         assertThatThrownBy(() -> application(database))
                 .hasMessageContaining("Selected configuration activation")
                 .hasMessageNotContaining("private-secret");

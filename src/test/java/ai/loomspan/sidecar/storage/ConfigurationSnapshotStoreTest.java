@@ -34,7 +34,7 @@ class ConfigurationSnapshotStoreTest
         var first = open(path);
         var initial = first.store.current();
         var candidate = new ManagedConfiguration(List.of(new SkillDocument("b.yaml", "name: B\n")),
-                "targets: {b: {base-url: https://b.example}}\nroutes: {}\n");
+                "targets: {b: {base-url: https://b.example}}\nroutes: {}\n", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
         var submitted = first.store.submit(candidate, null, initial.localId());
 
         var reopened = open(path);
@@ -143,7 +143,7 @@ class ConfigurationSnapshotStoreTest
         var a = fixture.store.current();
         var b = fixture.store.submit(new ManagedConfiguration(
                 List.of(new SkillDocument("secret.yaml", "secret: literal-secret-sentinel")),
-                "routes: {secret: literal-secret-sentinel}"), null, a.localId());
+                "routes: {secret: literal-secret-sentinel}", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), null, a.localId());
         new JdbcTemplate(fixture.source).update("DELETE FROM configuration_snapshot_status WHERE snapshot_sequence = ?",
                 b.submissionSequence());
         assertThatThrownBy(() -> open(path)).isInstanceOf(IllegalStateException.class)
@@ -157,7 +157,7 @@ class ConfigurationSnapshotStoreTest
         var predecessor = missingDocument.store.current();
         var selected = missingDocument.store.submit(new ManagedConfiguration(
                 List.of(new SkillDocument("secret.yaml", "secret: literal-secret-sentinel")),
-                "routes: {secret: literal-secret-sentinel}"), null, predecessor.localId());
+                "routes: {secret: literal-secret-sentinel}", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), null, predecessor.localId());
         new JdbcTemplate(missingDocument.source).update(
                 "DELETE FROM configuration_skill_document WHERE snapshot_sequence = ?", selected.submissionSequence());
         assertThatThrownBy(() -> open(missingDocumentPath)).isInstanceOf(IllegalStateException.class)
@@ -262,7 +262,7 @@ class ConfigurationSnapshotStoreTest
         var first = open(path);
         var initial = first.store.initialize();
         assertThat(initial.configuration()).isEqualTo(new ManagedConfiguration(List.of(),
-                ConfigurationSnapshotStore.EMPTY_REST_ROUTES));
+                ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
         assertThat(initial.status()).isEqualTo(SnapshotStatus.PENDING);
         assertThat(count(first.source, "configuration_snapshot")).isEqualTo(1);
         assertThat(count(first.source, "configuration_skill_document")).isZero();
@@ -291,7 +291,7 @@ class ConfigurationSnapshotStoreTest
         DataSource halfSource = StorageConfiguration.dataSource(halfPath);
         StorageConfiguration.migrate(halfSource);
         var repository = new ConfigurationSnapshotRepository(new NamedParameterJdbcTemplate(halfSource));
-        repository.insert(new ManagedConfiguration(List.of(), ""), null);
+        repository.insert(new ManagedConfiguration(List.of(), "", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), null);
         var half = new ConfigurationSnapshotStore(repository,
                 new TransactionTemplate(new DataSourceTransactionManager(halfSource)));
         assertThatThrownBy(half::initialize).isInstanceOf(IllegalStateException.class);
@@ -324,7 +324,7 @@ class ConfigurationSnapshotStoreTest
         jdbc.execute("CREATE TRIGGER fail_document BEFORE INSERT ON configuration_skill_document "
                 + "WHEN NEW.ordinal = 1 BEGIN SELECT RAISE(ABORT, 'forced document failure'); END");
         var content = new ManagedConfiguration(List.of(new SkillDocument("a", "a"),
-                new SkillDocument("b", "b")), "routes: {}\n");
+                new SkillDocument("b", "b")), "routes: {}\n", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
         var initial = store.current();
         assertThatThrownBy(() -> store.submit(content, null, initial.localId())).isInstanceOf(RuntimeException.class);
         assertThat(count(source, "configuration_snapshot")).isEqualTo(1);
@@ -380,11 +380,12 @@ class ConfigurationSnapshotStoreTest
                 }
             }
             first.setAutoCommit(false);
-            first.createStatement().executeUpdate("INSERT INTO configuration_snapshot(local_id, document_count, rest_routes_yaml) "
-                    + "VALUES ('held', 0, '')");
+            first.createStatement().executeUpdate("INSERT INTO configuration_snapshot(local_id, document_count, "
+                    + "rest_routes_yaml, execution_configuration_yaml) VALUES ('held', 0, '', 'loomspan: {}')");
             long start = System.nanoTime();
             assertThatThrownBy(() -> second.createStatement().executeUpdate("INSERT INTO configuration_snapshot"
-                    + "(local_id, document_count, rest_routes_yaml) VALUES ('blocked', 0, '')"))
+                    + "(local_id, document_count, rest_routes_yaml, execution_configuration_yaml) "
+                    + "VALUES ('blocked', 0, '', 'loomspan: {}')"))
                     .isInstanceOf(java.sql.SQLException.class);
             long elapsed = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
             assertThat(elapsed).isBetween(4000L, 15000L);
@@ -422,7 +423,7 @@ class ConfigurationSnapshotStoreTest
     private ManagedConfiguration content(String version)
     {
         return new ManagedConfiguration(List.of(new SkillDocument(version + ".yaml", "name: " + version + "\n")),
-                "targets: {" + version + ": {base-url: https://" + version + ".example}}\nroutes: {}\n");
+                "targets: {" + version + ": {base-url: https://" + version + ".example}}\nroutes: {}\n", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
     }
 
     private void copyDatabaseSet(Path source, Path destination) throws Exception

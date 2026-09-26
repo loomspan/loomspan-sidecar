@@ -16,7 +16,8 @@ public final class ManagementEditingController {
     public record Capability(UUID editingSessionId, UUID generation) {}
     public record Candidate(UUID editingSessionId, UUID generation, UUID draftId, long revision, UUID baseSnapshotId) {}
     public record Save(UUID editingSessionId, UUID generation, UUID draftId, long revision,
-            UUID baseSnapshotId, List<SkillDocument> skillDocuments, String restRoutesYaml) {}
+            UUID baseSnapshotId, List<SkillDocument> skillDocuments, String restRoutesYaml,
+            String executionConfigurationYaml) {}
 
     private final ManagementEditingService editing;
     public ManagementEditingController(ManagementEditingService editing) { this.editing = editing; }
@@ -88,9 +89,11 @@ public final class ManagementEditingController {
     }
 
     private static ManagedConfiguration content(Save body) {
-        if (body.skillDocuments() == null || body.restRoutesYaml() == null)
+        if (body.skillDocuments() == null || body.restRoutesYaml() == null
+                || body.executionConfigurationYaml() == null)
             throw new IllegalArgumentException("Complete configuration required");
-        return new ManagedConfiguration(body.skillDocuments(), body.restRoutesYaml());
+        return new ManagedConfiguration(body.skillDocuments(), body.restRoutesYaml(),
+                body.executionConfigurationYaml());
     }
 
     private static String label(Map<String, Object> body) {

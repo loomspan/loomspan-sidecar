@@ -31,7 +31,7 @@ class ConfigurationSnapshotRepositoryTest
         String rest = "# authored\ntargets:\n  customer:\n    base-url: ${CUSTOMER_API_URL}\n"
                 + "    auth: {mode: static, headers: {X-Secret: literal-secret-sentinel}}\nroutes: {}\n";
         var configuration = new ManagedConfiguration(List.of(new SkillDocument("a.yaml", skills),
-                new SkillDocument("B.yml", "name: callback\nrest: true\n")), rest);
+                new SkillDocument("B.yml", "name: callback\nrest: true\n")), rest, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
         ConfigurationSnapshot written = first.store.submit(configuration, source, first.store.current().localId());
 
         StoreFixture reopened = open(file);
@@ -48,17 +48,17 @@ class ConfigurationSnapshotRepositoryTest
     @Test
     void rejectsInvalidDocumentLabelsAndNullContent()
     {
-        assertThatThrownBy(() -> new ManagedConfiguration(null, "")).isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new ManagedConfiguration(List.of(), null)).isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new ManagedConfiguration(java.util.Arrays.asList((SkillDocument) null), ""))
+        assertThatThrownBy(() -> new ManagedConfiguration(null, "", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new ManagedConfiguration(List.of(), null, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new ManagedConfiguration(java.util.Arrays.asList((SkillDocument) null), "", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION))
                 .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new ManagedConfiguration(List.of(new SkillDocument(" ", "")), ""))
+        assertThatThrownBy(() -> new ManagedConfiguration(List.of(new SkillDocument(" ", "")), "", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new ManagedConfiguration(List.of(new SkillDocument("same", ""),
-                new SkillDocument("same", "")), "")).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new ManagedConfiguration(List.of(new SkillDocument("x", null)), ""))
+                new SkillDocument("same", "")), "", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new ManagedConfiguration(List.of(new SkillDocument("x", null)), "", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThat(new ManagedConfiguration(List.of(new SkillDocument("x", ""), new SkillDocument("X", "")), "")
+        assertThat(new ManagedConfiguration(List.of(new SkillDocument("x", ""), new SkillDocument("X", "")), "", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION)
                 .skillDocuments()).hasSize(2);
     }
 
@@ -67,7 +67,7 @@ class ConfigurationSnapshotRepositoryTest
     {
         StoreFixture fixture = open(directory.resolve("identity.db"));
         var mutable = new ArrayList<>(List.of(new SkillDocument("one.yaml", "first\n")));
-        var configuration = new ManagedConfiguration(mutable, "targets: {}\nroutes: {}\n");
+        var configuration = new ManagedConfiguration(mutable, "targets: {}\nroutes: {}\n", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
         mutable.clear();
         UUID source = UUID.randomUUID();
         var one = fixture.store.submit(configuration, source, fixture.store.current().localId());
@@ -98,9 +98,9 @@ class ConfigurationSnapshotRepositoryTest
         StoreFixture fixture = open(directory.resolve("status-recording.db"));
         var initial = fixture.store.current();
         var a = fixture.store.submit(new ManagedConfiguration(List.of(new SkillDocument("a", "name: A")),
-                "routes: {a: true}"), null, initial.localId());
+                "routes: {a: true}", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), null, initial.localId());
         var b = fixture.store.submit(new ManagedConfiguration(List.of(new SkillDocument("b", "name: B")),
-                "routes: {b: true}"), null, a.localId());
+                "routes: {b: true}", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), null, a.localId());
         fixture.store.updateStatus(b.localId(), SnapshotStatus.PUBLISHED);
         assertThat(fixture.store.current().localId()).isEqualTo(b.localId());
         assertThat(fixture.store.current().configuration()).isEqualTo(b.configuration());

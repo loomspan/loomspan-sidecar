@@ -14,7 +14,7 @@
     <maven.compiler.release>${java.version}</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <spring-boot.version>4.1.0</spring-boot.version>
-    <loomspan.version>1.0.0-beta.5-SNAPSHOT</loomspan.version>
+    <loomspan.version>1.0.0-beta.6-SNAPSHOT</loomspan.version>
     <archunit.version>1.4.1</archunit.version>
     <bouncycastle.version>1.81</bouncycastle.version>
   </properties>
@@ -170,8 +170,8 @@
                     <requireReleaseDeps />
                     <requireProperty>
                       <property>loomspan.version</property>
-                      <regex>1\.0\.0-beta\.5</regex>
-                      <regexMessage>Release requires Loomspan 1.0.0-beta.5 exactly.</regexMessage>
+                      <regex>1\.0\.0-beta\.6</regex>
+                      <regexMessage>Release requires Loomspan 1.0.0-beta.6 exactly.</regexMessage>
                     </requireProperty>
                   </rules>
                 </configuration>

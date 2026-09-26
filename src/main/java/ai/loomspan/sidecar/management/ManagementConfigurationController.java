@@ -1,7 +1,7 @@
 package ai.loomspan.sidecar.management;
 
 import ai.loomspan.sidecar.configuration.RuntimeConfigurationService;
-import ai.loomspan.sidecar.bundle.ConfigurationBundleV1;
+import ai.loomspan.sidecar.bundle.ConfigurationBundleV2;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshot;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -59,7 +59,7 @@ public final class ManagementConfigurationController {
             throw new ExportUnavailable();
         }
         Path bundle;
-        bundle = ConfigurationBundleV1.write(captured);
+        bundle = ConfigurationBundleV2.write(captured);
         StreamingResponseBody body = output -> {
             try { Files.copy(bundle, output); }
             finally { Files.deleteIfExists(bundle); }
@@ -86,19 +86,19 @@ public final class ManagementConfigurationController {
                 "error", "Configuration export could not be prepared"));
     }
 
-    @ExceptionHandler(ConfigurationBundleV1.BundleTooLarge.class)
+    @ExceptionHandler(ConfigurationBundleV2.BundleTooLarge.class)
     ResponseEntity<Map<String, String>> bundleTooLarge(HttpServletRequest request) {
         boolean imported = request.getRequestURI().contains("/import/");
         return ResponseEntity.status(413).header(HttpHeaders.CACHE_CONTROL, "no-store")
                 .body(Map.of("code", imported ? "import_too_large" : "export_too_large",
-                        "error", imported ? "Uploaded bundle exceeds format 1 limits"
-                                : "Runtime configuration exceeds format 1 bundle limits"));
+                        "error", imported ? "Uploaded bundle exceeds format 2 limits"
+                                : "Runtime configuration exceeds format 2 bundle limits"));
     }
 
     @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
     ResponseEntity<Map<String, String>> multipartTooLarge() {
         return ResponseEntity.status(413).header(HttpHeaders.CACHE_CONTROL, "no-store")
-                .body(Map.of("code", "import_too_large", "error", "Uploaded bundle exceeds format 1 limits"));
+                .body(Map.of("code", "import_too_large", "error", "Uploaded bundle exceeds format 2 limits"));
     }
 
     @GetMapping("/history")
@@ -174,7 +174,7 @@ public final class ManagementConfigurationController {
                 .body(Map.of("code", "invalid_upload", "error", "Exactly one valid bundle upload is required"));
     }
 
-    @ExceptionHandler(ConfigurationBundleV1.InvalidBundle.class)
+    @ExceptionHandler(ConfigurationBundleV2.InvalidBundle.class)
     ResponseEntity<Map<String, String>> invalidBundle() {
         return ResponseEntity.badRequest().header(HttpHeaders.CACHE_CONTROL, "no-store")
                 .body(Map.of("code", "invalid_bundle", "error", "Bundle format or content is invalid"));

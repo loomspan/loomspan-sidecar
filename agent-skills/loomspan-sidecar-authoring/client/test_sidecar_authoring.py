@@ -135,8 +135,8 @@ class ClientTest(unittest.TestCase):
             ("acquire", "POST", "/editing/lease", None),
             ("renew", "POST", "/editing/lease/renew", '{"editingSessionId":"one","generation":"two"}'),
             ("release", "POST", "/editing/lease/release", '{"editingSessionId":"one","generation":"two"}'),
-            ("save", "PUT", "/editing/draft", '{"revision":3,"skillDocuments":[],"restRoutesYaml":"targets: {}"}'),
-            ("reconcile", "POST", "/editing/draft/reconcile", '{"revision":3,"skillDocuments":[],"restRoutesYaml":"targets: {}"}'),
+            ("save", "PUT", "/editing/draft", '{"revision":3,"skillDocuments":[],"restRoutesYaml":"targets: {}","executionConfigurationYaml":"loomspan: {}\\n"}'),
+            ("reconcile", "POST", "/editing/draft/reconcile", '{"revision":3,"skillDocuments":[],"restRoutesYaml":"targets: {}","executionConfigurationYaml":"loomspan: {}\\n"}'),
             ("validate", "POST", "/editing/draft/validate", '{"revision":3}'),
             ("publish", "POST", "/configuration/publish", '{"revision":3}'),
         ]

@@ -33,7 +33,8 @@ class MountedSkillRegistrationIntegrationTest
 
         ai.loomspan.sidecar.support.SidecarApplicationFixture.seedDatabase(temporaryDirectory.resolve("sidecar.db"),
                 List.of(skills.resolve("mounted.yaml"), skills.resolve("nested/mounted.yml")),
-                ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_REST_ROUTES);
+                ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_REST_ROUTES,
+                modelExecutionYaml());
         try (var context = runApplication(modelProperties()))
         {
             var catalog = context.getBean(SkillReloader.class).snapshot();
@@ -52,7 +53,8 @@ class MountedSkillRegistrationIntegrationTest
 
         ai.loomspan.sidecar.support.SidecarApplicationFixture.seedDatabase(temporaryDirectory.resolve("sidecar.db"),
                 List.of(custom.resolve("only.yml")),
-                ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_REST_ROUTES);
+                ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_REST_ROUTES,
+                modelExecutionYaml());
         try (var context = runApplication(modelProperties()))
         {
             assertThat(context.getBean(SkillReloader.class).snapshot().skills())
@@ -118,6 +120,20 @@ class MountedSkillRegistrationIntegrationTest
                 "loomspan.connections.fixture.base-url=http://127.0.0.1:9",
                 "loomspan.models.fixture-model.connection=fixture",
                 "loomspan.models.fixture-model.provider-model=fixture-provider-model");
+    }
+
+    private static String modelExecutionYaml() {
+        return """
+                loomspan:
+                  connections:
+                    fixture:
+                      driver: ollama
+                      base-url: http://127.0.0.1:9
+                  models:
+                    fixture-model:
+                      connection: fixture
+                      provider-model: fixture-provider-model
+                """;
     }
 
     private static void copyFixture(String resource, Path destination) throws IOException

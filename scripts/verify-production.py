@@ -154,9 +154,21 @@ def publish_fixture(opener, origin, csrf):
         skill_documents.append({"sourceName": filename, "yaml": yaml})
     routes = (fixture / "rest-routes.yaml").read_text().replace(
         "${QUICKSTART_HOST_URL:http://host:8081}", "${TARGET_URL}")
+    execution = """loomspan:
+  connections:
+    primary:
+      driver: openai
+      base-url: http://host:8081/v1
+      api-key-ref: provider.primary.key
+  models:
+    primary:
+      connection: primary
+      provider-model: deterministic-planner
+"""
     saved = json.loads(need(*send(opener, origin + "/api/management/editing/draft", "PUT",
                                  {**cap,
-                                  "skillDocuments": skill_documents, "restRoutesYaml": routes}, csrf), 200))
+                                  "skillDocuments": skill_documents, "restRoutesYaml": routes,
+                                  "executionConfigurationYaml": execution}, csrf), 200))
     published = publish_draft(opener, origin, csrf, candidate(cap, saved))
     assert published["localId"]
     return published["localId"]
@@ -210,8 +222,7 @@ def main():
             "CADDY_CONFIG_FILE": str(ROOT / "examples/production/Caddyfile.internal"),
             "JWT_PUBLIC_KEY_FILE": str(ROOT / "examples/quickstart/host/public.pem"),
             "JWT_ISSUER_URI": "http://host:8081", "JWT_AUDIENCE": "loomspan-sidecar",
-            "MODEL_DRIVER": "openai", "MODEL_BASE_URL": "http://host:8081/v1",
-            "MODEL_API_KEY": "fixture-only", "MODEL_NAME": "deterministic-planner",
+            "PROVIDER_PRIMARY_KEY": "fixture-only",
             "SETUP_TOKEN": "", "SMTP_FROM": "", "EXTERNAL_BASE_URL": origin,
             "SMTP_HOST": "", "SMTP_PORT": "2525", "SMTP_USERNAME": "", "SMTP_PASSWORD": "",
             "SMTP_AUTH": "false", "SMTP_STARTTLS": "false", "URL_VARIABLES": "TARGET_URL",
@@ -413,6 +424,7 @@ def main():
                 manifest = json.loads(archive.read("manifest.json"))
                 assert manifest["sourceSnapshotId"] == snapshot
                 assert "${TARGET_URL}" in json.loads(archive.read("rest.json"))["restRoutesYaml"]
+                assert "provider.primary.key" in json.loads(archive.read("execution.json"))["executionConfigurationYaml"]
                 assert not any("account" in name or "history" in name for name in archive.namelist())
                 assert len([name for name in archive.namelist() if name.startswith("skills/")]) == 3
 

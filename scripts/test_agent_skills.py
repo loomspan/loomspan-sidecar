@@ -77,7 +77,7 @@ class SidecarAgentSkillsTest(unittest.TestCase):
                 elif mutation == "version":
                     text = text.replace('loomspan-version: "1.0.0-beta.1-SNAPSHOT"', 'loomspan-version: "0.0.0"')
                 elif mutation == "framework":
-                    text = text.replace('loomspan-framework-version: "1.0.0-beta.5-SNAPSHOT"', 'loomspan-framework-version: "0.0.0"')
+                    text = text.replace('loomspan-framework-version: "1.0.0-beta.6-SNAPSHOT"', 'loomspan-framework-version: "0.0.0"')
                 elif mutation == "absent-marker":
                     text = text.replace("  loomspan-component: sidecar\n", "")
                 else:
@@ -101,6 +101,21 @@ class SidecarAgentSkillsTest(unittest.TestCase):
         self.assertFalse((ROOT / "examples/remote-authoring").exists())
         self.assertIn("name: readRecord", (example / "record.yaml").read_text())
         self.assertIn("  readRecord:", (example / "rest-routes.yaml").read_text())
+
+    def test_execution_authoring_guidance_uses_shared_console_workflow(self):
+        skill = (BUNDLE / "SKILL.md").read_text(encoding="utf-8")
+        client = (BUNDLE / "references/client-usage.md").read_text(encoding="utf-8")
+        execution = (BUNDLE / "references/execution-configuration.md").read_text(encoding="utf-8")
+        for text in (skill, client, execution):
+            self.assertIn("executionConfigurationYaml", text)
+        for action in ("read", "save", "validate", "publish"):
+            self.assertIn(action, skill.lower())
+        self.assertIn("api-key-ref", execution)
+        self.assertIn("process settings", execution)
+        integration = (BUNDLE / "references/integration.md").read_text(encoding="utf-8")
+        self.assertIn("api-key-ref: provider.primary.key", integration)
+        self.assertIn("execution settings", integration)
+        self.assertNotIn("api-key: ${MODEL_API_KEY}", integration)
 
     def test_detached_client_from_unrelated_cwd(self):
         requests = []

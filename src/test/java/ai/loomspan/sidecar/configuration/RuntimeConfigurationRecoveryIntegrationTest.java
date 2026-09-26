@@ -165,7 +165,7 @@ class RuntimeConfigurationRecoveryIntegrationTest {
         var a = store.current();
         var selected = store.submit(new ManagedConfiguration(List.of(new SkillDocument("invalid-skill.yaml",
                 "name: invalidSkill\nrest: true\nsecret: private-value\n")),
-                ConfigurationSnapshotStore.EMPTY_REST_ROUTES), null, a.localId());
+                ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), null, a.localId());
         assertThatThrownBy(() -> start(database))
                 .hasMessageContaining("skill preparation", "invalid-skill.yaml")
                 .hasMessageNotContaining("private-value");
@@ -212,7 +212,7 @@ class RuntimeConfigurationRecoveryIntegrationTest {
     }
 
     private ManagedConfiguration content(String label) {
-        return new ManagedConfiguration(List.of(), "# " + label + "\n" + ConfigurationSnapshotStore.EMPTY_REST_ROUTES);
+        return new ManagedConfiguration(List.of(), "# " + label + "\n" + ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
     }
 
     private ConfigurationSnapshotStore open(Path path) {

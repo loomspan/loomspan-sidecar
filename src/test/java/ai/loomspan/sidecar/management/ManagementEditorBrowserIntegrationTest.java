@@ -68,9 +68,12 @@ class ManagementEditorBrowserIntegrationTest {
             waitText(second, "editor-message", "Saved draft and published configuration loaded.");
             first.locator("#editor-acquire").click();
             waitText(first, "editor-owner", "You hold editing control.");
+            first.locator("#editor-execution").fill("loomspan: {}\n# saved-execution\n");
+            waitText(first, "editor-save", "Saved draft revision");
             first.locator("#editor-rest").fill("targets: {}\nroutes: {}\n# saved-from-first\n");
             waitText(first, "editor-save", "Saved draft revision");
             second.waitForFunction("() => document.getElementById('editor-rest').value.includes('saved-from-first')");
+            assertThat(second.locator("#editor-execution").inputValue()).contains("saved-execution");
             assertThat(second.locator("#editor-rest").isEditable()).isFalse();
             first.route("**/api/management/editing/draft", route -> {
                 if (route.request().method().equals("PUT")) route.fulfill(new com.microsoft.playwright.Route.FulfillOptions()

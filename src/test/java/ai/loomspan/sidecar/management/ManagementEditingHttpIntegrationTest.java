@@ -66,6 +66,25 @@ class ManagementEditingHttpIntegrationTest {
 
     @BeforeEach void reset() { synchronized (state) { state.clearLease(); } clock.reset(); }
 
+    @Test void completeExecutionYamlIsRequiredAndSavedUnchanged() throws Exception {
+        String email = "execution-" + UUID.randomUUID() + "@example.test";
+        seed(email, "editor");
+        Browser client = login(email);
+        JsonNode grant = ok(client.post("/api/management/editing/lease", "{\"label\":\"Execution\"}"));
+        JsonNode draft = grant.path("draft");
+        var incomplete = (com.fasterxml.jackson.databind.node.ObjectNode)
+                mapper.readTree(save(grant, draft, "# settings"));
+        incomplete.remove("executionConfigurationYaml");
+        assertThat(client.put("/api/management/editing/draft", incomplete.toString()).statusCode())
+                .isEqualTo(400);
+        incomplete.put("executionConfigurationYaml", "loomspan: {}\n# exact authored settings\n");
+        JsonNode saved = ok(client.put("/api/management/editing/draft", incomplete.toString()));
+        assertThat(saved.path("configuration").path("executionConfigurationYaml").asText())
+                .isEqualTo("loomspan: {}\n# exact authored settings\n");
+        assertThat(ok(client.get("/api/management/editing/draft")).path("configuration")
+                .path("executionConfigurationYaml").asText()).isEqualTo("loomspan: {}\n# exact authored settings\n");
+    }
+
     @Test void sharedPrivateDraftSurvivesLogoutAndHandoffRejectsDelayedWrite() throws Exception {
         String email = "owner-" + UUID.randomUUID() + "@example.test";
         String foreign = "foreign-" + UUID.randomUUID() + "@example.test";
@@ -232,7 +251,8 @@ class ManagementEditingHttpIntegrationTest {
         return mapper.writeValueAsString(Map.of("editingSessionId", grant.path("editingSessionId").asText(),
                 "generation", grant.path("generation").asText(), "draftId", draft.path("draftId").asText(),
                 "revision", draft.path("revision").asLong(), "baseSnapshotId", baseId,
-                "skillDocuments", java.util.List.of(), "restRoutesYaml", "targets: {}\nroutes: {}\n" + marker + "\n"));
+                "skillDocuments", java.util.List.of(), "restRoutesYaml", "targets: {}\nroutes: {}\n" + marker + "\n",
+                "executionConfigurationYaml", "loomspan: {}\n"));
     }
     private final class Browser {
         private final HttpClient client = HttpClient.newBuilder().cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ALL))

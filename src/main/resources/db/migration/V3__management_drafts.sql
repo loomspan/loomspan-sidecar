@@ -5,7 +5,8 @@ CREATE TABLE management_draft (
     source_snapshot_id TEXT,
     revision INTEGER NOT NULL CHECK (revision > 0),
     document_count INTEGER NOT NULL CHECK (document_count >= 0),
-    rest_routes_yaml TEXT NOT NULL
+    rest_routes_yaml TEXT NOT NULL,
+    execution_configuration_yaml TEXT NOT NULL
 );
 
 CREATE TABLE management_draft_document (

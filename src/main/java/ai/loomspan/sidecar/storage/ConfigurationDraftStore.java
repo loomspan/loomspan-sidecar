@@ -23,10 +23,11 @@ public final class ConfigurationDraftStore {
     public Saved read(long accountId) {
         return transactions.execute(ignored -> {
             var rows = jdbc.query("SELECT draft_id, base_snapshot_id, source_snapshot_id, revision, "
-                    + "document_count, rest_routes_yaml FROM management_draft WHERE account_id = ?",
+                    + "document_count, rest_routes_yaml, execution_configuration_yaml "
+                    + "FROM management_draft WHERE account_id = ?",
                     (rs, row) -> new Header(UUID.fromString(rs.getString(1)), UUID.fromString(rs.getString(2)),
                             rs.getString(3) == null ? null : UUID.fromString(rs.getString(3)),
-                            rs.getLong(4), rs.getInt(5), rs.getString(6)), accountId);
+                            rs.getLong(4), rs.getInt(5), rs.getString(6), rs.getString(7)), accountId);
             if (rows.isEmpty()) return null;
             Header header = rows.getFirst();
             var documents = jdbc.query("SELECT ordinal, label, yaml FROM management_draft_document "
@@ -37,16 +38,19 @@ public final class ConfigurationDraftStore {
             for (int i = 0; i < documents.size(); i++)
                 if (documents.get(i).ordinal != i) throw new IllegalStateException("Invalid saved draft document order");
             return new Saved(accountId, header.id, header.baseId, header.sourceId, header.revision,
-                    new ManagedConfiguration(documents.stream().map(Document::content).toList(), header.rest));
+                    new ManagedConfiguration(documents.stream().map(Document::content).toList(),
+                            header.rest, header.execution));
         });
     }
 
     public Saved createIfAbsent(long accountId, ConfigurationSnapshot base) {
         transactions.executeWithoutResult(ignored -> {
             int inserted = jdbc.update("INSERT OR IGNORE INTO management_draft(account_id, draft_id, base_snapshot_id, "
-                    + "source_snapshot_id, revision, document_count, rest_routes_yaml) VALUES (?, ?, ?, NULL, 1, ?, ?)",
+                    + "source_snapshot_id, revision, document_count, rest_routes_yaml, "
+                    + "execution_configuration_yaml) VALUES (?, ?, ?, NULL, 1, ?, ?, ?)",
                     accountId, UUID.randomUUID().toString(), base.localId().toString(),
-                    base.configuration().skillDocuments().size(), base.configuration().restRoutesYaml());
+                    base.configuration().skillDocuments().size(), base.configuration().restRoutesYaml(),
+                    base.configuration().executionConfigurationYaml());
             if (inserted == 1) insertDocuments(accountId, base.configuration());
         });
         return read(accountId);
@@ -57,10 +61,12 @@ public final class ConfigurationDraftStore {
         Objects.requireNonNull(configuration);
         transactions.executeWithoutResult(ignored -> {
             int changed = jdbc.update("UPDATE management_draft SET base_snapshot_id = ?, source_snapshot_id = ?, "
-                    + "revision = revision + 1, document_count = ?, rest_routes_yaml = ? "
+                    + "revision = revision + 1, document_count = ?, rest_routes_yaml = ?, "
+                    + "execution_configuration_yaml = ? "
                     + "WHERE account_id = ? AND draft_id = ? AND revision = ? AND base_snapshot_id = ?",
                     nextBaseId.toString(), sourceId == null ? null : sourceId.toString(),
                     configuration.skillDocuments().size(), configuration.restRoutesYaml(),
+                    configuration.executionConfigurationYaml(),
                     accountId, draftId.toString(), expectedRevision, expectedBaseId.toString());
             if (changed != 1) throw new IllegalStateException("Saved draft changed");
             jdbc.update("DELETE FROM management_draft_document WHERE account_id = ?", accountId);
@@ -82,6 +88,7 @@ public final class ConfigurationDraftStore {
                     accountId, i, documents.get(i).sourceName(), documents.get(i).yaml());
     }
 
-    private record Header(UUID id, UUID baseId, UUID sourceId, long revision, int count, String rest) {}
+    private record Header(UUID id, UUID baseId, UUID sourceId, long revision, int count,
+            String rest, String execution) {}
     private record Document(int ordinal, SkillDocument content) {}
 }

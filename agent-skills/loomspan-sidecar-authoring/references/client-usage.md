@@ -28,11 +28,12 @@ Sample save body (use actual IDs, revision and complete content from fresh reads
   "revision": 1,
   "baseSnapshotId": "<current snapshot ID>",
   "skillDocuments": [{"sourceName": "records.yaml", "yaml": "name: readRecord\ndescription: Read an owned record\nrest: true\n"}],
-  "restRoutesYaml": "targets: {}\nroutes: {}\n"
+  "restRoutesYaml": "targets: {}\nroutes: {}\n",
+  "executionConfigurationYaml": "loomspan: {}\n"
 }
 ```
 
-The `validate` and `publish` bodies contain only the first five fields. Save and reconcile replace the **whole** candidate; neither merges changes. Import load also uses exactly those five fields. The submitted base for reconcile must be the current published base after reviewing both configurations. Validation proof is tied to the saved revision, base, and lease generation; after a handoff, validate again before publication.
+The `validate` and `publish` bodies contain only the first five fields. Save and reconcile replace the **whole** candidate, including execution YAML; neither merges changes. Import load also uses exactly those five fields. The submitted base for reconcile must be the current published base after reviewing both configurations. Validation proof is tied to the saved revision, base, and lease generation; after a handoff, validate again before publication. Use the same client to read current, read your private draft, save, validate, publish, and read current again to verify the selected snapshot.
 
 An Edit token can save and validate, then the same user signs into the console, reads the saved draft, explicitly takes control, revalidates and publishes. A Publish token can run `handoff`, `validate`, and `publish` directly. The server enforces both paths; labels and IDs alone never grant authority.
 

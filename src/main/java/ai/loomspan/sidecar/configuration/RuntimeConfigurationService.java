@@ -1,6 +1,7 @@
 package ai.loomspan.sidecar.configuration;
 
 import ai.loomspan.api.PreparedSkillUpdate;
+import ai.loomspan.api.ExecutionConfiguration;
 import ai.loomspan.api.SkillReloader;
 import ai.loomspan.api.SkillValidationIssue;
 import ai.loomspan.sidecar.execution.ExecutionCoordinator;
@@ -87,10 +88,11 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
             intendedId = selected.localId();
             intendedStatus = selected.status();
             String generation = null;
+            PreparedSkillUpdate prepared = null;
             String phase = "skill preparation";
             try {
                 hooks.beforeStartupActivation();
-                PreparedSkillUpdate prepared = prepare(selected.configuration());
+                prepared = prepare(selected.configuration());
                 phase = "REST staging";
                 GenerationRestResources.Resources staged = stage(prepared, selected.configuration());
                 generation = prepared.generationId();
@@ -117,6 +119,8 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                 throw new IllegalStateException("Selected configuration activation or bookkeeping failed for "
                         + selected.localId() + " during " + phase + location
                         + "; inspect the database selection and restore a consistent backup if needed");
+            } finally {
+                if (published == null && prepared != null) prepared.close();
             }
         } finally {
             publication.unlock();
@@ -124,7 +128,14 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     }
 
     public ConfigurationValidationResult validate(ManagedConfiguration configuration) {
-        var checked = reloader.validate(configuration.skillDocuments());
+        ai.loomspan.api.SkillValidationResult checked;
+        try {
+            checked = reloader.validate(configuration.skillDocuments(), execution(configuration));
+        } catch (RuntimeException failure) {
+            return new ConfigurationValidationResult(false, List.of(new ConfigurationValidationIssue(
+                    ConfigurationValidationIssue.Severity.ERROR, "execution-configuration.yaml",
+                    null, null, "Execution configuration validation failed")));
+        }
         var issues = new java.util.ArrayList<ConfigurationValidationIssue>();
         checked.issues().forEach(issue -> issues.add(new ConfigurationValidationIssue(
                 issue.severity() == SkillValidationIssue.Severity.WARNING
@@ -132,11 +143,16 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                 issue.sourceName(), issue.skillName(), issue.fieldPath(), issue.message())));
         if (!checked.valid()) return new ConfigurationValidationResult(false, issues);
         GenerationRestResources.Resources staged = null;
+        boolean frameworkPrepared = false;
         try {
+            try (PreparedSkillUpdate ignored = prepare(configuration)) {
+                // Resolve external references and verify provider construction without activation.
+            }
+            frameworkPrepared = true;
             staged = resources.prepare(configuration.restRoutesYaml());
             routes.validateCandidate(staged.routes(), checked.skills());
         } catch (RuntimeException failure) {
-            issues.add(validationIssue(failure));
+            issues.add(frameworkPrepared ? validationIssue(failure) : skillValidationIssue(failure, configuration));
         } finally {
             if (staged != null) resources.release(staged);
         }
@@ -166,19 +182,21 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     private ConfigurationSnapshot publishCandidate(ManagedConfiguration configuration, UUID sourceId,
             UUID predecessor, PublicationAdmission admission) {
 
-            PreparedSkillUpdate prepared;
+            PreparedSkillUpdate prepared = null;
             GenerationRestResources.Resources staged;
             try {
                 hooks.beforePreparation();
                 prepared = prepare(configuration);
                 staged = stage(prepared, configuration);
             } catch (RuntimeException failure) {
+                if (prepared != null) prepared.close();
                 throw new PublicationFailure("preparation_failed", "Configuration preparation failed before activation");
             }
             String generation = prepared.generationId();
             try { resources.stage(generation, staged, null); }
             catch (RuntimeException failure) {
                 resources.release(staged);
+                prepared.close();
                 throw new PublicationFailure("preparation_failed", "Configuration preparation failed before activation");
             }
             ConfigurationSnapshot submitted;
@@ -187,6 +205,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                 submitted = store.submit(configuration, sourceId, predecessor);
             } catch (RuntimeException failure) {
                 resources.discard(generation);
+                prepared.close();
                 pruneAfterAttempt();
                 LOG.warn("Configuration commit failed before framework publication; runtime remains {}", predecessor);
                 throw new PublicationFailure("commit_failed", "Configuration commit failed before runtime publication");
@@ -206,6 +225,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                 }
             } catch (RuntimeException failure) {
                 resources.discard(generation);
+                prepared.close();
                 try {
                     hooks.beforeRevert();
                     store.revert(submitted.localId(), predecessor);
@@ -312,7 +332,11 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     }
 
     private PreparedSkillUpdate prepare(ManagedConfiguration configuration) {
-        return reloader.prepare(configuration.skillDocuments());
+        return reloader.prepare(configuration.skillDocuments(), execution(configuration));
+    }
+
+    private ExecutionConfiguration execution(ManagedConfiguration configuration) {
+        return new ExecutionConfiguration(configuration.executionConfigurationYaml());
     }
 
     private GenerationRestResources.Resources stage(PreparedSkillUpdate prepared, ManagedConfiguration configuration) {
@@ -378,6 +402,18 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     }
 
     private ConfigurationValidationIssue skillValidationIssue(RuntimeException failure, ManagedConfiguration configuration) {
+        Throwable cause = failure;
+        while (cause != null) {
+            String message = cause.getMessage();
+            if (message != null && message.endsWith(" references a missing or blank external property")) {
+                String path = message.substring(0, message.indexOf(" references"));
+                if (path.matches("[A-Za-z0-9_.\\[\\]-]+"))
+                    return new ConfigurationValidationIssue(ConfigurationValidationIssue.Severity.ERROR,
+                            "execution-configuration.yaml", null, path,
+                            "External property reference is missing or blank");
+            }
+            cause = cause.getCause();
+        }
         return new ConfigurationValidationIssue(ConfigurationValidationIssue.Severity.ERROR,
                 "candidate", null, null, "Skill preparation failed");
     }

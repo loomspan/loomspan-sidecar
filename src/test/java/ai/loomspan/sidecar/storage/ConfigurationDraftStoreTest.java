@@ -24,12 +24,12 @@ class ConfigurationDraftStoreTest {
         long b = new ManagementAccountRepository(jdbc).insert("b@example.test", "editor", 1);
         var store = new ConfigurationDraftStore(jdbc, new TransactionTemplate(new DataSourceTransactionManager(data)));
         var snapshot = new ConfigurationSnapshot(java.util.UUID.randomUUID(), null, 1,
-                new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES), SnapshotStatus.PUBLISHED);
+                new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), SnapshotStatus.PUBLISHED);
         var initial = store.createIfAbsent(a, snapshot);
         assertThat(store.createIfAbsent(a, snapshot)).isEqualTo(initial);
         assertThat(store.read(b)).isNull();
         var content = new ManagedConfiguration(List.of(new SkillDocument("one.yaml", "name: one"),
-                new SkillDocument("two.yaml", "name: two")), "targets: {}\nroutes: {}\n# saved\n");
+                new SkillDocument("two.yaml", "name: two")), "targets: {}\nroutes: {}\n# saved\n", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
         var changed = store.replace(a, initial.draftId(), initial.revision(), snapshot.localId(),
                 snapshot.localId(), content, null);
         assertThat(changed.revision()).isEqualTo(initial.revision() + 1);

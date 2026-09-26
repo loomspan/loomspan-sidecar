@@ -17,7 +17,7 @@ class ReleasePreparationTest {
         String imageVerifier = Files.readString(Path.of("scripts/verify-image.py"));
 
         assertThat(pom).contains("<id>release</id>", "requireReleaseVersion", "requireReleaseDeps",
-                "1\\.0\\.0-beta\\.5");
+                "1\\.0\\.0-beta\\.6");
         assertThat(ci).contains("docker build", "verify-image.py", "verify-production.py",
                 "com.microsoft.playwright.CLI").doesNotContain("push: true", "docker/login-action",
                 "--verify-kubernetes");
@@ -29,16 +29,16 @@ class ReleasePreparationTest {
                 "manifest unknown|no such manifest", "Could not establish whether image tag", "refusing to overwrite",
                 "push: true", "docker/login-action", "prepare-release.py", "softprops/action-gh-release",
                 "verify-production.py", "com.microsoft.playwright.CLI");
-        assertThat(script).contains("SNAPSHOT", "1.0.0-beta.5", ".sha256", "zipfile.ZipFile");
+        assertThat(script).contains("SNAPSHOT", "1.0.0-beta.6", ".sha256", "zipfile.ZipFile");
         assertThat(imageVerifier).contains("DEFAULT_COMMAND_TIMEOUT_SECONDS", "CLEANUP_TIMEOUT_SECONDS",
                 "timeout=DEFAULT_COMMAND_TIMEOUT_SECONDS", "except subprocess.TimeoutExpired",
                 "if result.returncode", "database-first Sidecar startup",
                 "require_cleanup(\"docker\", \"compose\"");
 
-        assertThat(run("1.0.0-beta.1", "1.0.0-beta.5", "v1.0.0-beta.1")).isZero();
-        assertThat(run("1.0.0-beta.1-SNAPSHOT", "1.0.0-beta.5", "v1.0.0-beta.1-SNAPSHOT")).isNotZero();
+        assertThat(run("1.0.0-beta.1", "1.0.0-beta.6", "v1.0.0-beta.1")).isZero();
+        assertThat(run("1.0.0-beta.1-SNAPSHOT", "1.0.0-beta.6", "v1.0.0-beta.1-SNAPSHOT")).isNotZero();
         assertThat(run("1.0.0-beta.1", "1.0.0-beta.3", "v1.0.0-beta.1")).isNotZero();
-        assertThat(run("1.0.0-beta.1", "1.0.0-beta.5", "vwrong")).isNotZero();
+        assertThat(run("1.0.0-beta.1", "1.0.0-beta.6", "vwrong")).isNotZero();
     }
 
     private static int run(String project, String loomspan, String tag) throws Exception {

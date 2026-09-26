@@ -77,7 +77,7 @@ Read the official [loomspan-install instructions](https://github.com/loomspan/lo
 
 The sibling skills are `loomspan` (orientation), `loomspan-docs` (framework semantics), `loomspan-console` (runtime evidence), and [loomspan-sidecar-authoring](agent-skills/loomspan-sidecar-authoring/SKILL.md) (server setup and direct API authoring). Install complete exact-revision folders through the host, including their resources and client.
 
-Current source is not a released installable combination: Sidecar pins framework beta.5-SNAPSHOT while framework main is beta.6-SNAPSHOT; older beta.5 sources lack the renamed family. Missing exact sources stop preflight, with no main/latest fallback or dependency upgrade. Published releases are never overwritten to add these skills.
+Current source pins the locally installed framework beta.6-SNAPSHOT. The first Sidecar release waits for the tested framework beta.6 release on Maven Central, then pins that released artifact for final build and CI. Missing exact agent-skill sources stop preflight; published releases are never overwritten to add these skills.
 
 Future `loomspan-sdk-<language>` skills live with their SDKs and use their own dependency versions and published compatibility facts. They own application lifecycle, security integration, request context and callbacks; Sidecar guidance owns server setup. Equal versions do not establish compatibility. Direct API users need no SDK.
 

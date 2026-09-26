@@ -9,7 +9,7 @@ import shutil
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-RELEASED_FRAMEWORK = "1.0.0-beta.5"
+RELEASED_FRAMEWORK = "1.0.0-beta.6"
 
 
 def release_version(value, label):
@@ -34,9 +34,9 @@ def main():
         raise SystemExit(f"tag {args.tag} does not match v{args.project_version}")
 
     pom = (ROOT / "pom.xml").read_text()
-    if "<loomspan.version>1.0.0-beta.5-SNAPSHOT</loomspan.version>" not in pom and \
-            "<loomspan.version>1.0.0-beta.5</loomspan.version>" not in pom:
-        raise SystemExit("pom.xml does not use the beta 5 framework line")
+    if "<loomspan.version>1.0.0-beta.6-SNAPSHOT</loomspan.version>" not in pom and \
+            "<loomspan.version>1.0.0-beta.6</loomspan.version>" not in pom:
+        raise SystemExit("pom.xml does not use the beta 6 framework line")
     if args.validate_only:
         print(f"Validated nonpublishing release plan for {args.project_version} with Loomspan {args.loomspan_version}")
         return

@@ -131,7 +131,10 @@
     for (const document of configuration.skillDocuments) skills.append(codeBlock(document.sourceName, document.yaml));
     const routes = el('div', undefined, 'stack');
     routes.append(sectionHeading('REST routes and targets'), codeBlock('Routes and targets', configuration.restRoutesYaml));
-    root.append(skills, routes);
+    const execution = el('div', undefined, 'stack');
+    execution.append(sectionHeading('Framework execution settings'),
+      codeBlock('Publishable execution YAML', configuration.executionConfigurationYaml));
+    root.append(skills, routes, execution);
   };
   const renderRuntimeState = (root, data) => {
     const published = data.published;

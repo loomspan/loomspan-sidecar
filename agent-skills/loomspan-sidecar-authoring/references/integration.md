@@ -6,32 +6,37 @@ Contents: [runtime](#runtime-configuration), [routes](#rest-skill-routes), [JWTs
 
 ## Runtime configuration
 
-The database-selected snapshot is the only runtime skill and REST route source.
+The database-selected snapshot is the runtime skill, REST route, and framework
+execution-settings source.
 The framework's documented `loomspan.skills.locations` points to a packaged
 empty directory so the initial catalog is empty. Sidecar checks that baseline
-before publishing the selected snapshot. A new database starts with no skills.
-Authored skill YAML and REST text remain unchanged in durable snapshots;
+before publishing the selected snapshot. A new database starts with no skills,
+empty REST routes, and `loomspan: {}` execution settings. Authored skill, REST,
+and execution YAML remain unchanged in durable snapshots;
 resolved deployment values are never written over references.
 
-Each model-backed manifest names a model. Configure its connection and provider
-model explicitly; the manifest does not create them:
+Each model-backed manifest names a model. Author its connection and provider
+model in the same complete Console draft; the manifest does not create them:
 
 ```yaml
 loomspan:
   connections:
     primary:
       driver: openai
-      base-url: ${MODEL_BASE_URL}
-      api-key: ${MODEL_API_KEY}
+      base-url: https://model.example.test/v1
+      api-key-ref: provider.primary.key
   models:
     primary:
       connection: primary
-      provider-model: ${MODEL_NAME}
+      provider-model: example-model
 ```
 
-Keep credentials in environment variables. Model connection and URL allowlist
-changes require restart; a complete snapshot publication changes skills and
-REST routes without restart. Successful framework publication clears only the
+Provision `provider.primary.key` as an external Spring Environment property;
+never put the resolved credential in authored YAML. Publishable connections,
+model aliases, session settings, and trace persistence activate with skills and
+REST routes without restart. Changing external credentials, the REST URL
+allowlist, or other process settings requires deployment configuration and may
+require restart. Successful framework publication clears only the
 publishing user's saved draft and lease; other users' durable drafts become
 stale and require explicit current-base reconciliation and fresh validation.
 Publish rechecks live account, session, editing generation, saved revision,
@@ -289,7 +294,8 @@ total heap: running inputs, results, diagnostics, and uncooperative framework
 work may consume additional memory.
 
 Complete validated snapshots can be published while work runs. Old admitted
-work keeps its captured definitions and REST resources. Restart loses all
+work keeps its captured definitions, execution settings, provider resources,
+and REST resources. Restart loses all
 queued, active and retained execution records, shutdown discards waiting work,
 and unfinished admitted work may be interrupted at the framework deadline.
 Invalid selected content prevents startup and readiness until corrected through

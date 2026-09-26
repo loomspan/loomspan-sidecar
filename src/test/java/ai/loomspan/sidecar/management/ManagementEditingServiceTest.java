@@ -29,7 +29,7 @@ import static org.mockito.Mockito.*;
 class ManagementEditingServiceTest {
     @Test void auditDistinguishesInvalidValidationAndActivatedPublicationFault() {
         var base = new ConfigurationSnapshot(UUID.randomUUID(), null, 1,
-                new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES), SnapshotStatus.PUBLISHED);
+                new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), SnapshotStatus.PUBLISHED);
         var activated = UUID.randomUUID();
         var runtime = mock(RuntimeConfigurationService.class);
         when(runtime.withEditingState(anyBoolean(), any())).thenAnswer(call -> {
@@ -78,7 +78,7 @@ class ManagementEditingServiceTest {
 
     @Test void revokedTokenCannotPublishAfterPublicationGateWait() throws Exception {
         var base = new ConfigurationSnapshot(UUID.randomUUID(), null, 1,
-                new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES), SnapshotStatus.PUBLISHED);
+                new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), SnapshotStatus.PUBLISHED);
         var runtime = mock(RuntimeConfigurationService.class);
         when(runtime.withEditingState(anyBoolean(), any())).thenAnswer(call -> {
             Function<ConfigurationSnapshot, ?> action = call.getArgument(1); return action.apply(base);
@@ -130,7 +130,7 @@ class ManagementEditingServiceTest {
 
     @Test void revokedTokenCannotAttachValidationAfterWorkWaits() throws Exception {
         var base = new ConfigurationSnapshot(UUID.randomUUID(), null, 1,
-                new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES), SnapshotStatus.PUBLISHED);
+                new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), SnapshotStatus.PUBLISHED);
         var runtime = mock(RuntimeConfigurationService.class);
         when(runtime.withEditingState(anyBoolean(), any())).thenAnswer(call -> {
             Function<ConfigurationSnapshot, ?> action = call.getArgument(1); return action.apply(base);
@@ -176,7 +176,7 @@ class ManagementEditingServiceTest {
 
     @Test void lateValidationCannotAttachAfterSavedRevisionChanges() throws Exception {
         var base = new ConfigurationSnapshot(UUID.randomUUID(), null, 1,
-                new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES), SnapshotStatus.PUBLISHED);
+                new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), SnapshotStatus.PUBLISHED);
         var runtime = mock(RuntimeConfigurationService.class);
         when(runtime.withEditingState(anyBoolean(), any())).thenAnswer(call -> {
             Function<ConfigurationSnapshot, ?> action = call.getArgument(1); return action.apply(base);

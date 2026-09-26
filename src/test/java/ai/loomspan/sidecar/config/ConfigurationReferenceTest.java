@@ -53,7 +53,7 @@ class ConfigurationReferenceTest {
                 "LOOMSPAN_SIDECAR_SECURE_COOKIE: \"true\"", "LOOMSPAN_SIDECAR_SMTP_STARTTLS_REQUIRED: ${SMTP_STARTTLS:-true}", "stop_grace_period: 45s",
                 "LOOMSPAN_SIDECAR_URL_VARIABLES:", "/sidecar/keys/public.pem:ro")
                 .doesNotContain("9091:9091", "8080:8080", "/sidecar/skills/", "/sidecar/rest-routes.yaml");
-        assertThat(productionEnv).contains("JWT_ISSUER_URI=", "MODEL_BASE_URL=", "SMTP_HOST=",
+        assertThat(productionEnv).contains("JWT_ISSUER_URI=", "PROVIDER_PRIMARY_KEY=", "SMTP_HOST=",
                 "EXTERNAL_BASE_URL=https://", "URL_VARIABLES=TARGET_URL", "TARGET_URL=https://");
         assertThat(Files.exists(Path.of("examples/kubernetes/deployment.yaml"))).isFalse();
         assertThat(dockerfile).contains("mkdir -p /sidecar/data", "chown loomspan:loomspan /sidecar/data")

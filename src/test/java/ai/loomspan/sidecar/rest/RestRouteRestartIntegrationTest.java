@@ -52,7 +52,7 @@ class RestRouteRestartIntegrationTest {
                 var store = context.getBean(ConfigurationSnapshotStore.class);
                 var draft = new ConfigurationDraft(store.current());
                 draft.replaceContent(new ManagedConfiguration(List.of(new SkillDocument(skill.getFileName().toString(),
-                        Files.readString(skill))), Files.readString(routes)));
+                        Files.readString(skill))), Files.readString(routes), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
                 assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(
                         context.getBean(RuntimeConfigurationService.class), draft).successful()).isTrue();
                 context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(draft);
