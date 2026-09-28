@@ -33,7 +33,7 @@
     try { const data = await upload('review', {}, requestedFile);
       if (selected !== requestedFile) return;
       detail('Source snapshot', data.sourceSnapshotId); detail('Sidecar version', data.sidecarVersion);
-      detail('Framework version', data.frameworkVersion); detail('Skill documents', data.skillDocuments);
+      detail('Framework version', data.frameworkVersion); detail('Encrypted credentials included', data.includesEncryptedCredentials ? 'Yes' : 'No'); detail('Skill documents', data.skillDocuments);
       for (const issue of data.validation.issues) { const item = document.createElement('li'); item.textContent = issue.message; $('import-issues').append(item); }
       reviewed = data; $('import-summary').hidden = false; $('import-confirm').disabled = false;
       status('Review complete. Loading will replace your saved draft; validate and publish from the editor.');
@@ -52,7 +52,7 @@
       const current = await json('/configuration/current');
       if (selected !== acceptedFile) throw new Error('Selected bundle changed. Review it again before loading.');
       const loaded = await upload('load', { editingSessionId: grant.editingSessionId, generation: grant.generation,
-        draftId: draft.draftId, revision: draft.revision, baseSnapshotId: current.published.localId }, acceptedFile);
+        draftId: draft.draftId, revision: draft.revision, baseSnapshotId: current.published.localId, credentialMode: $('import-credential-mode').value }, acceptedFile);
       outcome(`Loaded saved draft revision ${loaded.revision}. Open the editor, validate, then publish.`);
       status('Bundle loaded into your private draft.');
     } catch (error) { outcome(error.message, true); } finally { busy = false; }

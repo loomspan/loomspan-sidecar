@@ -36,8 +36,8 @@ import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.dataformat.yaml.YAMLMapper;
 
-/** Portable configuration-only ZIP contract. This parser never extracts or activates content. */
-public final class ConfigurationBundleV2 {
+/** Portable format 3 ZIP. Optional authenticated ciphertext; never plaintext credentials or encryption keys. */
+public final class ConfigurationBundleV3 {
     public static final long MAX_ZIP_BYTES = 100L * 1_048_576;
     public static final long MAX_EXPANDED_BYTES = 512L * 1_048_576;
     public static final int MAX_ENTRIES = 10_000;
@@ -49,34 +49,46 @@ public final class ConfigurationBundleV2 {
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build();
 
     public record Bundle(UUID sourceSnapshotId, String sidecarVersion, String frameworkVersion,
-            ManagedConfiguration configuration) {}
+            ManagedConfiguration configuration, List<ai.loomspan.sidecar.storage.EncryptedCredential> credentials,
+            boolean includesCredentials) {}
 
     public static final class InvalidBundle extends IllegalArgumentException {
         public InvalidBundle(String reason) { super(reason); }
         public InvalidBundle(String reason, Throwable cause) { super(reason, cause); }
     }
     public static final class BundleTooLarge extends IllegalArgumentException {
-        public BundleTooLarge() { super("Configuration exceeds format 2 bundle limits"); }
+        public BundleTooLarge() { super("Configuration exceeds format 3 bundle limits"); }
     }
 
-    private ConfigurationBundleV2() {}
+    private ConfigurationBundleV3() {}
 
     /** The caller owns and deletes the returned file. No partial file is returned. */
     public static Path write(ConfigurationSnapshot snapshot) throws IOException {
+        return write(snapshot, List.of(), false);
+    }
+
+    public static Path write(ConfigurationSnapshot snapshot,
+            List<ai.loomspan.sidecar.storage.EncryptedCredential> credentials, boolean includeCredentials) throws IOException {
+        if (includeCredentials) checkInventory(snapshot.configuration().credentialIdentifiers(), credentials);
+
         Path file = Files.createTempFile("sidecar-configuration-export-", ".zip");
         boolean complete = false;
         try {
             var inventory = new ArrayList<Map<String, Object>>();
             long expanded = 0;
-            int count = snapshot.configuration().skillDocuments().size() + 3;
+            int count = snapshot.configuration().skillDocuments().size() + 3 + (includeCredentials ? 1 : 0);
             if (count > MAX_ENTRIES) throw new BundleTooLarge();
             try (OutputStream output = Files.newOutputStream(file); ZipOutputStream zip = new ZipOutputStream(output)) {
                 String rest = snapshot.configuration().restRoutesYaml();
                 byte[] restBytes = JSON.writeValueAsBytes(Map.of("restRoutesYaml", rest));
                 expanded = add(zip, inventory, "rest.json", restBytes, null, expanded);
-                byte[] executionBytes = JSON.writeValueAsBytes(Map.of("executionConfigurationYaml",
-                        snapshot.configuration().executionConfigurationYaml()));
+                byte[] executionBytes = JSON.writeValueAsBytes(Map.of(
+                        "executionConfigurationYaml", snapshot.configuration().executionConfigurationYaml(),
+                        "credentialIdentifiers", snapshot.configuration().credentialIdentifiers()));
                 expanded = add(zip, inventory, "execution.json", executionBytes, null, expanded);
+                if (includeCredentials)
+                    expanded = add(zip, inventory, "credentials.json", JSON.writeValueAsBytes(Map.of(
+                            "cipherFormat", "AES-256-GCM-v1", "credentials", credentials)), null, expanded);
                 int ordinal = 0;
                 for (SkillDocument document : snapshot.configuration().skillDocuments()) {
                     String path = String.format(Locale.ROOT, "skills/%05d.yaml", ordinal++);
@@ -84,7 +96,7 @@ public final class ConfigurationBundleV2 {
                             document.sourceName(), expanded);
                 }
                 Map<String, Object> manifest = new LinkedHashMap<>();
-                manifest.put("formatVersion", 2);
+                manifest.put("formatVersion", 3);
                 manifest.put("sourceSnapshotId", snapshot.localId().toString());
                 manifest.put("producer", Map.of("sidecarVersion", version("sidecarVersion"),
                         "frameworkVersion", version("frameworkVersion")));
@@ -103,7 +115,7 @@ public final class ConfigurationBundleV2 {
         }
     }
 
-    /** Stage compressed bytes under the format 2 bound before ZIP central-directory validation. */
+    /** Stage compressed bytes under the format 3 bound before ZIP central-directory validation. */
     public static Bundle read(InputStream input) {
         Path file = null;
         try {
@@ -146,7 +158,7 @@ public final class ConfigurationBundleV2 {
                 fields(manifest, Set.of("formatVersion", "sourceSnapshotId", "producer", "payloads"));
                 JsonNode format = manifest.get("formatVersion");
                 if (format == null || !format.isIntegralNumber()
-                        || !format.bigIntegerValue().equals(java.math.BigInteger.TWO))
+                        || !format.bigIntegerValue().equals(java.math.BigInteger.valueOf(3)))
                     throw new InvalidBundle("Unsupported bundle format version");
                 UUID source = uuid(text(manifest, "sourceSnapshotId"));
                 JsonNode producer = manifest.get("producer");
@@ -163,12 +175,14 @@ public final class ConfigurationBundleV2 {
                 Map<Integer, SkillDocument> documents = new HashMap<>();
                 String rest = null;
                 String execution = null;
+                List<ai.loomspan.sidecar.storage.EncryptedCredential> credentials = null;
+                List<String> credentialIdentifiers = null;
                 for (JsonNode item : payloads) {
                     if (item == null || !item.isObject()) throw new InvalidBundle("Invalid payload inventory");
                     String path = text(item, "path");
                     boolean skill = path.matches("skills/[0-9]{5}\\.yaml");
                     fields(item, skill ? Set.of("path", "sha256", "sourceLabel") : Set.of("path", "sha256"));
-                    if (!paths.add(path) || !(skill || path.equals("rest.json") || path.equals("execution.json")))
+                    if (!paths.add(path) || !(skill || path.equals("rest.json") || path.equals("execution.json") || path.equals("credentials.json")))
                         throw new InvalidBundle("Duplicate or unexpected payload path");
                     ZipEntry entry = entriesByName.remove(path);
                     if (entry == null) throw new InvalidBundle("Missing or checksum-mismatched payload");
@@ -190,15 +204,41 @@ public final class ConfigurationBundleV2 {
                         if (parsed.get("targets") == null || !parsed.get("targets").isObject()
                                 || parsed.get("routes") == null || !parsed.get("routes").isObject())
                             throw new InvalidBundle("Invalid REST configuration structure");
+                    } else if (path.equals("credentials.json")) {
+                        JsonNode node = json(bytes);
+                        fields(node, Set.of("cipherFormat", "credentials"));
+                        if (!text(node, "cipherFormat").equals("AES-256-GCM-v1"))
+                            throw new InvalidBundle("Unsupported credential cipher format");
+                        if (node.get("credentials") == null || !node.get("credentials").isArray())
+                            throw new InvalidBundle("Invalid encrypted credential inventory");
+                        var imported = new ArrayList<ai.loomspan.sidecar.storage.EncryptedCredential>();
+                        for (JsonNode entryNode : node.get("credentials")) {
+                            fields(entryNode, Set.of("identifier", "version", "ciphertext"));
+                            imported.add(new ai.loomspan.sidecar.storage.EncryptedCredential(text(entryNode, "identifier"),
+                                    text(entryNode, "version"), text(entryNode, "ciphertext")));
+                        }
+                        credentials = List.copyOf(imported);
                     } else {
                         JsonNode executionNode = json(bytes);
-                        fields(executionNode, Set.of("executionConfigurationYaml"));
+                        fields(executionNode, Set.of("executionConfigurationYaml",
+                                "credentialIdentifiers"));
                         execution = text(executionNode, "executionConfigurationYaml");
+                        ai.loomspan.sidecar.configuration.EffectiveExecutionConfiguration
+                                .assertNoDirectAuthoredCredentials(execution);
+                        JsonNode ids = executionNode.get("credentialIdentifiers");
+                        if (ids == null || !ids.isArray()) throw new InvalidBundle("Invalid credential inventory");
+                        var collected = new ArrayList<String>();
+                        for (JsonNode id : ids) {
+                            if (!id.isTextual() || id.asText().isBlank() || collected.contains(id.asText()))
+                                throw new InvalidBundle("Invalid credential inventory");
+                            collected.add(id.asText());
+                        }
+                        credentialIdentifiers = List.copyOf(collected);
                         yamlObject(execution);
                     }
                 }
-                if (rest == null || execution == null || !entriesByName.isEmpty()
-                        || documents.size() != paths.size() - 2)
+                if (rest == null || execution == null || credentialIdentifiers == null || !entriesByName.isEmpty()
+                        || documents.size() != paths.size() - 2 - (credentials == null ? 0 : 1))
                     throw new InvalidBundle("Missing configuration payload");
                 var ordered = new ArrayList<SkillDocument>();
                 for (int i = 0; i < documents.size(); i++) {
@@ -206,13 +246,23 @@ public final class ConfigurationBundleV2 {
                     if (document == null) throw new InvalidBundle("Incomplete skill sequence");
                     ordered.add(document);
                 }
-                return new Bundle(source, sidecar, framework, new ManagedConfiguration(ordered, rest, execution));
+                if (credentials != null) checkInventory(credentialIdentifiers, credentials);
+                return new Bundle(source, sidecar, framework, new ManagedConfiguration(ordered, rest, execution,
+                        credentialIdentifiers), credentials == null ? List.of() : credentials, credentials != null);
             }
         } catch (BundleTooLarge | InvalidBundle failure) {
             throw failure;
         } catch (IOException | RuntimeException failure) {
             throw new InvalidBundle("Corrupt or invalid bundle", failure);
         }
+    }
+
+    private static void checkInventory(List<String> identifiers,
+            List<ai.loomspan.sidecar.storage.EncryptedCredential> credentials) {
+        Set<String> found = new HashSet<>();
+        for (var credential : credentials)
+            if (!found.add(credential.identifier())) throw new InvalidBundle("Duplicate encrypted credential");
+        if (!found.equals(new HashSet<>(identifiers))) throw new InvalidBundle("Incomplete encrypted credentials");
     }
 
     private static byte[] readEntry(ZipFile zip, ZipEntry entry, long[] expanded) throws IOException {
@@ -256,11 +306,11 @@ public final class ConfigurationBundleV2 {
         return previous + added;
     }
     private static boolean safePath(String path) {
-        return path.equals("manifest.json") || path.equals("rest.json") || path.equals("execution.json")
+        return path.equals("manifest.json") || path.equals("rest.json") || path.equals("execution.json") || path.equals("credentials.json")
                 || path.matches("skills/[0-9]{5}\\.yaml");
     }
     private static String version(String key) {
-        try (InputStream input = ConfigurationBundleV2.class.getResourceAsStream("/bundle-producer.properties")) {
+        try (InputStream input = ConfigurationBundleV3.class.getResourceAsStream("/bundle-producer.properties")) {
             if (input == null) throw new IllegalStateException("Missing bundle producer metadata");
             Properties properties = new Properties();
             properties.load(input);

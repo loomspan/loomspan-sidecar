@@ -42,6 +42,10 @@ class ManagementEditorBrowserIntegrationTest {
     @TestConfiguration(proxyBeanMethods = false)
     static class BrowserClockConfiguration {
         @Bean @Primary Clock browserClock() { return Clock.systemUTC(); }
+        @Bean @Primary ai.loomspan.sidecar.configuration.ProviderCredentialCipher browserCredentialCipher() {
+            return new ai.loomspan.sidecar.configuration.ProviderCredentialCipher(
+                    java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        }
     }
     @TempDir static Path storageDirectory;
     @DynamicPropertySource static void storage(DynamicPropertyRegistry properties) {
@@ -68,6 +72,13 @@ class ManagementEditorBrowserIntegrationTest {
             waitText(second, "editor-message", "Saved draft and published configuration loaded.");
             first.locator("#editor-acquire").click();
             waitText(first, "editor-owner", "You hold editing control.");
+            first.locator("#editor-execution").fill("loomspan: {}\n# saved-execution\n");
+            waitText(first, "editor-save", "Saved draft revision");
+            first.locator("#editor-execution").fill("loomspan: [}\n");
+            waitText(first, "editor-message", "Save failed.");
+            assertThat(first.locator("#editor-execution").inputValue()).isEqualTo("loomspan: [}\n");
+            assertThat(first.locator("#editor-saved-content").textContent()).contains("saved-execution")
+                    .doesNotContain("loomspan: [}");
             first.locator("#editor-execution").fill("loomspan: {}\n# saved-execution\n");
             waitText(first, "editor-save", "Saved draft revision");
             first.locator("#editor-rest").fill("targets: {}\nroutes: {}\n# saved-from-first\n");
@@ -116,6 +127,49 @@ class ManagementEditorBrowserIntegrationTest {
             first.waitForFunction("() => document.getElementById('editor-rest').readOnly");
             assertThat(first.locator("#editor-rest").isEditable()).isFalse();
             assertThat(second.locator("#editor-rest").isEditable()).isTrue();
+        }
+    }
+
+    @Test void maskedCredentialUsesCompleteDatabaseDraft() {
+        var before = runtime.inspect().publishedId();
+        String email = seed("editor");
+        try (Playwright playwright = Playwright.create(); Browser browser = playwright.chromium().launch();
+                BrowserContext context = browser.newContext()) {
+            Page page = login(context, email);
+            page.navigate(url("/management/configuration/edit"));
+            waitText(page, "editor-message", "Saved draft and published configuration loaded.");
+            page.locator("#editor-acquire").click();
+            waitText(page, "editor-owner", "You hold editing control.");
+            assertThat(page.locator("#editor-provider-override").count()).isZero();
+            assertThat(page.locator("#editor-gemini-credentials-ref").count()).isZero();
+            assertThat(page.locator("#editor-gemini-credentials-json-ref").count()).isEqualTo(1);
+            page.locator("#editor-credential-id").fill("provider.browser.key");
+            String sentinel = "browser-secret-" + UUID.randomUUID();
+            page.locator("#editor-credential-value").fill(sentinel);
+            page.locator("#editor-credential-replace").click();
+            waitText(page, "editor-credential-status", "provider.browser.key (configured)");
+            assertThat(page.locator("#editor-credential-value").inputValue()).isEmpty();
+            assertThat(page.content()).doesNotContain(sentinel);
+            page.locator("#editor-api-key-ref").fill("provider.browser.key");
+            page.locator("#editor-provider-model").fill("fixture-model");
+            page.onceDialog(dialog -> dialog.accept());
+            page.locator("#editor-generate-execution").click();
+            assertThat(page.locator("#editor-execution").inputValue()).contains("provider.browser.key", "fixture-model");
+            waitText(page, "editor-save", "Saved draft revision");
+            page.reload();
+            waitText(page, "editor-message", "Saved draft and published configuration loaded.");
+            assertThat(page.locator("#editor-provider-override").count()).isZero();
+            assertThat(page.locator("#editor-credential-value").inputValue()).isEmpty();
+            assertThat(page.content()).doesNotContain(sentinel);
+            assertThat(runtime.inspect().publishedId()).isEqualTo(before);
+            page.locator("#editor-handoff").click();
+            waitText(page, "editor-owner", "You hold editing control.");
+            page.locator("#editor-recheck").click();
+            waitText(page, "editor-message", "Saved revision validated.");
+            page.locator("#editor-publish").click();
+            waitText(page, "editor-message", "Published configuration");
+            assertThat(runtime.inspect().publishedId()).isNotEqualTo(before);
+            assertThat(page.content()).doesNotContain(sentinel);
         }
     }
 

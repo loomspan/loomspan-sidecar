@@ -1,6 +1,7 @@
 package ai.loomspan.sidecar.management;
 
 import ai.loomspan.sidecar.storage.ConfigurationValidationResult;
+import ai.loomspan.sidecar.configuration.EffectiveExecutionConfiguration;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
 
@@ -24,7 +25,7 @@ public final class ManagementEditingState {
     }
 
     public record Validation(UUID draftId, long revision, UUID baseId, UUID generation,
-            ConfigurationValidationResult result) {}
+            ConfigurationValidationResult result, EffectiveExecutionConfiguration.Candidate candidate) {}
 
     public Lease lease;
     public Validation validation;

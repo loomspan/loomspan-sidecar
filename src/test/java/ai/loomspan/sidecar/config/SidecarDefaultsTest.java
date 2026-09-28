@@ -22,7 +22,7 @@ class SidecarDefaultsTest {
                         context.refresh();
                         var environment = context.getEnvironment();
                         assertThat(environment.getProperty("loomspan.skills.locations[0]"))
-                                        .isEqualTo("classpath:/sidecar-empty-skills/*.yaml");
+                                        .isNull();
                         assertThat(environment.getProperty("loomspan.observability.enabled", Boolean.class)).isFalse();
                         assertThat(environment.getProperty("loomspan-sidecar.url-variables[0]")).isNull();
                         assertThat(environment.getProperty("loomspan-sidecar.auth.jwt.roles-claim")).isEqualTo("roles");

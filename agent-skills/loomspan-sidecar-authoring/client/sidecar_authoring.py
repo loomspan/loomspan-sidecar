@@ -24,6 +24,8 @@ ROUTES = {
     "renew": ("POST", "/editing/lease/renew"),
     "release": ("POST", "/editing/lease/release"),
     "save": ("PUT", "/editing/draft"),
+    "replace-credential": ("PUT", "/editing/draft/credentials"),
+    "remove-credential": ("DELETE", "/editing/draft/credentials"),
     "reconcile": ("POST", "/editing/draft/reconcile"),
     "validate": ("POST", "/editing/draft/validate"),
     "publish": ("POST", "/configuration/publish"),
@@ -31,7 +33,8 @@ ROUTES = {
     "import-review": ("POST", "/configuration/import/review"),
     "import-load": ("POST", "/configuration/import/load"),
 }
-JSON_BODY = {"renew", "release", "save", "reconcile", "validate", "publish"}
+JSON_BODY = {"renew", "release", "save", "reconcile", "validate", "publish",
+             "replace-credential", "remove-credential"}
 SAFE_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 SAFE_UUID = re.compile(r"^[0-9a-fA-F-]{36}$")
 MAX_BUNDLE_BYTES = 100 * 1_048_576
@@ -80,7 +83,7 @@ def request(base, token, method, path, body=None, content_type="application/json
     req = Request(base + ROOT + path, data=body, headers=headers, method=method)
     try:
         with build_opener(NoRedirect).open(req, timeout=30) as response:
-            if path == "/configuration/export":
+            if path.split("?", 1)[0] == "/configuration/export":
                 payload = response.read(MAX_BUNDLE_BYTES + 1)
                 if len(payload) > MAX_BUNDLE_BYTES:
                     raise ClientError("Export exceeds the server bundle limit")
@@ -107,7 +110,12 @@ def request(base, token, method, path, body=None, content_type="application/json
         elif exc.code == 404:
             detail += " Requested resource is unavailable; read current/draft."
         elif exc.code == 409:
-            detail += " Read current, draft and lease status; resolve ownership or revision/base explicitly."
+            if code == "configuration_read_only":
+                detail += " File mode is read-only; deploy file changes and restart."
+            elif code == "credential_key_required":
+                detail += " Provision the source encryption key, or explicitly import configuration-only and replace destination credentials."
+            else:
+                detail += " Read current, draft and lease status; resolve ownership or revision/base explicitly."
         elif exc.code == 413:
             detail += " Bundle or request exceeds server limits."
         elif exc.code == 503:
@@ -137,6 +145,9 @@ def main():
             item.add_argument("--bundle", required=True)
         if command == "export":
             item.add_argument("--output", required=True)
+            item.add_argument("--include-encrypted-credentials", action="store_true")
+        if command == "import-load":
+            item.add_argument("--credential-mode", choices=("included", "configuration-only"), default="included")
     args = parser.parse_args()
     token = os.environ.get("LOOMSPAN_SIDECAR_MANAGEMENT_TOKEN", "")
     if not token:
@@ -147,16 +158,30 @@ def main():
             (parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1", "::1"))):
         raise ClientError("Use a bare HTTPS Sidecar origin (HTTP only for loopback)")
     method, path = ROUTES[args.command]
+    if args.command == "export" and args.include_encrypted_credentials:
+        path += "?includeEncryptedCredentials=true"
     body = None
+    submitted_secret = None
     content_type = "application/json"
     if args.command in ("acquire", "handoff"):
         body = json.dumps({"label": args.label}).encode()
     elif args.command in JSON_BODY:
-        body = json.dumps(input_json(args.file)).encode()
+        submitted = input_json(args.file)
+        if args.command == "replace-credential":
+            if set(submitted) != {"editingSessionId", "generation", "draftId", "revision",
+                                  "baseSnapshotId", "identifier", "value"} or not isinstance(submitted["value"], str):
+                raise ClientError("Credential replacement requires the exact candidate, identifier and value fields")
+            submitted_secret = submitted["value"]
+        if args.command == "remove-credential" and set(submitted) != {
+                "editingSessionId", "generation", "draftId", "revision", "baseSnapshotId", "identifier"}:
+            raise ClientError("Credential removal requires the exact candidate and identifier fields")
+        body = json.dumps(submitted).encode()
     elif args.command in ("import-review", "import-load"):
         fields = input_json(args.file) if args.command == "import-load" else {}
         if args.command == "import-load" and set(fields) != {"editingSessionId", "generation", "draftId", "revision", "baseSnapshotId"}:
             raise ClientError("Import load requires the exact current candidate fields")
+        if args.command == "import-load":
+            fields["credentialMode"] = args.credential_mode
         body, content_type = multipart(args.bundle, fields)
     result = request(args.url.rstrip("/"), token, method, path, body, content_type)
     if args.command == "handoff":
@@ -170,7 +195,10 @@ def main():
             raise ClientError("Export output file cannot be written") from None
         print(json.dumps({"bytes": len(result)}))
     else:
-        print(json.dumps(result, indent=2, ensure_ascii=False).replace(token, "[redacted]"))
+        output = json.dumps(result, indent=2, ensure_ascii=False).replace(token, "[redacted]")
+        if submitted_secret:
+            output = output.replace(submitted_secret, "[redacted]")
+        print(output)
 
 
 if __name__ == "__main__":

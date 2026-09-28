@@ -26,11 +26,26 @@ public class ManagementPagesController
 
     private final ManagementIdentityService identity;
     private final ManagementAttemptLimiter attempts;
+    private final ai.loomspan.sidecar.configuration.RuntimeConfigurationService runtime;
 
-    public ManagementPagesController(ManagementIdentityService identity, ManagementAttemptLimiter attempts)
+    public ManagementPagesController(ManagementIdentityService identity, ManagementAttemptLimiter attempts,
+            ai.loomspan.sidecar.configuration.RuntimeConfigurationService runtime)
     {
         this.identity = identity;
         this.attempts = attempts;
+        this.runtime = runtime;
+    }
+
+    private String filePage(Authentication auth, HttpServletRequest request) {
+        String inspection = tools.jackson.databind.json.JsonMapper.builder().build()
+                .writerWithDefaultPrettyPrinter().writeValueAsString(runtime.current().fileStartup());
+        String history = tools.jackson.databind.json.JsonMapper.builder().build()
+                .writerWithDefaultPrettyPrinter().writeValueAsString(runtime.fileHistory());
+        return console("File configuration", "Mode: file - read-only; deploy file changes and restart.",
+                ManagementController.principal(auth), request, "",
+                "<section data-console='file'><p class='notice'>Files are startup authority. Provider secret values are hidden. "
+                + "Deploy earlier files and restart to roll back.</p><h2>Effective startup inspection</h2><pre>"
+                + escape(inspection) + "</pre><h2>Retained startup metadata</h2><pre>" + escape(history) + "</pre></section>");
     }
 
     @GetMapping(value = "/management/login", produces = MediaType.TEXT_HTML_VALUE)
@@ -156,8 +171,9 @@ public class ManagementPagesController
     @GetMapping(value = "/management/home", produces = MediaType.TEXT_HTML_VALUE)
     String home(Authentication auth, HttpServletRequest request)
     {
+        if (runtime.mode() == ai.loomspan.sidecar.configuration.ConfigurationMode.FILE) return filePage(auth, request);
         var user = ManagementController.principal(auth);
-        boolean editor = !"viewer".equals(user.role());
+        boolean editor = !"viewer".equals(user.role()) && runtime.mode() == ai.loomspan.sidecar.configuration.ConfigurationMode.DATABASE;
         String actions = action("/management/configuration/current", ICON_CURRENT, "Inspect runtime",
                 "Review the skills and REST routes this Sidecar is executing now.")
                 + action("/management/configuration/history", ICON_HISTORY, "Browse history",
@@ -216,17 +232,20 @@ public class ManagementPagesController
     @GetMapping(value = "/management/configuration/current", produces = MediaType.TEXT_HTML_VALUE)
     String current(Authentication auth, HttpServletRequest request)
     {
+        if (runtime.mode() == ai.loomspan.sidecar.configuration.ConfigurationMode.FILE) return filePage(auth, request);
         return console("Current configuration", "The skills and REST routes this Sidecar is running right now.", ManagementController.principal(auth), request,
                 "<button id='current-refresh' type='button'>Refresh configuration</button>"
+                        + "<label><input id='current-export-credentials' type='checkbox'> Include encrypted credentials (requires Edit)</label>"
                         + "<button id='current-export' class='btn-primary' type='button'>Download current configuration</button>",
                 "<section data-console='current'><p id='current-status' class='notice' role='status' aria-live='polite'>Loading runtime snapshot…</p>"
-                        + "<p class='notice warning'>Downloaded bundles contain exact authored values, including sensitive secrets and placeholders. Store them securely.</p>"
+                        + "<p class='notice warning'>Bundles exclude credentials by default. Include encrypted credentials only for a destination using the same encryption key. Keep credential-bearing bundles secure. Authored REST YAML may contain sensitive values.</p>"
                         + "<div id='current-content' class='stack-lg'></div></section>");
     }
 
     @GetMapping(value = "/management/configuration/history", produces = MediaType.TEXT_HTML_VALUE)
     String history(Authentication auth, HttpServletRequest request)
     {
+        if (runtime.mode() == ai.loomspan.sidecar.configuration.ConfigurationMode.FILE) return filePage(auth, request);
         var user = ManagementController.principal(auth);
         String rollback = "viewer".equals(user.role()) ? ""
                 : "<section id='history-rollback' class='card rollback' aria-labelledby='rollback-heading'><div class='card-head'><h3 id='rollback-heading'>Roll back to this snapshot</h3>"
@@ -267,7 +286,8 @@ public class ManagementPagesController
     @GetMapping(value = "/management/configuration/edit", produces = MediaType.TEXT_HTML_VALUE)
     String edit(Authentication auth, HttpServletRequest request)
     {
-        return console("Edit configuration", "Change skills and REST routes in a private draft, validate, then publish.", ManagementController.principal(auth), request, "",
+        if (runtime.mode() == ai.loomspan.sidecar.configuration.ConfigurationMode.FILE) return filePage(auth, request);
+        return console("Edit configuration", "Change skills, REST routes and execution settings in a private draft, validate, then publish.", ManagementController.principal(auth), request, "",
                 "<section data-console='editor' class='stack-lg'>"
                         + "<div class='card editor-lease'><div class='editor-lease-info'><p id='editor-message' class='notice' role='status' aria-live='polite'>Loading configuration…</p>"
                         + "<p id='editor-owner' class='editor-owner'></p><p id='editor-deadline' class='hint'></p></div>"
@@ -287,9 +307,54 @@ public class ManagementPagesController
                         + "<button id='editor-add' type='button'>Add skill document</button></div><div id='editor-skills' class='stack'></div></div>"
                         + "<div class='editor-document'><label for='editor-rest' class='section-title'>REST targets and routes YAML</label>"
                          + "<textarea id='editor-rest' class='code' spellcheck='false'></textarea></div>"
+                         + "<section class='card stack'><h2 class='section-title'>Database configuration</h2>"
+                         + "<p class='hint'>All execution settings and encrypted credentials belong to this database draft. Save, validate, then publish.</p>"
+                         + "<div id='editor-credential-controls' class='stack'><h3>Managed provider credentials</h3>"
+                         + "<p class='hint'>Use a credential identifier in an api-key-ref, header-refs or Gemini credential reference. Saved values cannot be read back.</p>"
+                         + "<p id='editor-credential-status' class='hint'></p>"
+                         + "<label class='field'>Identifier<input id='editor-credential-id' autocomplete='off' spellcheck='false'></label>"
+                         + "<label class='field'>New value<input id='editor-credential-value' type='password' autocomplete='new-password'></label>"
+                         + "<div class='row'><button id='editor-credential-replace' type='button'>Save or replace credential</button>"
+                         + "<button id='editor-credential-remove' type='button'>Remove identifier</button></div></div></section>"
+                         + "<section class='card stack'><h2 class='section-title'>Provider and model fields</h2>"
+                         + "<p class='hint'>Fill these fields to generate a starting execution YAML, then review and edit it below for additional connections, models, and options.</p>"
+                         + "<div class='editor-config-grid'>"
+                         + "<label class='field'>Connection name<input id='editor-connection-name' value='primary'></label>"
+                         + "<label class='field'>Driver<select id='editor-driver'><option value='openai'>OpenAI</option><option value='anthropic'>Anthropic</option><option value='gemini'>Gemini</option><option value='ollama'>Ollama</option></select></label>"
+                         + "<label class='field'>Base URL<input id='editor-base-url' placeholder='https://provider.example/v1'></label>"
+                         + "<label class='field'>API key reference<input id='editor-api-key-ref' placeholder='provider.primary.key'></label>"
+                         + "<label class='field'>Model alias<input id='editor-model-alias' value='default'></label>"
+                         + "<label class='field'>Provider model<input id='editor-provider-model' placeholder='model-name'></label>"
+                         + "<label class='field'>Thinking levels, comma separated<input id='editor-thinking-levels'></label>"
+                         + "<label class='field'>Session maximum depth<input id='editor-max-depth' type='number' min='1' value='8'></label>"
+                         + "<label class='field'>Trace persistence<select id='editor-trace'><option value='ONERROR'>On error</option><option value='ALWAYS'>Always</option><option value='NEVER'>Never</option></select></label>"
+                         + "</div><details><summary>Additional execution fields</summary><div class='editor-config-grid'>"
+                         + "<label class='field'>Header references (Header=identifier, one per line)<textarea id='editor-header-refs'></textarea></label>"
+                         + "<label class='field'>OpenAI compatibility profile<input id='editor-openai-profile'></label>"
+                         + "<label class='field'>OpenAI organization ID<input id='editor-openai-org'></label>"
+                         + "<label class='field'>OpenAI project ID<input id='editor-openai-project'></label>"
+                         + "<label class='field'>Gemini Vertex AI<input id='editor-gemini-vertex' type='checkbox'></label>"
+                         + "<label class='field'>Gemini project ID<input id='editor-gemini-project'></label>"
+                         + "<label class='field'>Gemini location<input id='editor-gemini-location'></label>"
+                         + "<label class='field'>Gemini credentials JSON reference<input id='editor-gemini-credentials-json-ref'></label>"
+                         + "<label class='field'>Provider retry enabled<input id='editor-retry-enabled' type='checkbox'></label>"
+                         + "<label class='field'>Provider retry maximum attempts<input id='editor-retry-attempts' type='number' min='1' max='10'></label>"
+                         + "<label class='field'>Provider retry initial backoff<input id='editor-retry-initial' placeholder='200ms'></label>"
+                         + "<label class='field'>Provider retry multiplier<input id='editor-retry-multiplier' type='number' step='0.1' min='1'></label>"
+                         + "<label class='field'>Provider retry maximum backoff<input id='editor-retry-max' placeholder='2s'></label>"
+                         + "<label class='field'>Provider retry jitter<input id='editor-retry-jitter' type='number' step='0.01' min='0' max='1'></label>"
+                         + "<label class='field'>Mission timeout<input id='editor-mission-timeout' placeholder='5m'></label>"
+                         + "<label class='field'>Maximum skill invocations<input id='editor-max-skills' type='number' min='0'></label>"
+                         + "<label class='field'>Maximum tool invocations<input id='editor-max-tools' type='number' min='0'></label>"
+                         + "<label class='field'>Maximum linter retries<input id='editor-max-linters' type='number' min='0'></label>"
+                         + "<label class='field'>Maximum model calls<input id='editor-max-models' type='number' min='0'></label>"
+                         + "<label class='field'>Maximum provider attempts<input id='editor-max-provider-attempts' type='number' min='0'></label>"
+                         + "<label class='field'>Maximum usage units<input id='editor-max-usage' type='number' min='0'></label>"
+                         + "<label class='field'>Attachment maximum size<input id='editor-attachment-size' placeholder='20MB'></label>"
+                         + "</div></details><button id='editor-generate-execution' type='button'>Generate execution YAML from fields</button></section>"
                          + "<div class='editor-document'><label for='editor-execution' class='section-title'>Framework execution settings YAML</label>"
                          + "<p class='hint'>Publishable connections, model aliases, session limits, and execution trace policy. "
-                         + "Use external property references for credentials. Process settings still require a restart.</p>"
+                         + "Use credential references. Process settings still require a restart.</p>"
                          + "<textarea id='editor-execution' class='code' spellcheck='false'></textarea></div></div>"
                         + "<div class='editor-bar'><div class='editor-bar-state'>"
                         + "<span class='editor-bar-item'><span class='editor-bar-label'>Draft</span><span id='editor-save' class='badge' role='status' aria-live='polite'>Not editing</span>"
@@ -305,9 +370,11 @@ public class ManagementPagesController
     @GetMapping(value = "/management/configuration/import", produces = MediaType.TEXT_HTML_VALUE)
     String importPage(Authentication auth, HttpServletRequest request)
     {
+        if (runtime.mode() == ai.loomspan.sidecar.configuration.ConfigurationMode.FILE) return filePage(auth, request);
         return console("Import configuration", "Load an exported bundle into your saved draft, then validate and publish it.", ManagementController.principal(auth), request, "",
                 "<section data-console='import' class='stack-lg'><ol class='stepper'><li>Choose bundle</li><li>Review on this Sidecar</li><li>Load into draft</li></ol>"
-                        + "<div class='card stack'><h2>Configuration bundle</h2><p class='muted'>Choose a format-1 current-configuration bundle exported from this or another Sidecar.</p>"
+                        + "<div class='card stack'><h2>Configuration bundle</h2><p class='muted'>Choose a format-3 current-configuration bundle exported from this or another Sidecar.</p>"
+                        + "<label>Credential import<select id='import-credential-mode'><option value='included'>Use included encrypted credentials (same key)</option><option value='configuration-only'>Configuration only; provide destination replacements</option></select></label>"
                         + "<label class='dropzone'><span>Bundle file (.zip)</span><input id='import-file' type='file' accept='.zip,application/zip'></label>"
                         + "<div class='row'><button id='import-review' class='btn-primary' type='button'>Review on this destination</button></div>"
                         + "<p id='import-status' class='notice' role='status' aria-live='polite'>Choose a bundle to review.</p></div>"
@@ -399,11 +466,11 @@ public class ManagementPagesController
         return "admin".equals(role) ? "Administrator" : "editor".equals(role) ? "Editor" : "Viewer";
     }
 
-    private static String console(String title, String description, ManagementUserDetailsService.Principal user,
+    private String console(String title, String description, ManagementUserDetailsService.Principal user,
             HttpServletRequest request, String actions, String body)
     {
         String path = request.getRequestURI();
-        boolean editor = !"viewer".equals(user.role());
+        boolean editor = !"viewer".equals(user.role()) && runtime.mode() == ai.loomspan.sidecar.configuration.ConfigurationMode.DATABASE;
         String nav = "<nav class='nav' aria-label='Management'>"
                 + link(path, "/management/home", ICON_HOME, "Overview")
                 + "<p class='nav-label'>Configuration</p>"

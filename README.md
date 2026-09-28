@@ -103,9 +103,14 @@ The Java SDK will have its own `sdks/java/pom.xml` when implemented. The root
 ## Configure and operate
 
 The embedded console lets administrators manage accounts and lets editors
-publish complete skill and REST route snapshots. A new database is empty.
-Model connections, JWT trust, SMTP, and deployment URL values are configured
-outside the console. The supported production deployment is one Sidecar instance
+publish complete skill, REST route, and execution snapshots. A new database is empty.
+Select `LOOMSPAN_SIDECAR_CONFIGURATION_MODE=file|database` at startup (default
+`database`). Database mode publishes complete settings and encrypted credentials
+through the Console/API. File mode uses deployment files and applies changes by
+restart; its configuration Console is read-only. Optional encrypted exports work
+at destinations sharing the externally provisioned encryption key. JWT trust,
+SMTP and deployment URL values remain deployment
+settings. The supported production deployment is one Sidecar instance
 per persistent local SQLite volume, served through HTTPS by Caddy.
 
 - [Integration guide](docs/integration.md): connect a caller, configure skills

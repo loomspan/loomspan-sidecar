@@ -53,6 +53,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "loomspan-sidecar.executions.max-input-size=64B",
         "loomspan-sidecar.executions.max-queued-input-size=32B"
 })
+@org.springframework.context.annotation.Import(SidecarApplicationFixture.Credentials.class)
 class AuthenticatedExecutionApiIntegrationTest {
     @TempDir static Path storageDirectory;
     private static final SidecarApplicationFixture FIXTURE = new SidecarApplicationFixture();
@@ -86,12 +87,12 @@ class AuthenticatedExecutionApiIntegrationTest {
                             fixture-model:
                               connection: fixture
                               provider-model: fixture-provider-model
-                        """.formatted(FIXTURE.modelPort())).toString());
+                        """.formatted(FIXTURE.modelPort()), java.util.Map.of("fixture.model.key", "local-test-key")).toString());
         properties.add("fixture.model.key", () -> "local-test-key");
         properties.add("loomspan.connections.fixture.driver", () -> "openai");
         properties.add("loomspan.connections.fixture.base-url",
                 () -> "http://127.0.0.1:" + FIXTURE.modelPort() + "/v1");
-        properties.add("loomspan.connections.fixture.api-key", () -> "local-test-key");
+        properties.add("loomspan.connections.fixture.api-key", () -> "${fixture.model.key}");
         properties.add("loomspan.models.fixture-model.connection", () -> "fixture");
         properties.add("loomspan.models.fixture-model.provider-model", () -> "fixture-provider-model");
     }
@@ -476,8 +477,8 @@ class AuthenticatedExecutionApiIntegrationTest {
             var draft = new ai.loomspan.sidecar.storage.ConfigurationDraft(snapshots.current());
             draft.replaceContent(new ai.loomspan.sidecar.storage.ManagedConfiguration(List.of(),
                     ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
-            assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(runtimeConfiguration, draft).successful()).isTrue();
-            publicationFixture.publish(draft);
+            assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(runtimeConfiguration, draft, List.of()).successful()).isTrue();
+            publicationFixture.publish(draft, List.of());
             assertThat(mapper.readTree(send("GET", "/v1/skills", token, null).body()).isEmpty()).isTrue();
             assertThat(send("POST", "/v1/skills/echoRest/executions", token, "{}").statusCode()).isEqualTo(404);
         } finally { restoreConfiguration(original); }
@@ -487,8 +488,9 @@ class AuthenticatedExecutionApiIntegrationTest {
         if (snapshots.current().configuration().equals(original)) return;
         var restore = new ai.loomspan.sidecar.storage.ConfigurationDraft(snapshots.current());
         restore.replaceContent(original);
-        if (!ai.loomspan.sidecar.support.TestDrafts.validate(runtimeConfiguration, restore).successful()) throw new AssertionError("Fixture restore validation failed");
-        publicationFixture.publish(restore);
+        var credentials = SidecarApplicationFixture.encrypt(java.util.Map.of("fixture.model.key", "local-test-key"));
+        if (!ai.loomspan.sidecar.support.TestDrafts.validate(runtimeConfiguration, restore, credentials).successful()) throw new AssertionError("Fixture restore validation failed");
+        publicationFixture.publish(restore, credentials);
     }
 
     @Test

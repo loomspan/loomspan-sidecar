@@ -4,7 +4,9 @@
   if (!root) return;
   const $ = id => document.getElementById(id);
   const state = { session: null, runtimeId: null, draft: null, grant: null, ownership: null,
-    docs: [], rest: '', execution: '', dirty: false, busy: false, failed: false, valid: false, fault: false,
+    docs: [], rest: '', execution: '', credentialIdentifiers: [],
+    configuredCredentialIdentifiers: [],
+    dirty: false, busy: false, failed: false, valid: false, fault: false,
     editing: false, timer: null, lastActivity: 0, localVersion: 0 };
   const message = (text, error = false) => { $('editor-message').textContent = text; $('editor-message').classList.toggle('error', error); };
   const api = async (path, method = 'GET', body) => {
@@ -33,6 +35,13 @@
     const editable = state.editing && !state.fault && !state.busy;
     $('editor-fields').hidden = !state.session;
     for (const node of root.querySelectorAll('#editor-fields input, #editor-fields textarea')) node.readOnly = !editable;
+    for (const node of root.querySelectorAll('#editor-fields select')) node.disabled = !editable;
+    $('editor-generate-execution').disabled = !editable;
+    $('editor-credential-status').textContent = state.credentialIdentifiers.length
+      ? `Identifiers: ${state.credentialIdentifiers.map(id => `${id} (${state.configuredCredentialIdentifiers.includes(id) ? 'configured' : 'required'})`).join(', ')}. Values are never shown.`
+      : 'No Console credentials are configured in this draft.';
+    $('editor-credential-replace').disabled = !editable || state.dirty || !state.draft;
+    $('editor-credential-remove').disabled = !editable || state.dirty || !state.draft;
     for (const node of root.querySelectorAll('.editor-remove')) node.hidden = !editable;
     $('editor-add').hidden = !editable;
     $('editor-acquire').hidden = !state.session || state.session.role === 'viewer' || !!state.ownership?.held || !!state.grant || state.fault;
@@ -78,6 +87,8 @@
   const setDraft = (draft, overwrite = true) => {
     state.draft = draft;
     state.valid = !!draft?.validation?.successful && !draft?.stale;
+    state.credentialIdentifiers = draft?.configuration.credentialIdentifiers || [];
+    state.configuredCredentialIdentifiers = draft?.configuredCredentialIdentifiers || [];
     $('editor-saved-preview').hidden = !draft;
     $('editor-saved-content').textContent = draft ?
       `Revision ${draft.revision}${draft.stale ? ' (stale)' : ''}\n`
@@ -153,7 +164,10 @@
       if (!draft && !state.draft && !state.dirty) {
         state.docs = current.published.configuration.skillDocuments.map(d => ({ ...d }));
         state.rest = current.published.configuration.restRoutesYaml;
-        state.execution = current.published.configuration.executionConfigurationYaml; draw();
+        state.execution = current.published.configuration.executionConfigurationYaml;
+        state.credentialIdentifiers = current.published.configuration.credentialIdentifiers || [];
+        state.configuredCredentialIdentifiers = state.credentialIdentifiers;
+        draw();
       }
       $('editor-outcome').textContent = `Published configuration: ${current.published.localId}. ${draft ? `Your saved draft: revision ${draft.revision}${draft.stale ? ' (stale)' : ''}.` : 'No saved draft.'}`;
       render();
@@ -202,6 +216,107 @@
   };
   $('editor-rest').addEventListener('input', event => { state.rest = event.target.value; changed(); });
   $('editor-execution').addEventListener('input', event => { state.execution = event.target.value; changed(); });
+  $('editor-credential-replace').addEventListener('click', async () => {
+    if (!state.grant || !state.editing || state.dirty || state.busy) return;
+    const identifier = $('editor-credential-id').value.trim();
+    const valueField = $('editor-credential-value');
+    const value = valueField.value;
+    if (!identifier || !value) { message('Enter a credential identifier and new value.', true); return; }
+    state.busy = true; render();
+    try {
+      const draft = await api('/editing/draft/credentials', 'PUT', { ...candidate(), identifier, value });
+      setDraft(draft, false);
+      state.credentialIdentifiers = draft.configuration.credentialIdentifiers || [];
+      state.configuredCredentialIdentifiers = draft.configuredCredentialIdentifiers || [];
+      message(`Credential ${identifier} saved to the draft. Validate again before publishing.`);
+    } catch (error) {
+      if (error.status === 409) await poll();
+      message('Credential was not saved: ' + error.message, true);
+    } finally { valueField.value = ''; state.busy = false; render(); }
+  });
+  $('editor-credential-remove').addEventListener('click', async () => {
+    if (!state.grant || !state.editing || state.dirty || state.busy) return;
+    const identifier = $('editor-credential-id').value.trim();
+    if (!state.credentialIdentifiers.includes(identifier)) {
+      message('Select a configured or required identifier to remove.', true); return;
+    }
+    if (!confirm(`Remove credential ${identifier} from this draft?`)) return;
+    state.busy = true; render();
+    try {
+      const draft = await api('/editing/draft/credentials', 'DELETE', { ...candidate(), identifier });
+      setDraft(draft, false);
+      state.credentialIdentifiers = draft.configuration.credentialIdentifiers || [];
+      state.configuredCredentialIdentifiers = draft.configuredCredentialIdentifiers || [];
+      message(`Credential ${identifier} removed from the draft. Validate again before publishing.`);
+    } catch (error) {
+      if (error.status === 409) await poll();
+      message('Credential was not removed: ' + error.message, true);
+    } finally { $('editor-credential-value').value = ''; state.busy = false; render(); }
+  });
+  $('editor-generate-execution').addEventListener('click', () => {
+    if (!state.editing) return;
+    if (state.execution.trim() && !confirm('Replace the visible execution YAML with YAML generated from these fields?')) return;
+    const value = id => $(id).value.trim();
+    const scalar = text => JSON.stringify(text);
+    const connection = value('editor-connection-name') || 'primary';
+    const model = value('editor-model-alias') || 'default';
+    const lines = ['loomspan:', '  connections:', `    ${scalar(connection)}:`,
+      `      driver: ${scalar(value('editor-driver'))}`];
+    if (value('editor-base-url')) lines.push(`      base-url: ${scalar(value('editor-base-url'))}`);
+    if (value('editor-api-key-ref')) lines.push(`      api-key-ref: ${scalar(value('editor-api-key-ref'))}`);
+    const headers = value('editor-header-refs').split('\n').map(line => line.trim()).filter(Boolean);
+    if (headers.length) {
+      lines.push('      header-refs:');
+      for (const header of headers) {
+        const split = header.indexOf('=');
+        if (split <= 0 || !header.slice(split + 1).trim()) {
+          message('Header references must use Header=identifier, one per line.', true); return;
+        }
+        lines.push(`        ${scalar(header.slice(0, split).trim())}: ${scalar(header.slice(split + 1).trim())}`);
+      }
+    }
+    const openai = [['compatibility-profile', 'editor-openai-profile'],
+      ['organization-id', 'editor-openai-org'], ['project-id', 'editor-openai-project']]
+      .filter(([, id]) => value(id));
+    if (openai.length) {
+      lines.push('      openai:');
+      openai.forEach(([key, id]) => lines.push(`        ${key}: ${scalar(value(id))}`));
+    }
+    const gemini = [['project-id', 'editor-gemini-project'], ['location', 'editor-gemini-location'],
+      ['credentials-json-ref', 'editor-gemini-credentials-json-ref']].filter(([, id]) => value(id));
+    if (gemini.length || $('editor-gemini-vertex').checked) {
+      lines.push('      gemini:');
+      if ($('editor-gemini-vertex').checked) lines.push('        vertex-ai: true');
+      gemini.forEach(([key, id]) => lines.push(`        ${key}: ${scalar(value(id))}`));
+    }
+    const retry = [['max-attempts', 'editor-retry-attempts'], ['initial-backoff', 'editor-retry-initial'],
+      ['multiplier', 'editor-retry-multiplier'], ['max-backoff', 'editor-retry-max'],
+      ['jitter', 'editor-retry-jitter']].filter(([, id]) => value(id));
+    if (retry.length || $('editor-retry-enabled').checked) {
+      lines.push('      provider-retry:', `        enabled: ${$('editor-retry-enabled').checked}`);
+      retry.forEach(([key, id]) => lines.push(`        ${key}: ${scalar(value(id))}`));
+    }
+    lines.push('  models:', `    ${scalar(model)}:`, `      connection: ${scalar(connection)}`,
+      `      provider-model: ${scalar(value('editor-provider-model'))}`);
+    const levels = value('editor-thinking-levels').split(',').map(item => item.trim()).filter(Boolean);
+    if (levels.length) { lines.push('      thinking-levels:'); levels.forEach(level => lines.push(`        - ${scalar(level)}`)); }
+    lines.push('  session:', `    max-depth: ${Number(value('editor-max-depth')) || 8}`);
+    if (value('editor-mission-timeout')) lines.push(`    mission-timeout: ${scalar(value('editor-mission-timeout'))}`);
+    const quotas = [['max-skill-invocations', 'editor-max-skills'],
+      ['max-tool-invocations', 'editor-max-tools'], ['max-linter-retries', 'editor-max-linters'],
+      ['max-model-calls', 'editor-max-models'], ['max-provider-attempts', 'editor-max-provider-attempts'],
+      ['max-usage-units', 'editor-max-usage']].filter(([, id]) => value(id) !== '');
+    if (quotas.length) {
+      lines.push('    quotas:');
+      quotas.forEach(([key, id]) => lines.push(`      ${key}: ${Number(value(id))}`));
+    }
+    if (value('editor-attachment-size'))
+      lines.push('    attachments:', `      max-size: ${scalar(value('editor-attachment-size'))}`);
+    lines.push('  execution-trace:', `    persistence: ${scalar(value('editor-trace'))}`);
+    state.execution = lines.join('\n') + '\n';
+    $('editor-execution').value = state.execution;
+    changed(); message('Generated YAML is in the draft editor. Review and save it before validation.');
+  });
   $('editor-add').addEventListener('click', () => { state.docs.push({ sourceName: `skill-${state.docs.length + 1}.yaml`, yaml: '' }); draw(); changed(); });
   $('editor-acquire').addEventListener('click', () => acquire(''));
   $('editor-handoff').addEventListener('click', () => acquire('/handoff'));

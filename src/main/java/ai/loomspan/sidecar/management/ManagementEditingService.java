@@ -2,6 +2,8 @@ package ai.loomspan.sidecar.management;
 
 import ai.loomspan.sidecar.config.SidecarManagementProperties;
 import ai.loomspan.sidecar.configuration.RuntimeConfigurationService;
+import ai.loomspan.sidecar.configuration.ProviderCredentialCipher;
+import ai.loomspan.sidecar.storage.EncryptedCredential;
 import ai.loomspan.sidecar.storage.ConfigurationDraftStore;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshot;
 import ai.loomspan.sidecar.storage.ConfigurationValidationResult;
@@ -26,7 +28,8 @@ public final class ManagementEditingService {
             UUID editingSessionId) {}
     public record Grant(UUID editingSessionId, UUID generation, Instant expiresAt, Draft draft) {}
     public record Draft(UUID draftId, long revision, UUID baseSnapshotId, UUID sourceSnapshotId,
-            ManagedConfiguration configuration, boolean stale, ConfigurationValidationResult validation) {}
+            ManagedConfiguration configuration, java.util.List<String> configuredCredentialIdentifiers,
+            boolean stale, ConfigurationValidationResult validation) {}
 
     private final RuntimeConfigurationService runtime;
     private final ManagementEditingState state;
@@ -35,15 +38,22 @@ public final class ManagementEditingService {
     private final ManagementPersonalTokenService tokens;
     private final SidecarManagementProperties settings;
     private final Clock clock;
+    private final ProviderCredentialCipher cipher;
 
     public ManagementEditingService(RuntimeConfigurationService runtime, ManagementEditingState state,
             ConfigurationDraftStore drafts, ManagementIdentityService identity,
-            ManagementPersonalTokenService tokens, SidecarManagementProperties settings, Clock clock) {
+            ManagementPersonalTokenService tokens, SidecarManagementProperties settings, Clock clock,
+            ProviderCredentialCipher cipher) {
         this.runtime = runtime; this.state = state; this.drafts = drafts; this.identity = identity;
         this.tokens = tokens; this.settings = settings; this.clock = clock;
+        this.cipher = cipher;
     }
 
     public Status status(HttpSession session, ManagementUserDetailsService.Principal user) {
+        if (runtime.mode() == ai.loomspan.sidecar.configuration.ConfigurationMode.FILE) {
+            active(session); checkAccount(user);
+            return new Status(false, false, false, null, null, null);
+        }
         return runtime.withEditingState(false, base -> {
             synchronized (state) {
                 String id = active(session); checkAccount(user); expire();
@@ -57,6 +67,9 @@ public final class ManagementEditingService {
     }
 
     public Draft read(HttpSession session, ManagementUserDetailsService.Principal user) {
+        if (runtime.mode() == ai.loomspan.sidecar.configuration.ConfigurationMode.FILE) {
+            active(session); checkAccount(user); return null;
+        }
         return runtime.withEditingState(false, base -> {
             synchronized (state) {
                 active(session); checkAccount(user); expire();
@@ -104,7 +117,7 @@ public final class ManagementEditingService {
             UUID editingSessionId, UUID generation, UUID draftId, long revision, UUID expectedBaseId,
             ManagedConfiguration configuration) {
         var saved = replace(session, user, editingSessionId, generation, draftId, revision, expectedBaseId,
-                configuration, null, false);
+                configuration, null, false, null);
         audited("draft.save", user, saved.draftId(), saved.baseSnapshotId(), null);
         return saved;
     }
@@ -113,7 +126,7 @@ public final class ManagementEditingService {
             UUID editingSessionId, UUID generation, UUID draftId, long revision, UUID currentBaseId,
             ManagedConfiguration configuration) {
         var saved = replace(session, user, editingSessionId, generation, draftId, revision, currentBaseId,
-                configuration, null, true);
+                configuration, null, true, null);
         audited("draft.reconcile", user, saved.draftId(), saved.baseSnapshotId(), null);
         return saved;
     }
@@ -122,14 +135,25 @@ public final class ManagementEditingService {
             UUID editingSessionId, UUID generation, UUID draftId, long revision, UUID currentBaseId,
             ManagedConfiguration configuration, UUID sourceId) {
         var saved = replace(session, user, editingSessionId, generation, draftId, revision, currentBaseId,
-                configuration, sourceId, true);
+                configuration, sourceId, true, null);
+        audited("draft.load", user, saved.draftId(), saved.baseSnapshotId(), null);
+        return saved;
+    }
+
+    public Draft loadRetained(HttpSession session, ManagementUserDetailsService.Principal user,
+            UUID editingSessionId, UUID generation, UUID draftId, long revision, UUID currentBaseId,
+            ManagedConfiguration configuration, UUID sourceId,
+            java.util.List<EncryptedCredential> credentials) {
+        var saved = replace(session, user, editingSessionId, generation, draftId, revision, currentBaseId,
+                configuration, sourceId, true, credentials);
         audited("draft.load", user, saved.draftId(), saved.baseSnapshotId(), null);
         return saved;
     }
 
     private Draft replace(HttpSession session, ManagementUserDetailsService.Principal user,
             UUID editingSessionId, UUID generation, UUID draftId, long revision, UUID baseId,
-            ManagedConfiguration configuration, UUID sourceId, boolean rebase) {
+            ManagedConfiguration configuration, UUID sourceId, boolean rebase,
+            java.util.List<EncryptedCredential> credentials) {
         if (configuration == null || draftId == null || baseId == null || revision < 1)
             throw new IllegalArgumentException("Missing complete draft submission");
         return mutation(base -> {
@@ -139,7 +163,7 @@ public final class ManagementEditingService {
             if (!rebase && !saved.baseSnapshotId().equals(baseId)) throw new Conflict("base_conflict");
             try {
                 saved = drafts.replace(user.id(), draftId, revision, saved.baseSnapshotId(), baseId,
-                        configuration, sourceId);
+                        configuration, sourceId, credentials);
             } catch (IllegalStateException changed) { throw new Conflict("revision_conflict"); }
             state.validation = null;
             return view(saved, base);
@@ -156,6 +180,44 @@ public final class ManagementEditingService {
         audited("draft.discard", user, draftId, null, null);
     }
 
+    public Draft replaceCredential(HttpSession session, ManagementUserDetailsService.Principal user,
+            UUID editingSessionId, UUID generation, UUID draftId, long revision, UUID baseId,
+            String identifier, String value) {
+        if (identifier == null || !identifier.matches("[A-Za-z_][A-Za-z0-9_.-]{0,199}")
+                || value == null || value.isBlank() || value.length() > 131072)
+            throw new IllegalArgumentException("Invalid provider credential");
+        var changed = mutation(base -> {
+            ownLease(session, user, editingSessionId, generation);
+            exact(user.id(), draftId, revision, baseId, base);
+            String version = UUID.randomUUID().toString();
+            var encrypted = new EncryptedCredential(identifier, version, cipher.encrypt(identifier, version, value));
+            ConfigurationDraftStore.Saved saved;
+            try { saved = drafts.replaceCredential(user.id(), draftId, revision, baseId, encrypted); }
+            catch (IllegalStateException conflict) { throw new Conflict("revision_conflict"); }
+            state.validation = null;
+            return view(saved, base);
+        });
+        audited("credential.replace", user, draftId, baseId, null);
+        return changed;
+    }
+
+    public Draft removeCredential(HttpSession session, ManagementUserDetailsService.Principal user,
+            UUID editingSessionId, UUID generation, UUID draftId, long revision, UUID baseId,
+            String identifier) {
+        if (identifier == null || identifier.isBlank()) throw new IllegalArgumentException("Missing identifier");
+        var changed = mutation(base -> {
+            ownLease(session, user, editingSessionId, generation);
+            exact(user.id(), draftId, revision, baseId, base);
+            ConfigurationDraftStore.Saved saved;
+            try { saved = drafts.removeCredential(user.id(), draftId, revision, baseId, identifier); }
+            catch (IllegalStateException conflict) { throw new Conflict("revision_conflict"); }
+            state.validation = null;
+            return view(saved, base);
+        });
+        audited("credential.remove", user, draftId, baseId, null);
+        return changed;
+    }
+
     public Draft validate(HttpSession session, ManagementUserDetailsService.Principal user,
             UUID editingSessionId, UUID generation, UUID draftId, long revision, UUID baseId) {
         var captured = mutation(base -> {
@@ -163,12 +225,16 @@ public final class ManagementEditingService {
             var saved = exact(user.id(), draftId, revision, baseId, base);
             return saved;
         });
-        ConfigurationValidationResult result = runtime.validate(captured.configuration());
+        var attempt = runtime.validateWithCandidate(captured.configuration(),
+                drafts.credentialVersions(captured.accountId()), captured.sourceSnapshotId(),
+                captured.retainedSource());
+        ConfigurationValidationResult result = attempt.result();
         var validated = mutation(base -> {
             ownLease(session, user, editingSessionId, generation);
             var saved = exact(user.id(), draftId, revision, baseId, base);
             if (!saved.equals(captured)) throw new Conflict("revision_conflict");
-            state.validation = new ManagementEditingState.Validation(draftId, revision, baseId, generation, result);
+            state.validation = new ManagementEditingState.Validation(draftId, revision, baseId, generation,
+                    result, attempt.candidate());
             return view(saved, base);
         });
         var credential = ManagementCredential.current();
@@ -192,7 +258,8 @@ public final class ManagementEditingService {
                             || !validated.generation().equals(generation) || !validated.result().successful())
                         throw new Conflict("validation_required");
                     return new RuntimeConfigurationService.PublicationAdmission(saved.accountId(), draftId,
-                            revision, saved.configuration(), saved.sourceSnapshotId(), baseId);
+                            revision, saved.configuration(), saved.sourceSnapshotId(), baseId, validated.candidate(),
+                            saved.retainedSource());
                 }
             }));
             audited("configuration.publish", user, draftId, baseId, published.localId());
@@ -294,7 +361,16 @@ public final class ManagementEditingService {
     }
 
     private <T> T transition(boolean mutating, java.util.function.Function<ConfigurationSnapshot, T> action) {
+        runtime.requireDatabase();
         return runtime.withEditingState(mutating, base -> { synchronized (state) { return action.apply(base); } });
+    }
+
+    public void authorizeExport(HttpSession session, ManagementUserDetailsService.Principal user,
+            boolean includeCredentials) {
+        runtime.withEditingTransition(() -> {
+            activeForAdmission(session);
+            if (includeCredentials) checkEditor(user); else checkAccount(user);
+        });
     }
 
     private Draft view(ConfigurationDraftStore.Saved saved, ConfigurationSnapshot base) {
@@ -306,7 +382,9 @@ public final class ManagementEditingService {
                 && state.lease != null && proof.generation().equals(state.lease.generation)
                 ? proof.result() : null;
         return new Draft(saved.draftId(), saved.revision(), saved.baseSnapshotId(), saved.sourceSnapshotId(),
-                saved.configuration(), !saved.baseSnapshotId().equals(base.localId()), validation);
+                saved.configuration(), drafts.credentialVersions(saved.accountId()).stream()
+                        .map(EncryptedCredential::identifier).toList(),
+                !saved.baseSnapshotId().equals(base.localId()), validation);
     }
 
     private static Instant at(long millis) { return Instant.ofEpochMilli(millis); }

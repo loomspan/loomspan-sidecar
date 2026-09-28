@@ -4,7 +4,7 @@ import ai.loomspan.api.SkillInvocationHandoff;
 import ai.loomspan.api.SkillReloader;
 import ai.loomspan.sidecar.LoomspanSidecarApplication;
 import ai.loomspan.sidecar.configuration.RuntimeConfigurationService;
-import ai.loomspan.sidecar.bundle.ConfigurationBundleV2;
+import ai.loomspan.sidecar.bundle.ConfigurationBundleV3;
 import ai.loomspan.sidecar.storage.ConfigurationDraft;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshotStore;
 import ai.loomspan.sidecar.storage.ManagedConfiguration;
@@ -66,13 +66,13 @@ class RestGenerationIntegrationTest {
             try (var sourceContext = boundContext(sourceDb, first.getAddress().getPort())) {
                 var sourceRuntime = sourceContext.getBean(RuntimeConfigurationService.class);
                 source = sourceRuntime.publishedSnapshot();
-                bundle = ConfigurationBundleV2.write(source);
+                bundle = ConfigurationBundleV3.write(source);
                 assertThat(invoke(sourceContext)).isEqualTo("first");
             }
             Path destinationDb = directory.resolve("placeholder-destination.db");
             try (var destination = boundContext(destinationDb, second.getAddress().getPort())) {
                 var runtime = destination.getBean(RuntimeConfigurationService.class);
-                var imported = ConfigurationBundleV2.read(bundle);
+                var imported = ConfigurationBundleV3.read(bundle);
                 var candidate = new ConfigurationDraft(runtime.publishedSnapshot());
                 candidate.replaceContent(imported.configuration());
                 assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(runtime, candidate).successful()).isTrue();

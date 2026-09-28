@@ -1,7 +1,7 @@
 package ai.loomspan.sidecar.configuration;
 
 import ai.loomspan.sidecar.configuration.RuntimeConfigurationService;
-import ai.loomspan.sidecar.bundle.ConfigurationBundleV2;
+import ai.loomspan.sidecar.bundle.ConfigurationBundleV3;
 import ai.loomspan.sidecar.storage.ManagedConfiguration;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshot;
 import ai.loomspan.sidecar.storage.SnapshotStatus;
@@ -72,7 +72,7 @@ class ManagementConfigurationHttpIntegrationTest {
         seed(email, "editor"); Browser editor = login(email);
         var source = runtime.publishedSnapshot();
         byte[] bundle;
-        Path path = ConfigurationBundleV2.write(source);
+        Path path = ConfigurationBundleV3.write(source);
         try { bundle = java.nio.file.Files.readAllBytes(path); }
         finally { java.nio.file.Files.deleteIfExists(path); }
         JsonNode grant = ok(editor.post("/api/management/editing/lease", "{\"label\":\"HTTP test\"}"));
@@ -132,8 +132,28 @@ class ManagementConfigurationHttpIntegrationTest {
         var exported = viewer.getBytes("/api/management/configuration/export");
         assertThat(exported.statusCode()).isEqualTo(200);
         assertThat(exported.body()).isNotEmpty();
+        assertThat(viewer.getBytes("/api/management/configuration/export?includeEncryptedCredentials=true").statusCode())
+                .isEqualTo(409);
         assertThat(viewer.post("/api/management/configuration/rollback/" + runtime.inspect().publishedId()
                 + "/review", "{}").statusCode()).isEqualTo(403);
+    }
+
+    @Test void encryptedExportRechecksEditAuthorityAfterWaitingForCaptureGate() throws Exception {
+        String email = "encrypted-export-" + UUID.randomUUID() + "@example.test";
+        seed(email, "editor"); Browser editor = login(email);
+        var publicationField = RuntimeConfigurationService.class.getDeclaredField("publication");
+        publicationField.setAccessible(true);
+        var gate = (java.util.concurrent.locks.ReentrantLock) publicationField.get(runtime);
+        gate.lock();
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var export = workers.submit(() -> editor.getBytes("/api/management/configuration/export?includeEncryptedCredentials=true"));
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+            while (runtime.queuedPublications() == 0 && System.nanoTime() < deadline) Thread.sleep(10);
+            assertThat(runtime.queuedPublications()).isPositive();
+            identity.alter(identity.account(email).id(), "viewer", true);
+            gate.unlock();
+            assertThat(export.get(5, TimeUnit.SECONDS).statusCode()).isEqualTo(409);
+        } finally { if (gate.isHeldByCurrentThread()) gate.unlock(); }
     }
 
     @Test void failedPublicationPreservesSavedDraftAndLease() throws Exception {

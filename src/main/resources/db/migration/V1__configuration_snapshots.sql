@@ -4,8 +4,31 @@ CREATE TABLE configuration_snapshot (
     source_id TEXT,
     document_count INTEGER NOT NULL CHECK (document_count >= 0),
     rest_routes_yaml TEXT NOT NULL,
-    execution_configuration_yaml TEXT NOT NULL
+    execution_configuration_yaml TEXT NOT NULL,
+    effective_execution_yaml TEXT NOT NULL
 );
+
+-- Inspection metadata only; file starts never change the database publication pointer.
+CREATE TABLE configuration_file_startup (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    local_id TEXT NOT NULL UNIQUE,
+    started_at TEXT NOT NULL,
+    inspection_json TEXT NOT NULL
+);
+
+CREATE TABLE configuration_snapshot_credential (
+    snapshot_sequence INTEGER NOT NULL REFERENCES configuration_snapshot(submission_sequence) ON DELETE CASCADE,
+    identifier TEXT NOT NULL,
+    version TEXT NOT NULL,
+    ciphertext TEXT NOT NULL,
+    PRIMARY KEY (snapshot_sequence, identifier)
+);
+
+CREATE TRIGGER configuration_snapshot_credential_immutable
+BEFORE UPDATE ON configuration_snapshot_credential
+BEGIN
+    SELECT RAISE(ABORT, 'configuration credential is immutable');
+END;
 
 CREATE TABLE configuration_skill_document (
     snapshot_sequence INTEGER NOT NULL REFERENCES configuration_snapshot(submission_sequence) ON DELETE CASCADE,

@@ -18,6 +18,10 @@ public final class ManagementEditingController {
     public record Save(UUID editingSessionId, UUID generation, UUID draftId, long revision,
             UUID baseSnapshotId, List<SkillDocument> skillDocuments, String restRoutesYaml,
             String executionConfigurationYaml) {}
+    public record CredentialReplacement(UUID editingSessionId, UUID generation, UUID draftId,
+            long revision, UUID baseSnapshotId, String identifier, String value) {}
+    public record CredentialRemoval(UUID editingSessionId, UUID generation, UUID draftId,
+            long revision, UUID baseSnapshotId, String identifier) {}
 
     private final ManagementEditingService editing;
     public ManagementEditingController(ManagementEditingService editing) { this.editing = editing; }
@@ -81,6 +85,22 @@ public final class ManagementEditingController {
                 body.editingSessionId(), body.generation(), body.draftId(), body.revision(), body.baseSnapshotId());
     }
 
+    @PutMapping("/draft/credentials")
+    public ManagementEditingService.Draft replaceCredential(@RequestBody CredentialReplacement body,
+            Authentication auth, HttpServletRequest request) {
+        return editing.replaceCredential(request.getSession(false), ManagementController.principal(auth),
+                body.editingSessionId(), body.generation(), body.draftId(), body.revision(),
+                body.baseSnapshotId(), body.identifier(), body.value());
+    }
+
+    @DeleteMapping("/draft/credentials")
+    public ManagementEditingService.Draft removeCredential(@RequestBody CredentialRemoval body,
+            Authentication auth, HttpServletRequest request) {
+        return editing.removeCredential(request.getSession(false), ManagementController.principal(auth),
+                body.editingSessionId(), body.generation(), body.draftId(), body.revision(),
+                body.baseSnapshotId(), body.identifier());
+    }
+
     @DeleteMapping("/draft")
     public ResponseEntity<Void> discard(@RequestBody Candidate body, Authentication auth, HttpServletRequest request) {
         editing.discard(request.getSession(false), ManagementController.principal(auth),
@@ -92,8 +112,10 @@ public final class ManagementEditingController {
         if (body.skillDocuments() == null || body.restRoutesYaml() == null
                 || body.executionConfigurationYaml() == null)
             throw new IllegalArgumentException("Complete configuration required");
+        ai.loomspan.sidecar.configuration.EffectiveExecutionConfiguration
+                .assertNoDirectAuthoredCredentials(body.executionConfigurationYaml());
         return new ManagedConfiguration(body.skillDocuments(), body.restRoutesYaml(),
-                body.executionConfigurationYaml());
+                body.executionConfigurationYaml(), List.of());
     }
 
     private static String label(Map<String, Object> body) {
@@ -111,6 +133,13 @@ public final class ManagementEditingController {
     @ExceptionHandler(IllegalArgumentException.class)
     ResponseEntity<Map<String, String>> invalid() {
         return ResponseEntity.badRequest().body(Map.of("code", "invalid_request", "error", "Invalid editing request"));
+    }
+
+    @ExceptionHandler(ai.loomspan.sidecar.configuration.ProviderCredentialCipher.Failure.class)
+    ResponseEntity<Map<String, String>> credentialKeyUnavailable(
+            ai.loomspan.sidecar.configuration.ProviderCredentialCipher.Failure failure) {
+        return ResponseEntity.status(503).body(Map.of("code", "credential_key_unavailable",
+                "error", failure.getMessage()));
     }
 
     @ExceptionHandler(IllegalStateException.class)

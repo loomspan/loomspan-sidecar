@@ -37,7 +37,8 @@ import static org.assertj.core.api.Assertions.assertThat;
     "loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test", "loomspan-sidecar.auth.jwt.audience=sidecar",
     "loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem"
 })
-@Import(ManagementPersonalTokenHttpIntegrationTest.TimeConfiguration.class)
+@Import({ManagementPersonalTokenHttpIntegrationTest.TimeConfiguration.class,
+        ai.loomspan.sidecar.support.SidecarApplicationFixture.Credentials.class})
 class ManagementPersonalTokenHttpIntegrationTest {
     @TempDir static Path directory;
     @DynamicPropertySource static void storage(DynamicPropertyRegistry registry) {
@@ -69,9 +70,14 @@ class ManagementPersonalTokenHttpIntegrationTest {
         var current = bearer(token, "GET", "/api/management/configuration/current", null);
         assertThat(current.statusCode()).isEqualTo(200);
         assertThat(current.headers().allValues("Set-Cookie")).isEmpty();
+        var starts = bearer(token, "GET", "/api/management/configuration/file-startups", null);
+        assertThat(starts.statusCode()).isEqualTo(200);
+        assertThat(mapper.readTree(starts.body()).isArray()).isTrue();
         assertThat(bearer(token, "GET", "/api/management/editing/draft", null).statusCode()).isEqualTo(404);
         assertThat(bearer(token, "POST", "/api/management/editing/lease", "{\"label\":\"Read\"}").statusCode()).isEqualTo(403);
         assertThat(state.lease).isNull();
+        assertThat(bearer(token, "GET", "/api/management/configuration/export", null).statusCode()).isEqualTo(200);
+        assertThat(bearer(token, "GET", "/api/management/configuration/export?includeEncryptedCredentials=true", null).statusCode()).isEqualTo(409);
     }
 
     @Test void lifecycleIsOwnerScopedAndSecretIsOneTime() throws Exception {
@@ -91,6 +97,41 @@ class ManagementPersonalTokenHttpIntegrationTest {
         assertThat(bearer(token, "GET", "/api/management/configuration/current", null).statusCode()).isEqualTo(401);
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"edit", "publish"})
+    void credentialRoutesUseTheSameTokenGrantAndRevisionChecks(String preset) throws Exception {
+        String email = seed("editor"); Browser browser = login(email);
+        String token = issue(browser, preset).path("secret").asText();
+        String read = issue(browser, "read").path("secret").asText();
+        String path = "/api/management/editing/draft/credentials";
+        String before = bearer(token, "GET", "/api/management/configuration/current", null).body();
+        var grant = mapper.readTree(bearer(token, "POST", "/api/management/editing/lease",
+                "{\"label\":\"Credential authoring\"}").body());
+        var body = (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(candidate(grant, grant.path("draft")));
+        String secret = "synthetic-provider-" + UUID.randomUUID();
+        body.put("identifier", "provider.remote.key").put("value", secret);
+        String replacement = mapper.writeValueAsString(body);
+        assertThat(bearer(read, "PUT", path, replacement).statusCode()).isEqualTo(403);
+        var response = bearer(token, "PUT", path, replacement);
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
+        assertThat(response.body()).doesNotContain(secret);
+        var saved = mapper.readTree(response.body());
+        assertThat(saved.path("revision").asLong()).isEqualTo(grant.path("draft").path("revision").asLong() + 1);
+        assertThat(saved.path("configuredCredentialIdentifiers").get(0).asText()).isEqualTo("provider.remote.key");
+        long account = jdbc.queryForObject("SELECT id FROM management_account WHERE email=?", Long.class, email);
+        assertThat(jdbc.queryForObject("SELECT ciphertext FROM management_draft_credential WHERE account_id=?",
+                String.class, account)).doesNotContain(secret);
+        assertThat(bearer(token, "PUT", path, replacement).statusCode()).isEqualTo(409);
+        var removal = (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(candidate(grant, saved));
+        removal.put("identifier", "provider.remote.key");
+        String request = mapper.writeValueAsString(removal);
+        assertThat(bearer(read, "DELETE", path, request).statusCode()).isEqualTo(403);
+        var removed = bearer(token, "DELETE", path, request);
+        assertThat(removed.statusCode()).as(removed.body()).isEqualTo(200);
+        assertThat(mapper.readTree(removed.body()).path("configuredCredentialIdentifiers").isEmpty()).isTrue();
+        assertThat(bearer(token, "GET", "/api/management/configuration/current", null).body()).isEqualTo(before);
+    }
+
     @Test void mixedCredentialsAndCookieCsrfStayClosed() throws Exception {
         Browser browser = login(seed("editor")); String token = issue(browser, "edit").path("secret").asText();
         assertThat(browser.postNoCsrf("/api/management/editing/lease", "{\"label\":\"Browser\"}").statusCode()).isEqualTo(403);
@@ -105,6 +146,8 @@ class ManagementPersonalTokenHttpIntegrationTest {
         String edit = issue(browser, "edit").path("secret").asText();
         String publish = issue(browser, "publish").path("secret").asText();
         assertThat(bearer(edit, "POST", "/api/management/configuration/publish", "{}").statusCode()).isEqualTo(403);
+        assertThat(bearer(edit, "GET", "/api/management/configuration/export?includeEncryptedCredentials=true", null).statusCode()).isEqualTo(200);
+        assertThat(bearer(publish, "GET", "/api/management/configuration/export?includeEncryptedCredentials=true", null).statusCode()).isEqualTo(200);
         var grant = mapper.readTree(bearer(edit, "POST", "/api/management/editing/lease", "{\"label\":\"Remote\"}").body());
         assertThat(grant.path("editingSessionId").asText()).isNotBlank();
         assertThat(bearer(publish, "POST", "/api/management/editing/lease/handoff", "{\"label\":\"Remote 2\"}").statusCode()).isEqualTo(200);

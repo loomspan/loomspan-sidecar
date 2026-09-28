@@ -75,6 +75,13 @@ public final class ConfigurationSnapshotStore
     /** Commit a complete pending candidate as intended production, guarded by the caller's expected selection. */
     public ConfigurationSnapshot submit(ManagedConfiguration configuration, UUID sourceId, UUID expectedCurrentLocalId)
     {
+        return submit(configuration, sourceId, expectedCurrentLocalId,
+                configuration.executionConfigurationYaml(), List.of());
+    }
+
+    public ConfigurationSnapshot submit(ManagedConfiguration configuration, UUID sourceId,
+            UUID expectedCurrentLocalId, String effectiveYaml, List<EncryptedCredential> credentials)
+    {
         Objects.requireNonNull(expectedCurrentLocalId, "expectedCurrentLocalId");
         return Objects.requireNonNull(transactions.execute(ignored -> {
             ConfigurationSnapshot current = current();
@@ -82,7 +89,7 @@ public final class ConfigurationSnapshotStore
             {
                 throw new IllegalStateException("Current configuration snapshot changed unexpectedly");
             }
-            ConfigurationSnapshot candidate = repository.insert(configuration, sourceId);
+            ConfigurationSnapshot candidate = repository.insert(configuration, sourceId, effectiveYaml, credentials);
             repository.switchCurrent(current.submissionSequence(), candidate.submissionSequence());
             return candidate;
         }));
@@ -113,6 +120,11 @@ public final class ConfigurationSnapshotStore
     public ConfigurationSnapshot findByLocalId(UUID localId)
     {
         return transactions.execute(ignored -> repository.findByLocalId(localId));
+    }
+
+    public List<EncryptedCredential> credentialVersions(ConfigurationSnapshot snapshot) {
+        return Objects.requireNonNull(transactions.execute(ignored ->
+                repository.credentialVersions(snapshot.submissionSequence())));
     }
 
     public List<ConfigurationSnapshot> history() {

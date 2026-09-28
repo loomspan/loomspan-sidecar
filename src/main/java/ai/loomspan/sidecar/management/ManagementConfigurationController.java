@@ -1,7 +1,7 @@
 package ai.loomspan.sidecar.management;
 
 import ai.loomspan.sidecar.configuration.RuntimeConfigurationService;
-import ai.loomspan.sidecar.bundle.ConfigurationBundleV2;
+import ai.loomspan.sidecar.bundle.ConfigurationBundleV3;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshot;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -52,14 +52,17 @@ public final class ManagementConfigurationController {
     public RuntimeConfigurationService.Current current() { return runtime.current(); }
 
     @GetMapping("/export")
-    public ResponseEntity<StreamingResponseBody> export() throws IOException {
-        ConfigurationSnapshot captured;
-        try { captured = runtime.publishedSnapshot(); }
+    public ResponseEntity<StreamingResponseBody> export(
+            @RequestParam(name = "includeEncryptedCredentials", defaultValue = "false") boolean includeEncryptedCredentials,
+            Authentication auth, HttpServletRequest request) throws IOException {
+        RuntimeConfigurationService.ExportCapture captured;
+        try { captured = runtime.captureExport(includeEncryptedCredentials, () -> editing.authorizeExport(
+                request.getSession(false), ManagementController.principal(auth), includeEncryptedCredentials)); }
         catch (IllegalStateException absent) {
             throw new ExportUnavailable();
         }
         Path bundle;
-        bundle = ConfigurationBundleV2.write(captured);
+        bundle = ConfigurationBundleV3.write(captured.snapshot(), captured.credentials(), includeEncryptedCredentials);
         StreamingResponseBody body = output -> {
             try { Files.copy(bundle, output); }
             finally { Files.deleteIfExists(bundle); }
@@ -86,23 +89,28 @@ public final class ManagementConfigurationController {
                 "error", "Configuration export could not be prepared"));
     }
 
-    @ExceptionHandler(ConfigurationBundleV2.BundleTooLarge.class)
+    @ExceptionHandler(ConfigurationBundleV3.BundleTooLarge.class)
     ResponseEntity<Map<String, String>> bundleTooLarge(HttpServletRequest request) {
         boolean imported = request.getRequestURI().contains("/import/");
         return ResponseEntity.status(413).header(HttpHeaders.CACHE_CONTROL, "no-store")
                 .body(Map.of("code", imported ? "import_too_large" : "export_too_large",
-                        "error", imported ? "Uploaded bundle exceeds format 2 limits"
-                                : "Runtime configuration exceeds format 2 bundle limits"));
+                        "error", imported ? "Uploaded bundle exceeds format 3 limits"
+                                : "Runtime configuration exceeds format 3 bundle limits"));
     }
 
     @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
     ResponseEntity<Map<String, String>> multipartTooLarge() {
         return ResponseEntity.status(413).header(HttpHeaders.CACHE_CONTROL, "no-store")
-                .body(Map.of("code", "import_too_large", "error", "Uploaded bundle exceeds format 2 limits"));
+                .body(Map.of("code", "import_too_large", "error", "Uploaded bundle exceeds format 3 limits"));
     }
 
     @GetMapping("/history")
     public List<ConfigurationSnapshot> history() { return runtime.history(); }
+
+    @GetMapping("/file-startups")
+    public java.util.List<ai.loomspan.sidecar.storage.FileConfigurationStartupStore.Startup> fileStartups() {
+        return runtime.fileHistory();
+    }
 
     @GetMapping("/history/{id}")
     public ResponseEntity<?> history(@PathVariable("id") UUID id) {
@@ -150,11 +158,12 @@ public final class ManagementConfigurationController {
     public ManagementEditingService.Draft importLoad(@RequestPart("bundle") MultipartFile bundle,
             @RequestParam("editingSessionId") UUID editingSessionId, @RequestParam("generation") UUID generation,
             @RequestParam("draftId") UUID draftId, @RequestParam("revision") long revision,
+            @RequestParam(value = "credentialMode", defaultValue = "included") String credentialMode,
             @RequestParam("baseSnapshotId") UUID baseId, Authentication auth, HttpServletRequest request)
             throws IOException, ServletException {
-        requireParts(request, "bundle", "editingSessionId", "generation", "draftId", "revision", "baseSnapshotId");
+        requireParts(request, "bundle", "editingSessionId", "generation", "draftId", "revision", "baseSnapshotId", "credentialMode");
         return imports.load(request.getSession(false), ManagementController.principal(auth), bundle,
-                editingSessionId, generation, draftId, revision, baseId);
+                editingSessionId, generation, draftId, revision, baseId, credentialMode);
     }
 
     private static void requireParts(HttpServletRequest request, String... allowed) throws IOException, ServletException {
@@ -174,7 +183,7 @@ public final class ManagementConfigurationController {
                 .body(Map.of("code", "invalid_upload", "error", "Exactly one valid bundle upload is required"));
     }
 
-    @ExceptionHandler(ConfigurationBundleV2.InvalidBundle.class)
+    @ExceptionHandler(ConfigurationBundleV3.InvalidBundle.class)
     ResponseEntity<Map<String, String>> invalidBundle() {
         return ResponseEntity.badRequest().header(HttpHeaders.CACHE_CONTROL, "no-store")
                 .body(Map.of("code", "invalid_bundle", "error", "Bundle format or content is invalid"));
@@ -198,6 +207,13 @@ public final class ManagementConfigurationController {
     @ExceptionHandler(IllegalArgumentException.class)
     ResponseEntity<Map<String, String>> invalid() {
         return ResponseEntity.badRequest().body(Map.of("code", "invalid_request", "error", "Invalid configuration request"));
+    }
+
+    @ExceptionHandler(ai.loomspan.sidecar.configuration.ProviderCredentialCipher.Failure.class)
+    ResponseEntity<Map<String, String>> credentialFailure(ai.loomspan.sidecar.configuration.ProviderCredentialCipher.Failure failure) {
+        return ResponseEntity.status(409).header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .body(Map.of("code", "credential_key_required", "error", failure.getMessage()
+                        + "; alternatively select configuration-only import and provide destination credentials"));
     }
 
     @ExceptionHandler(IllegalStateException.class)

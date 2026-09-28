@@ -20,17 +20,19 @@ public final class ManagementConfigurationRollbackService {
     }
 
     public Review review(UUID sourceId) {
+        runtime.requireDatabase();
         var source = runtime.history(sourceId);
         if (source == null) throw new SourceMissing();
         return new Review(source.localId(), source.status().name(), source.submissionSequence(),
-                source.configuration().skillDocuments().size(), runtime.validate(source.configuration()));
+                source.configuration().skillDocuments().size(), runtime.validateRetained(source));
     }
 
     public ManagementEditingService.Draft load(HttpSession session, ManagementUserDetailsService.Principal user,
             UUID sourceId, UUID editingSessionId, UUID generation, UUID draftId, long revision, UUID baseId) {
+        runtime.requireDatabase();
         var source = runtime.history(sourceId);
         if (source == null) throw new SourceMissing();
-        return editing.load(session, user, editingSessionId, generation, draftId, revision, baseId,
-                source.configuration(), source.localId());
+        return editing.loadRetained(session, user, editingSessionId, generation, draftId, revision, baseId,
+                source.configuration(), source.localId(), runtime.retainedCredentials(source));
     }
 }

@@ -218,12 +218,12 @@ class ConfigurationSnapshotStoreTest
         var repository = new ConfigurationSnapshotRepository(new NamedParameterJdbcTemplate(fixture.source));
         var configuration = new StorageConfiguration();
         var manager = new DataSourceTransactionManager(fixture.source);
-        var startup = configuration.configurationSnapshotStore(repository, manager, properties);
+        var startup = configuration.configurationSnapshotStore(repository, manager, properties, ai.loomspan.sidecar.configuration.ConfigurationMode.DATABASE);
         assertThat(startup.current()).isEqualTo(c);
         assertThat(startup.findByLocalId(a.localId())).isEqualTo(a);
         new JdbcTemplate(fixture.source).update("DELETE FROM configuration_snapshot_status WHERE snapshot_sequence = ?",
                 c.submissionSequence());
-        assertThatThrownBy(() -> configuration.configurationSnapshotStore(repository, manager, properties))
+        assertThatThrownBy(() -> configuration.configurationSnapshotStore(repository, manager, properties, ai.loomspan.sidecar.configuration.ConfigurationMode.DATABASE))
                 .isInstanceOf(IllegalStateException.class);
         assertThat(count(fixture.source, "configuration_snapshot")).isEqualTo(3);
     }
@@ -381,11 +381,13 @@ class ConfigurationSnapshotStoreTest
             }
             first.setAutoCommit(false);
             first.createStatement().executeUpdate("INSERT INTO configuration_snapshot(local_id, document_count, "
-                    + "rest_routes_yaml, execution_configuration_yaml) VALUES ('held', 0, '', 'loomspan: {}')");
+                    + "rest_routes_yaml, execution_configuration_yaml, effective_execution_yaml) "
+                    + "VALUES ('held', 0, '', 'loomspan: {}', 'loomspan: {}')");
             long start = System.nanoTime();
             assertThatThrownBy(() -> second.createStatement().executeUpdate("INSERT INTO configuration_snapshot"
-                    + "(local_id, document_count, rest_routes_yaml, execution_configuration_yaml) "
-                    + "VALUES ('blocked', 0, '', 'loomspan: {}')"))
+                    + "(local_id, document_count, rest_routes_yaml, execution_configuration_yaml, "
+                    + "effective_execution_yaml) "
+                    + "VALUES ('blocked', 0, '', 'loomspan: {}', 'loomspan: {}')"))
                     .isInstanceOf(java.sql.SQLException.class);
             long elapsed = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
             assertThat(elapsed).isBetween(4000L, 15000L);

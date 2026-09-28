@@ -16,7 +16,7 @@ Do not type a real token into an agent prompt, shell command, repository file, o
 
 `acquire` and `handoff` take only a descriptive label. The server binds ownership to the authenticated session or token. `handoff` makes one handoff request, then reads `current` and `draft` and prints the new grant and fresh state. There is no background renewal or retry. If work extends beyond the lease expiry, submit the current `editingSessionId` and `generation` to `renew` using JSON from stdin or `--file`.
 
-Commands are `current`, `history`, `draft`, `lease-status`, `acquire`, `handoff`, `renew`, `release`, `save`, `reconcile`, `validate`, `publish`, `export --output FILE`, `import-review --bundle FILE`, and `import-load --bundle FILE`. Mutating JSON bodies are read from stdin or `--file FILE`, never from a command argument. Export writes the server ZIP unchanged. Import review sends only the `bundle` multipart field; import load sends that bundle and exactly the five current candidate fields in the JSON file. The client does not parse or validate skill YAML or bundle internals.
+Commands are `current`, `history`, `draft`, `lease-status`, `acquire`, `handoff`, `renew`, `release`, `save`, `replace-credential`, `remove-credential`, `reconcile`, `validate`, `publish`, `export --output FILE`, `import-review --bundle FILE`, and `import-load --bundle FILE`. Mutating JSON bodies are read from stdin or `--file FILE`, never from a command argument. Send credential replacement JSON through stdin from a secret store or trusted process rather than a persistent file; the client does not print the submitted value. Export writes the server ZIP unchanged. Import review sends only the `bundle` multipart field; import load sends that bundle and exactly the five current candidate fields in the JSON file. The client does not parse or validate skill YAML or bundle internals.
 
 Sample save body (use actual IDs, revision and complete content from fresh reads):
 
@@ -33,8 +33,17 @@ Sample save body (use actual IDs, revision and complete content from fresh reads
 }
 ```
 
-The `validate` and `publish` bodies contain only the first five fields. Save and reconcile replace the **whole** candidate, including execution YAML; neither merges changes. Import load also uses exactly those five fields. The submitted base for reconcile must be the current published base after reviewing both configurations. Validation proof is tied to the saved revision, base, and lease generation; after a handoff, validate again before publication. Use the same client to read current, read your private draft, save, validate, publish, and read current again to verify the selected snapshot.
+The `validate` and `publish` bodies contain only the first five fields. `replace-credential` sends those five fields plus `identifier` and write-only `value`; `remove-credential` sends them plus `identifier`. Both increment draft revision and invalidate validation. Save and reconcile replace the **whole** candidate, including execution YAML; neither merges changes. Import load also uses exactly those five fields. The submitted base for reconcile must be the current published base after reviewing both configurations. Validation proof is tied to the saved revision, base, lease generation, effective provider candidate and credential versions; after a handoff or credential replacement, validate again before publication. Use the same client to read current, read your private draft, save, validate, publish, and read current again to verify the selected snapshot.
 
 An Edit token can save and validate, then the same user signs into the console, reads the saved draft, explicitly takes control, revalidates and publishes. A Publish token can run `handoff`, `validate`, and `publish` directly. The server enforces both paths; labels and IDs alone never grant authority.
 
 For `401`, replace the token and read state; for `403`, check its preset and the live account role. For `409`, read current, draft and lease status, then decide whether to acquire, hand off or reconcile. Do not replay a denied write. For `503` after publish, inspect current publication and the retained draft first because activation may already have occurred. A saved draft survives token loss and Sidecar restart; the lease and validation proof do not. Successful publication removes the publishing user's draft and lease; failed publication retains the draft. Bundle export/import is optional transfer, not a required deployment policy.
+
+Read `current.mode` first. File mode is read-only; apply file changes with restart.
+For encrypted portability, use `export --output FILE --include-encrypted-credentials`
+(requires Edit). The key stays outside the archive. `import-load --bundle FILE
+--credential-mode included` authenticates included ciphertext with the destination key.
+For a different key, explicitly select `--credential-mode configuration-only`, then
+replace required destination credentials before validation. The client adds this
+multipart policy to the five exact candidate fields; import remains draft-only.
+`configuration_read_only` and `credential_key_required` errors never trigger fallback.

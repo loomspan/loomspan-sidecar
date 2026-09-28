@@ -55,7 +55,13 @@ class ManagementEditingHttpIntegrationTest {
         void reset() { now = Instant.parse("2026-09-18T00:00:00Z"); }
     }
     @TestConfiguration(proxyBeanMethods = false)
-    static class TimeConfiguration { @Bean @Primary MutableClock clock() { return new MutableClock(); } }
+    static class TimeConfiguration {
+        @Bean @Primary MutableClock clock() { return new MutableClock(); }
+        @Bean @Primary ai.loomspan.sidecar.configuration.ProviderCredentialCipher testCredentialCipher() {
+            return new ai.loomspan.sidecar.configuration.ProviderCredentialCipher(
+                    java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        }
+    }
     @Autowired JdbcTemplate jdbc;
     @Autowired MutableClock clock;
     @Autowired ManagementEditingState state;
@@ -83,6 +89,81 @@ class ManagementEditingHttpIntegrationTest {
                 .isEqualTo("loomspan: {}\n# exact authored settings\n");
         assertThat(ok(client.get("/api/management/editing/draft")).path("configuration")
                 .path("executionConfigurationYaml").asText()).isEqualTo("loomspan: {}\n# exact authored settings\n");
+    }
+
+    @Test void invalidYamlCannotPersistOrEchoInlineProviderSecrets() throws Exception {
+        String email = "inline-secret-" + UUID.randomUUID() + "@example.test";
+        long account = seed(email, "editor");
+        Browser client = login(email);
+        JsonNode grant = ok(client.post("/api/management/editing/lease", "{\"label\":\"Secret boundary\"}"));
+        JsonNode draft = grant.path("draft");
+        String sentinel = "inline-secret-" + UUID.randomUUID();
+        for (String yaml : java.util.List.of(
+                "loomspan: {connections: {primary: {\"api-key\": " + sentinel + "}}}\nloomspan: {}\n",
+                "loomspan: {connections: {primary: {'api-key': " + sentinel + "}}\n",
+                "loomspan: [}\nconnections: {primary: {'api-key': " + sentinel + "}}\n",
+                "loomspan: [}\nconnections: {primary: {\"api\\x2dkey\": " + sentinel + "}}\n")) {
+            var body = (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(save(grant, draft, ""));
+            body.put("executionConfigurationYaml", yaml);
+            var rejected = client.put("/api/management/editing/draft", mapper.writeValueAsString(body));
+            assertThat(rejected.statusCode()).isEqualTo(400);
+            assertThat(rejected.body()).doesNotContain(sentinel);
+            var stored = ok(client.get("/api/management/editing/draft"));
+            assertThat(stored.path("revision").asLong()).isEqualTo(draft.path("revision").asLong());
+            assertThat(stored.toString()).doesNotContain(sentinel);
+            assertThat(jdbc.queryForObject("SELECT execution_configuration_yaml FROM management_draft WHERE account_id = ?",
+                    String.class, account)).doesNotContain(sentinel);
+        }
+    }
+
+    @Test void referencedApiKeyHeaderAndCredentialNamedAliasesCanBeSavedAndValidated() throws Exception {
+        String email = "header-reference-" + UUID.randomUUID() + "@example.test";
+        seed(email, "editor");
+        Browser client = login(email);
+        JsonNode grant = ok(client.post("/api/management/editing/lease", "{\"label\":\"Header reference\"}"));
+        var body = (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(save(grant, grant.path("draft"), ""));
+        body.put("executionConfigurationYaml", "loomspan:\n  connections:\n    headers:\n      driver: openai\n"
+                + "      base-url: http://127.0.0.1:9/v1\n      api-key-ref: provider.key\n"
+                + "      header-refs:\n        api-key: provider.key\n"
+                + "  models:\n    credentials-json: {connection: headers, provider-model: fixture}\n");
+        JsonNode saved = ok(client.put("/api/management/editing/draft", mapper.writeValueAsString(body)));
+        var replacement = (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(candidate(grant, saved));
+        replacement.put("identifier", "provider.key").put("value", "synthetic-header-key");
+        saved = ok(client.put("/api/management/editing/draft/credentials", mapper.writeValueAsString(replacement)));
+        JsonNode checked = ok(client.post("/api/management/editing/draft/validate", candidate(grant, saved)));
+        assertThat(checked.path("validation").path("successful").asBoolean()).as(checked.toString()).isTrue();
+    }
+
+    @Test void credentialReplacementIsEncryptedWriteOnlyAndInvalidatesValidation() throws Exception {
+        String email = "credential-" + UUID.randomUUID() + "@example.test";
+        seed(email, "editor");
+        Browser client = login(email);
+        JsonNode grant = ok(client.post("/api/management/editing/lease", "{\"label\":\"Credentials\"}"));
+        JsonNode draft = grant.path("draft");
+        JsonNode checked = ok(client.post("/api/management/editing/draft/validate",
+                candidate(grant, draft)));
+        assertThat(checked.path("validation").path("successful").asBoolean()).isTrue();
+        String sentinel = "credential-sentinel-" + UUID.randomUUID();
+        String body = mapper.writeValueAsString(Map.of(
+                "editingSessionId", grant.path("editingSessionId").asText(),
+                "generation", grant.path("generation").asText(),
+                "draftId", draft.path("draftId").asText(),
+                "revision", draft.path("revision").asLong(),
+                "baseSnapshotId", draft.path("baseSnapshotId").asText(),
+                "identifier", "provider.test.key", "value", sentinel));
+        assertThat(client.send("PUT", "/api/management/editing/draft/credentials", body, false).statusCode())
+                .isEqualTo(403);
+        JsonNode replaced = ok(client.put("/api/management/editing/draft/credentials", body));
+        assertThat(replaced.path("revision").asLong()).isEqualTo(draft.path("revision").asLong() + 1);
+        assertThat(replaced.path("validation").isNull()).isTrue();
+        assertThat(replaced.path("configuration").path("credentialIdentifiers").get(0).asText())
+                .isEqualTo("provider.test.key");
+        assertThat(replaced.toString()).doesNotContain(sentinel);
+        assertThat(client.get("/api/management/editing/draft").body()).doesNotContain(sentinel);
+        assertThat(jdbc.queryForObject("SELECT ciphertext FROM management_draft_credential WHERE identifier = ?",
+                String.class, "provider.test.key")).doesNotContain(sentinel);
+        assertThat(client.put("/api/management/editing/draft/credentials", body).statusCode()).isEqualTo(409);
+        assertThat(client.get("/api/management/configuration/current").body()).doesNotContain(sentinel);
     }
 
     @Test void sharedPrivateDraftSurvivesLogoutAndHandoffRejectsDelayedWrite() throws Exception {

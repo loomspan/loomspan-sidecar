@@ -1,6 +1,6 @@
 package ai.loomspan.sidecar.management;
 
-import ai.loomspan.sidecar.bundle.ConfigurationBundleV2;
+import ai.loomspan.sidecar.bundle.ConfigurationBundleV3;
 import ai.loomspan.sidecar.configuration.RuntimeConfigurationService;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshotStore;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshot;
@@ -46,12 +46,19 @@ class ManagementImportBrowserIntegrationTest {
 
     @Test void importLoadsSavedDraftAndRequiresSharedValidationAndPublication() throws Exception {
         synchronized (editing) { editing.clearLease(); }
-        Path bundle = ConfigurationBundleV2.write(runtime.publishedSnapshot());
+        Path bundle = ConfigurationBundleV3.write(runtime.publishedSnapshot(), List.of(), true);
         var before = runtime.inspect().publishedId();
         try (Playwright playwright = Playwright.create(); Browser browser = playwright.chromium().launch();
                 BrowserContext context = browser.newContext()) {
             Page page = login(context, seed("editor"));
+            page.navigate(url("/management/configuration/current"));
+            page.locator("#current-export-credentials").check();
+            var download = page.waitForDownload(() -> page.locator("#current-export").click());
+            try (var zip = new java.util.zip.ZipFile(download.path().toFile())) {
+                assertThat(zip.getEntry("credentials.json")).isNotNull();
+            }
             page.navigate(url("/management/configuration/import"));
+            page.locator("#import-credential-mode").selectOption("configuration-only");
             page.locator("#import-file").setInputFiles(bundle);
             page.locator("#import-review").click();
             page.locator("#import-confirm").waitFor(new com.microsoft.playwright.Locator.WaitForOptions()

@@ -1,7 +1,4 @@
 loomspan:
-  skills:
-    locations:
-      - "classpath:/sidecar-empty-skills/*.yaml"
   observability:
     enabled: false
 

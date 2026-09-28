@@ -20,6 +20,22 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** Reusable loopback model, route, and independently verifying callback fixture. */
 public final class SidecarApplicationFixture implements AutoCloseable {
+    public static final String CREDENTIAL_KEY = java.util.Base64.getEncoder().encodeToString(new byte[32]);
+    @org.springframework.boot.test.context.TestConfiguration(proxyBeanMethods = false)
+    public static class Credentials {
+        @org.springframework.context.annotation.Bean @org.springframework.context.annotation.Primary
+        ai.loomspan.sidecar.configuration.ProviderCredentialCipher fixtureCipher() {
+            return new ai.loomspan.sidecar.configuration.ProviderCredentialCipher(CREDENTIAL_KEY);
+        }
+    }
+    public static java.util.List<ai.loomspan.sidecar.storage.EncryptedCredential> encrypt(java.util.Map<String,String> values) {
+        var cipher = new ai.loomspan.sidecar.configuration.ProviderCredentialCipher(CREDENTIAL_KEY);
+        return values.entrySet().stream().map(entry -> {
+            String version = java.util.UUID.randomUUID().toString();
+            return new ai.loomspan.sidecar.storage.EncryptedCredential(entry.getKey(), version,
+                    cipher.encrypt(entry.getKey(), version, entry.getValue()));
+        }).toList();
+    }
     /** Seed one complete authored selection before a Spring context starts. */
     public static synchronized Path seedDatabase(Path database, java.util.List<Path> skillFiles, String routesYaml) {
         return seedDatabase(database, skillFiles, routesYaml,
@@ -28,6 +44,10 @@ public final class SidecarApplicationFixture implements AutoCloseable {
 
     public static synchronized Path seedDatabase(Path database, java.util.List<Path> skillFiles,
             String routesYaml, String executionYaml) {
+        return seedDatabase(database, skillFiles, routesYaml, executionYaml, java.util.Map.of());
+    }
+    public static synchronized Path seedDatabase(Path database, java.util.List<Path> skillFiles,
+            String routesYaml, String executionYaml, java.util.Map<String,String> credentials) {
         if (Files.exists(database)) return database;
         var source = ai.loomspan.sidecar.storage.StorageConfiguration.dataSource(database);
         ai.loomspan.sidecar.storage.StorageConfiguration.migrate(source);
@@ -43,7 +63,7 @@ public final class SidecarApplicationFixture implements AutoCloseable {
                 documents.add(new ai.loomspan.api.SkillDocument(file.getFileName().toString(), Files.readString(file)));
             }
             store.submit(new ai.loomspan.sidecar.storage.ManagedConfiguration(documents, routesYaml, executionYaml),
-                    null, initial.localId());
+                    null, initial.localId(), executionYaml, encrypt(credentials));
         } catch (java.io.IOException failure) { throw new IllegalStateException(failure); }
         return database;
     }
@@ -54,6 +74,8 @@ public final class SidecarApplicationFixture implements AutoCloseable {
         catch (java.net.URISyntaxException failure) { throw new IllegalStateException(failure); }
     }
     private final ConcurrentLinkedQueue<String> modelResponses = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<String> modelRequests = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<String> modelAuthorizations = new ConcurrentLinkedQueue<>();
     private volatile CountDownLatch modelBlockEntered = new CountDownLatch(0);
     private volatile CountDownLatch modelBlockRelease = new CountDownLatch(0);
     private final HttpServer modelServer;
@@ -65,6 +87,8 @@ public final class SidecarApplicationFixture implements AutoCloseable {
             callback = CallbackFixture.start();
             modelServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             modelServer.createContext("/v1/chat/completions", exchange -> {
+                modelRequests.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                modelAuthorizations.add(exchange.getRequestHeaders().getFirst("Authorization"));
                 String response = modelResponses.poll();
                 if ("BLOCK".equals(response)) {
                     modelBlockEntered.countDown();
@@ -80,7 +104,7 @@ public final class SidecarApplicationFixture implements AutoCloseable {
                 if (response == null) response = "{}";
                 byte[] body = response.getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", "application/json");
-                exchange.sendResponseHeaders(200, body.length);
+                exchange.sendResponseHeaders("RETRY".equals(response) ? 503 : 200, body.length);
                 try (var output = exchange.getResponseBody()) { output.write(body); }
             });
             modelServer.start();
@@ -106,6 +130,8 @@ public final class SidecarApplicationFixture implements AutoCloseable {
     public int callbackPort() { return callback.server.getAddress().getPort(); }
     public Path routes() { return routes; }
     public ConcurrentLinkedQueue<String> modelResponses() { return modelResponses; }
+    public ConcurrentLinkedQueue<String> modelRequests() { return modelRequests; }
+    public ConcurrentLinkedQueue<String> modelAuthorizations() { return modelAuthorizations; }
     public void blockNextModelResponse() {
         modelBlockEntered = new CountDownLatch(1);
         modelBlockRelease = new CountDownLatch(1);

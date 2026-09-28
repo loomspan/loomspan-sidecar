@@ -23,7 +23,7 @@ import tools.jackson.databind.ObjectMapper;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class ConfigurationBundleV2Test {
+class ConfigurationBundleV3Test {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final String REST = "targets: {}\nroutes: {}\n# ${UNRESOLVED} secret-literal\n";
 
@@ -40,9 +40,9 @@ class ConfigurationBundleV2Test {
                 new SkillDocument("../source α.yaml", "name: example\n# secret-literal ${UNRESOLVED}\n"),
                 new SkillDocument("other\\label.yml", "name: second\n")), REST, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
         var snapshot = snapshot(configuration);
-        Path path = ConfigurationBundleV2.write(snapshot);
+        Path path = ConfigurationBundleV3.write(snapshot);
         try {
-            var bundle = ConfigurationBundleV2.read(path);
+            var bundle = ConfigurationBundleV3.read(path);
             assertThat(bundle.sourceSnapshotId()).isEqualTo(snapshot.localId());
             assertThat(bundle.configuration()).isEqualTo(configuration);
             assertThat(bundle.sidecarVersion()).isNotBlank();
@@ -53,9 +53,9 @@ class ConfigurationBundleV2Test {
             }
         } finally { Files.deleteIfExists(path); }
 
-        Path empty = ConfigurationBundleV2.write(snapshot(new ManagedConfiguration(List.of(), "targets: {}\nroutes: {}\n", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION)));
+        Path empty = ConfigurationBundleV3.write(snapshot(new ManagedConfiguration(List.of(), "targets: {}\nroutes: {}\n", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION)));
         try {
-            assertThat(ConfigurationBundleV2.read(empty).configuration().skillDocuments()).isEmpty();
+            assertThat(ConfigurationBundleV3.read(empty).configuration().skillDocuments()).isEmpty();
         } finally { Files.deleteIfExists(empty); }
     }
 
@@ -63,10 +63,10 @@ class ConfigurationBundleV2Test {
         java.util.Locale original = java.util.Locale.getDefault();
         try {
             java.util.Locale.setDefault(java.util.Locale.forLanguageTag("ar-EG"));
-            Path file = ConfigurationBundleV2.write(snapshot(new ManagedConfiguration(
+            Path file = ConfigurationBundleV3.write(snapshot(new ManagedConfiguration(
                     List.of(new SkillDocument("source", "name: example\n")), REST, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION)));
             try {
-                assertThat(ConfigurationBundleV2.read(file).configuration().skillDocuments()).hasSize(1);
+                assertThat(ConfigurationBundleV3.read(file).configuration().skillDocuments()).hasSize(1);
                 try (var zip = new java.util.zip.ZipFile(file.toFile())) {
                     assertThat(zip.getEntry("skills/00000.yaml")).isNotNull();
                 }
@@ -79,19 +79,20 @@ class ConfigurationBundleV2Test {
         byte[] yaml = "name: example\n".getBytes(StandardCharsets.UTF_8);
         var payloads = new ArrayList<Map<String, Object>>();
         payloads.add(item("rest.json", rest, null));
-        byte[] execution = JSON.writeValueAsBytes(Map.of("executionConfigurationYaml", "loomspan: {}\n"));
+        byte[] execution = JSON.writeValueAsBytes(Map.of("executionConfigurationYaml", "loomspan: {}\n",
+                "credentialIdentifiers", List.of()));
         payloads.add(item("execution.json", execution, null));
         payloads.add(item("skills/00000.yaml", yaml, "source.yaml"));
         var content = new LinkedHashMap<String, byte[]>();
         content.put("rest.json", rest);
         content.put("execution.json", execution);
         content.put("skills/00000.yaml", yaml);
-        content.put("manifest.json", manifest(2, payloads));
-        assertThat(ConfigurationBundleV2.read(new ByteArrayInputStream(zip(content))).configuration().skillDocuments()).hasSize(1);
+        content.put("manifest.json", manifest(3, payloads));
+        assertThat(ConfigurationBundleV3.read(new ByteArrayInputStream(zip(content))).configuration().skillDocuments()).hasSize(1);
 
         content.put("manifest.json", manifest(1, payloads));
         rejects(zip(content));
-        content.put("manifest.json", manifest(2, payloads));
+        content.put("manifest.json", manifest(3, payloads));
         content.remove("execution.json");
         rejects(zip(content));
         content.put("execution.json", execution);
@@ -108,12 +109,12 @@ class ConfigurationBundleV2Test {
         rejects(zip(content));
         content.remove("skills/00001.yaml");
         payloads.add(item("skills/00000.yaml", yaml, "source.yaml"));
-        content.put("manifest.json", manifest(2, payloads));
+        content.put("manifest.json", manifest(3, payloads));
         rejects(zip(content));
         payloads.removeLast();
         content.put("skills/00001.yaml", yaml);
         payloads.add(item("skills/00001.yaml", yaml, "source.yaml"));
-        content.put("manifest.json", manifest(2, payloads));
+        content.put("manifest.json", manifest(3, payloads));
         rejects(zip(content));
         payloads.removeLast();
         content.remove("skills/00001.yaml");
@@ -150,32 +151,32 @@ class ConfigurationBundleV2Test {
     @Test void representativeLargeConfigurationRemainsWithinReaderAndWriterLimits() throws Exception {
         String repeated = "# large authored content ${PLACEHOLDER} secret-literal\n".repeat(120_000);
         var configuration = new ManagedConfiguration(List.of(new SkillDocument("large.yaml", "name: large\n" + repeated)), REST, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
-        Path path = ConfigurationBundleV2.write(snapshot(configuration));
-        try { assertThat(ConfigurationBundleV2.read(path).configuration()).isEqualTo(configuration); }
+        Path path = ConfigurationBundleV3.write(snapshot(configuration));
+        try { assertThat(ConfigurationBundleV3.read(path).configuration()).isEqualTo(configuration); }
         finally { Files.deleteIfExists(path); }
     }
 
     @Test void inclusiveExpandedAndEntryCountBoundaries() throws Exception {
-        assertThat(ConfigurationBundleV2.checkedTotal(ConfigurationBundleV2.MAX_EXPANDED_BYTES - 1, 1))
-                .isEqualTo(ConfigurationBundleV2.MAX_EXPANDED_BYTES);
-        assertThatThrownBy(() -> ConfigurationBundleV2.checkedTotal(ConfigurationBundleV2.MAX_EXPANDED_BYTES, 1))
-                .isInstanceOf(ConfigurationBundleV2.BundleTooLarge.class);
+        assertThat(ConfigurationBundleV3.checkedTotal(ConfigurationBundleV3.MAX_EXPANDED_BYTES - 1, 1))
+                .isEqualTo(ConfigurationBundleV3.MAX_EXPANDED_BYTES);
+        assertThatThrownBy(() -> ConfigurationBundleV3.checkedTotal(ConfigurationBundleV3.MAX_EXPANDED_BYTES, 1))
+                .isInstanceOf(ConfigurationBundleV3.BundleTooLarge.class);
         var allowed = new ArrayList<SkillDocument>();
-        for (int i = 0; i < ConfigurationBundleV2.MAX_ENTRIES - 3; i++)
+        for (int i = 0; i < ConfigurationBundleV3.MAX_ENTRIES - 3; i++)
             allowed.add(new SkillDocument("source-" + i, "name: example\n"));
-        Path path = ConfigurationBundleV2.write(snapshot(new ManagedConfiguration(allowed, REST, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION)));
-        try { assertThat(ConfigurationBundleV2.read(path).configuration().skillDocuments()).hasSize(allowed.size()); }
+        Path path = ConfigurationBundleV3.write(snapshot(new ManagedConfiguration(allowed, REST, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION)));
+        try { assertThat(ConfigurationBundleV3.read(path).configuration().skillDocuments()).hasSize(allowed.size()); }
         finally { Files.deleteIfExists(path); }
         allowed.add(new SkillDocument("one-too-many", "name: example\n"));
-        assertThatThrownBy(() -> ConfigurationBundleV2.write(snapshot(new ManagedConfiguration(allowed, REST, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION))))
-                .isInstanceOf(ConfigurationBundleV2.BundleTooLarge.class);
+        assertThatThrownBy(() -> ConfigurationBundleV3.write(snapshot(new ManagedConfiguration(allowed, REST, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION))))
+                .isInstanceOf(ConfigurationBundleV3.BundleTooLarge.class);
     }
 
     @Test void compressedInputLimitCountsBytesActuallyRead() {
-        assertThatThrownBy(() -> ConfigurationBundleV2.read(zeroBytes(ConfigurationBundleV2.MAX_ZIP_BYTES)))
-                .isInstanceOf(ConfigurationBundleV2.InvalidBundle.class);
-        assertThatThrownBy(() -> ConfigurationBundleV2.read(zeroBytes(ConfigurationBundleV2.MAX_ZIP_BYTES + 1)))
-                .isInstanceOf(ConfigurationBundleV2.BundleTooLarge.class);
+        assertThatThrownBy(() -> ConfigurationBundleV3.read(zeroBytes(ConfigurationBundleV3.MAX_ZIP_BYTES)))
+                .isInstanceOf(ConfigurationBundleV3.InvalidBundle.class);
+        assertThatThrownBy(() -> ConfigurationBundleV3.read(zeroBytes(ConfigurationBundleV3.MAX_ZIP_BYTES + 1)))
+                .isInstanceOf(ConfigurationBundleV3.BundleTooLarge.class);
     }
 
     private static java.io.InputStream zeroBytes(long size) {
@@ -265,8 +266,8 @@ class ConfigurationBundleV2Test {
         return new ConfigurationSnapshot(UUID.randomUUID(), null, 1, configuration, SnapshotStatus.PUBLISHED);
     }
     private static void rejects(byte[] bytes) {
-        assertThatThrownBy(() -> ConfigurationBundleV2.read(new ByteArrayInputStream(bytes)))
-                .isInstanceOf(ConfigurationBundleV2.InvalidBundle.class);
+        assertThatThrownBy(() -> ConfigurationBundleV3.read(new ByteArrayInputStream(bytes)))
+                .isInstanceOf(ConfigurationBundleV3.InvalidBundle.class);
     }
     private static Map<String, Object> item(String path, byte[] content, String label) throws Exception {
         var item = new LinkedHashMap<String, Object>();

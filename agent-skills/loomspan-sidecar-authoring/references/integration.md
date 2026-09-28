@@ -6,14 +6,13 @@ Contents: [runtime](#runtime-configuration), [routes](#rest-skill-routes), [JWTs
 
 ## Runtime configuration
 
-The database-selected snapshot is the runtime skill, REST route, and framework
-execution-settings source.
-The framework's documented `loomspan.skills.locations` points to a packaged
-empty directory so the initial catalog is empty. Sidecar checks that baseline
-before publishing the selected snapshot. A new database starts with no skills,
-empty REST routes, and `loomspan: {}` execution settings. Authored skill, REST,
-and execution YAML remain unchanged in durable snapshots;
-resolved deployment values are never written over references.
+Startup selects `loomspan-sidecar.configuration.mode=file|database` (default
+`database`; environment `LOOMSPAN_SIDECAR_CONFIGURATION_MODE`). File mode uses
+complete deployment skills, routes, execution settings and credentials, exposes
+read-only management inspection, and applies changes only after restart.
+Database mode starts a new database with empty skills/routes and `loomspan: {}`,
+then restores only the selected complete publication and encrypted provider
+credentials. Deployment provider settings and credentials are never fallback inputs.
 
 Each model-backed manifest names a model. Author its connection and provider
 model in the same complete Console draft; the manifest does not create them:
@@ -31,12 +30,13 @@ loomspan:
       provider-model: example-model
 ```
 
-Provision `provider.primary.key` as an external Spring Environment property;
-never put the resolved credential in authored YAML. Publishable connections,
+Save `provider.primary.key` through the write-only draft credential control or API;
+never put the resolved credential in authored YAML. Provision the external
+`LOOMSPAN_SIDECAR_CREDENTIAL_KEY` encryption key separately and preserve it for recovery. Publishable connections,
 model aliases, session settings, and trace persistence activate with skills and
-REST routes without restart. Changing external credentials, the REST URL
-allowlist, or other process settings requires deployment configuration and may
-require restart. Successful framework publication clears only the
+REST routes without restart. Provider credential replacement is a draft edit requiring validation and publication.
+The REST URL allowlist and other process settings require deployment configuration
+and may require restart. Successful framework publication clears only the
 publishing user's saved draft and lease; other users' durable drafts become
 stale and require explicit current-base reconciliation and fresh validation.
 Publish rechecks live account, session, editing generation, saved revision,

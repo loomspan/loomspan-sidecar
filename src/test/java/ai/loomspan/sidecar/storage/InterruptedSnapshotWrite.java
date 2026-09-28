@@ -15,8 +15,8 @@ public final class InterruptedSnapshotWrite
         {
             connection.setAutoCommit(false);
             try (var insert = connection.prepareStatement("INSERT INTO configuration_snapshot"
-                    + "(local_id, document_count, rest_routes_yaml, execution_configuration_yaml) "
-                    + "VALUES (?, 1, ?, ?)"))
+                    + "(local_id, document_count, rest_routes_yaml, execution_configuration_yaml, "
+                    + "effective_execution_yaml) VALUES (?, 1, ?, ?, 'loomspan: {}')"))
             {
                 insert.setString(1, args[2]);
                 insert.setString(2, "targets: {interrupted: true}\nroutes: {}\n");

@@ -231,7 +231,8 @@ class RemoteAuthoringWorkflowIntegrationTest {
                 "revision", draft.path("revision").asLong(),
                 "baseSnapshotId", current.path("published").path("localId").asText(),
                 "skillDocuments", skill.isEmpty() ? List.of() : List.of(Map.of("sourceName", "record.yaml", "yaml", skill)),
-                "restRoutesYaml", routes, "executionConfigurationYaml", "loomspan: {}\n"));
+                "restRoutesYaml", routes, "executionConfigurationYaml", "loomspan: {}\n",
+                "credentialIdentifiers", List.of()));
     }
 
     private record CliResult(int code, String stdout, String stderr) {

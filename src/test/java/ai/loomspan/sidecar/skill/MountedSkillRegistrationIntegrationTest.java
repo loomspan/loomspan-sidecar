@@ -84,7 +84,7 @@ class MountedSkillRegistrationIntegrationTest
     }
 
     @Test
-    void rejectsNonemptyConfiguredFrameworkStartupSource() throws IOException {
+    void databaseModeIgnoresNonemptyConfiguredFrameworkStartupSource() throws IOException {
         Path skill = temporaryDirectory.resolve("external-rest.yaml");
         Files.writeString(skill, """
                 name: externalRest
@@ -92,10 +92,9 @@ class MountedSkillRegistrationIntegrationTest
                 rest: true
                 input_schema: {type: object, properties: {}}
                 """);
-        Throwable failure = catchThrowable(() -> {
-            try (var ignored = runApplication(List.of("loomspan.skills.locations=" + skill.toUri()))) { }
-        });
-        assertThat(failure).hasMessageContaining("Framework startup catalog must be empty");
+        try (var context = runApplication(List.of("loomspan.skills.locations=" + skill.toUri()))) {
+            assertThat(context.getBean(ai.loomspan.api.SkillReloader.class).snapshot().skills()).isEmpty();
+        }
     }
 
     private org.springframework.context.ConfigurableApplicationContext runApplication(List<String> additionalProperties)

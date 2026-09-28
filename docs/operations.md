@@ -65,8 +65,8 @@ framework budget and checks bounded exit without a forced kill.
 ## Durable configuration snapshots
 
 `loomspan-sidecar.storage.database-path` defaults to `/sidecar/data/sidecar.db`.
-Sidecar migrates and validates a file-backed SQLite database at startup, then
-atomically creates one empty current snapshot on a new database, then activates
+Sidecar migrates and validates a file-backed SQLite database at startup. In
+`database` mode it atomically creates one empty current snapshot on a new database, then activates
 and records it as **published** before opening execution dispatch.
 The empty content is no skill documents, the exact REST text
 `targets: {}\nroutes: {}\n`, and execution YAML `loomspan: {}\n`, which uses
@@ -80,15 +80,19 @@ aborts startup without falling back to empty or older content.
 Each snapshot contains an ordered set of complete `SkillDocument` diagnostic
 labels and original YAML text, plus original REST targets/routes YAML and
 framework execution YAML. Labels are nonblank and exactly unique; the set may be empty. The
-REST text is stored before parsing or placeholder resolution, so comments,
-`${NAME}` references in `base-url`, and literal sensitive values remain exactly
-as authored. Snapshots include the full framework-supported model-backed and
+REST text is stored before parsing or placeholder resolution, so comments and
+`${NAME}` references in `base-url` remain exactly as authored. REST YAML secret
+handling is separate from the provider credential feature. Snapshots include the full framework-supported model-backed and
 REST skill authoring surface. They do not include accounts, sessions, leases,
 deployment URL-variable declarations or resolved environment values,
 identity-provider settings, or arbitrary Spring settings. Publishable model
-connections, aliases, session settings and trace persistence are included. Storage
-does not sanitize or encrypt literal secrets; protect the database volume and
-exported bundles accordingly.
+connections, aliases, session settings and trace persistence are included. Each
+snapshot also retains complete effective execution YAML. Provider credential
+values retained for database publications and drafts are encrypted in separate
+SQLite tables. Ordinary snapshot reads and default exports contain credential
+identifiers, never values or ciphertext. An explicit authorized export can
+include authenticated ciphertext, but never plaintext values or the encryption key. Protect the database volume and exported bundles; REST YAML may
+still contain literal sensitive values under its existing contract.
 
 A snapshot has a fresh stable local UUID, optional source UUID for provenance,
 and increasing submission sequence for later oldest-first history pruning.
@@ -96,17 +100,18 @@ Content and identity do not change after insertion. Separate local status is
 `pending`, `published`, or `failed`; `pending` means the publication outcome is
 unknown. A source UUID never selects or overwrites a local snapshot. The
 configuration bundle carries the same complete authored content with independent
-integer `formatVersion: 2`, source identity, and informational producer
+integer `formatVersion: 3`, source identity, and informational producer
 application and framework versions. The destination allocates a new local UUID;
 imported status does not prove publication there. The archive layout, integrity
 checks, and import/export operations are described in
-[current configuration bundle](#current-configuration-bundle-format-2). Flyway
+[current configuration bundle](#current-configuration-bundle-format-3). Flyway
 version and application version are not transfer compatibility rules.
 
 ### Durable private configuration drafts
 
 Flyway V3 adds one saved draft per management account, with ordered complete
-skill documents, REST YAML, execution YAML, base snapshot UUID, source provenance and a
+skill documents, REST YAML, execution YAML, encrypted
+provider credential versions, base snapshot UUID, source provenance and a
 monotonic revision. The saved content is in the same SQLite database and must
 be included in stopped-instance backups. Leases and successful validation
 proofs remain process-local, so restart requires reacquisition and revalidation.
@@ -115,11 +120,12 @@ A successful publication deletes only its owner's saved draft after framework
 activation. Other users' drafts remain stored and become stale by base UUID
 comparison. Failure before activation leaves the publishing draft intact.
 
-The pre-release V1 and V3 Flyway schemas now require execution YAML. Before
+The pre-release V1 and V3 Flyway schemas now require source and encrypted
+credential fields. Before
 using this development build with an earlier local database, stop Sidecar and
 preserve a complete backup, then reset only the development database and
 recreate its accounts and drafts. Earlier format 1 bundles are rejected; create
-new format 2 exports from compatible data or reauthor the content. This reset
+new format 3 exports from compatible data or reauthor the content. This reset
 is destructive to development data and is never a routine operation for a
 deployed database.
 
@@ -341,14 +347,83 @@ YAML and framework execution YAML. Add or remove a skill document with the adjac
 REST targets and routes remain one text document. URL placeholders such as
 `${REST_BASE_URL}` are kept as authored text. Execution YAML accepts
 `loomspan.connections`, `models`, `session` and `execution-trace.persistence`.
-Credential fields use external `api-key-ref`, `gemini.credentials-ref` or
-`header-refs`; provision those Spring Environment properties outside the draft.
-Java skills, process settings and deployment destination bindings remain outside this editor.
+Credential fields use `api-key-ref`, `gemini.credentials-json-ref` or `header-refs`.
+Save values through the separate write-only credential form and use their identifiers
+in YAML. Database mode accepts managed Gemini JSON material, not credential file/URI
+references. Gemini Vertex configurations require `credentials-json-ref`; application-default
+credentials are not used in database mode. Process settings remain deployment-owned.
+
+#### Configuration modes and encryption-key operations
+
+Select `loomspan-sidecar.configuration.mode=file|database` at startup, or use
+`LOOMSPAN_SIDECAR_CONFIGURATION_MODE`. The default is `database`; invalid values
+fail startup. Mode never changes live, and load failures never select a fallback.
+
+In **file** mode, framework `loomspan.skills.locations`, connections, models,
+session settings and trace persistence come from deployment files. Sidecar reads
+`loomspan-sidecar.rest-routes.location` once; its default is the bundled empty
+routes resource. For example, set skill locations to `file:/sidecar/skills/*.yaml`
+and routes location to `file:/sidecar/rest-routes.yaml`. Missing or invalid configured
+resources fail startup. Deploy Git-managed changes, then restart; deploy earlier
+files and restart to roll back. Literal provider credentials and external references
+are supported. Prefer secret stores or environment provisioning for secrets.
+The Console displays redacted startup inspection and retained startup metadata;
+configuration mutations return `409 configuration_read_only`. Accounts, tokens and
+execution retain their normal permissions. File startup does not initialize or
+change the selected database publication, decrypt its credentials, or alter drafts.
+Its separate durable startup UUID correlates executions; metadata retention uses
+`loomspan-sidecar.snapshots.max-retained` and is not a recovery source.
+
+In **database** mode, all authored skills, routes and execution settings and encrypted
+provider credentials form one complete candidate. New databases start empty.
+Deployment provider/model/session values do not seed or merge into that candidate,
+including at framework bootstrap. No provider credential is resolved from deployment
+files or the environment. Save or replace each referenced credential with
+`PUT /api/management/editing/draft/credentials` under the current Edit grant, then
+validate and publish. The Console shows identifiers only. Saving never activates;
+credential replacement increments the draft revision and invalidates validation.
+If an imported credential is no longer needed, remove its YAML references and its
+required identifier from the draft. Required identifiers must be configured or
+explicitly removed before validation can succeed.
+Rotate a provider key by saving the replacement, validating, publishing, waiting for
+old work to finish, then revoking the old provider key. Early provider-side revocation
+can invalidate captured work. Rollback republishes complete retained settings and
+credential versions under a new ID. Restart restores the database selection exclusively.
+
+Supply `LOOMSPAN_SIDECAR_CREDENTIAL_KEY` through the process environment as a
+base64-encoded cryptographically random 32-byte key. Generate it with
+`openssl rand -base64 32` in a trusted operator environment and provision it through
+normal deployment secret handling. It is never stored alongside ciphertext in SQLite
+or bundles. Back it up separately and keep it stable across provider-key rotations.
+Missing/wrong material fails explicitly without plaintext fallback or ciphertext loss.
+Restore the original key and a consistent database backup; losing the key makes retained
+credentials unrecoverable. File mode does not require or inspect this encryption key.
+Encryption-key/environment changes require restart. There is no automatic key rotation.
+
+Default exports carry configuration and required identifiers. Select **Include
+encrypted credentials** or `?includeEncryptedCredentials=true` to capture retained
+AES-256-GCM ciphertext and authenticated identifiers/versions atomically. This needs
+current Edit authority, including the live account and PAT intersection. Users may
+share encryption keys between environments; no distinct-key policy is imposed.
+A destination with the same key can import the included credentials without reentry.
+Wrong/missing keys or tampering fail without changing the draft or active publication.
+For different keys explicitly choose **Configuration only** (`credentialMode=configuration-only`),
+then provide destination replacements. The default `credentialMode=included` never
+silently discards included ciphertext. Import is draft-only and still requires validation
+and publication. Unrelated retained ciphertext remains intact.
+
+For full-installation migration, make a consistent stopped-instance database backup
+(including applicable WAL/SHM companions), restore it at the destination, and securely
+provision the same encryption key separately. The complete database includes accounts,
+drafts, history and encrypted credentials; a configuration bundle does not.
 
 Edits save automatically to the user's durable draft after a short pause.
 The draft status distinguishes unsent local text, a saved revision and the
 published runtime. A failed save keeps the local text visible for explicit
-retry. Validation runs on the exact saved revision and shows labelled issues;
+retry. Execution YAML must be syntactically readable before saving so every
+provider credential field can be checked; a syntax error preserves the last saved
+draft. Framework semantic validation still happens on the saved revision.
+Validation runs on the exact saved revision and shows labelled issues;
 warnings alone permit publication. Publish becomes available only for the
 current saved, successfully validated revision. Successful publication changes
 the runtime without restart, deletes only that user's draft and releases its
@@ -417,7 +492,9 @@ labels and request identifiers grant no access.
 | `POST /api/management/editing/lease/takeover` | `{"label":"Administrator"}` | Admin only; displace a holder while preserving that user's private draft. |
 | `POST /api/management/editing/lease/renew` | `editingSessionId`, `generation` | Explicitly renew a live lease. |
 | `POST /api/management/editing/lease/release` | `editingSessionId`, `generation` | Release editing control and validation proof, retaining saved content. |
-| `PUT /api/management/editing/draft` | Capability, `draftId`, `revision`, `baseSnapshotId`, complete `skillDocuments`, `restRoutesYaml` and `executionConfigurationYaml` | Replace the saved content at the current base; increment revision and clear validation. |
+| `PUT /api/management/editing/draft` | Capability, `draftId`, `revision`, `baseSnapshotId`, complete `skillDocuments`, `restRoutesYaml`, `executionConfigurationYaml` | Replace the saved content at the current base; increment revision and clear validation. |
+| `PUT /api/management/editing/draft/credentials` | Capability, draft ID/revision/base ID, credential `identifier` and write-only `value` | Encrypt a replacement in the private draft, increment revision and clear validation; the value is never returned. |
+| `DELETE /api/management/editing/draft/credentials` | Capability, draft ID/revision/base ID and configured or required `identifier` | Remove a credential and its requirement from the private draft, increment revision and clear validation. |
 | `POST /api/management/editing/draft/reconcile` | Same complete body, with the current published `baseSnapshotId` | Explicitly submit a full configuration against the current base after it changes. |
 | `POST /api/management/editing/draft/validate` | Capability, `draftId`, `revision`, `baseSnapshotId` | Validate the exact saved revision without publishing. |
 | `DELETE /api/management/editing/draft` | Capability, `draftId`, `revision`, `baseSnapshotId` | Delete the caller's saved draft and release control. |
@@ -435,7 +512,7 @@ and role, token-preset, or browser CSRF denial 403.
 
 There is one saved draft per account in SQLite. It survives logout, credential
 expiry, account changes and restart, including ordered skill documents, REST
-YAML and execution YAML. A new authorized client may read its owner's draft but must acquire a new lease and
+YAML, execution YAML, provider source, and encrypted credentials. A new authorized client may read its owner's draft but must acquire a new lease and
 validate again. Validation and lease state are memory-only. The application
 lease defaults to 15 minutes and the login idle limit to 30 minutes. Polling,
 reads, saves, validation and model work do not renew either deadline. Only
@@ -454,36 +531,43 @@ reconciliation.
 
 ### Protected configuration API
 
-Management viewers, editors and admins can inspect literal authored snapshot
-content, including sensitive values in pending or failed submissions. Protect
-viewer accounts accordingly. Every response is private and `Cache-Control:
+Management viewers, editors and admins can inspect authored snapshot
+content and masked provider-credential identifiers, including pending or failed
+submissions. Provider secret values are never returned; ciphertext is returned
+only by the explicit encrypted-export option requiring Edit authority. REST
+YAML may contain literal sensitive values, so protect viewer accounts accordingly.
+Every response is private and `Cache-Control:
 no-store`; an execution JWT does not grant access. Browser mutations require a
 management session and CSRF token; scoped bearer tokens use the same API.
 
 | Method and path | Request | Result |
 | --- | --- | --- |
 | `GET /api/management/configuration/current` | None | `published` full runtime snapshot, `intendedId`, `intendedStatus`, and `mutationFault`. |
-| `GET /api/management/configuration/export` | None | Format 1 ZIP of the captured runtime-published configuration; authenticated viewer, editor, or admin. 413 when the v1 size limits are exceeded; 503 when runtime state is unavailable. |
+| `GET /api/management/configuration/export` | None | Format 3 ZIP of the captured runtime-published configuration; authenticated viewer, editor, or admin. 413 when bundle size limits are exceeded; 503 when runtime state is unavailable. |
 | `GET /api/management/configuration/history` | None | Retained full submitted snapshots in ascending `submissionSequence`. |
 | `GET /api/management/configuration/history/{localId}` | None | Full retained snapshot or 404 after pruning. |
+| `GET /api/management/configuration/file-startups` | None; Read or higher token or management session | Redacted retained file-startup metadata in file mode; empty list in database mode. |
 | `POST /api/management/configuration/rollback/{localId}/review` | Empty body; editor/admin and CSRF | Read-only source summary and destination validation. |
 | `POST /api/management/configuration/rollback/{localId}/load` | Capability, draft ID/revision, current base ID | Load the retained source into the caller's saved draft; no publication. |
 | `POST /api/management/configuration/publish` | Capability, draft ID/revision/base ID | Publish only the exact successfully validated saved revision, then return the full snapshot. |
 
 A full snapshot contains `localId`, nullable `sourceId`, `submissionSequence`,
 `status`, and `configuration` with authored `skillDocuments`, `restRoutesYaml`
-and `executionConfigurationYaml`.
+`executionConfigurationYaml`, and configured credential
+identifiers. `effectiveExecutionYaml` contains references and the retained
+provider settings, never resolved values.
 The framework's validation returns `successful` and issues with `severity`
 (`ERROR` or `WARNING`), `sourceLabel`, optional `skillName` and `location`, and
 `message`. Warning-only results can be published; an error cannot. Every save, including identical content, advances the revision and clears validation.
-Validation is advisory: Publish prepares and stages afresh. Neither validation
+Validation freezes the complete database candidate and credential versions. Publication
+requires revalidation if its effective content differs, then prepares that same candidate. Neither validation
 nor inspection renews login or lease inactivity deadlines.
 
-### Current configuration bundle (format 2)
+### Current configuration bundle (format 3)
 
 Use **Download current configuration** on the current-configuration page, or
 `GET /api/management/configuration/export` with a management session or Read-or-higher token. The ZIP is
-a configuration-only backup and promotion artifact. It carries the complete
+a configuration-only transfer by default, with optional encrypted credentials. It carries the complete
 authored skill YAML, source labels, REST routes/targets and execution YAML from the snapshot
 running when export begins. An active empty configuration yields an empty skill
 list, the authored empty REST document and `loomspan: {}\n`. If no runtime snapshot exists, export
@@ -499,7 +583,7 @@ accepts one `bundle` multipart field and returns producer metadata and
 validation feedback without changing state. `POST
 /api/management/configuration/import/load` accepts the same bundle plus
 `editingSessionId`, `generation`, `draftId`, `revision`, and the current
-`baseSnapshotId`. The caller must hold the lease; the load advances the saved
+`baseSnapshotId`, plus optional `credentialMode` (`included` or `configuration-only`). The caller must hold the lease; the load advances the saved
 revision and preserves the bundle source UUID as provenance. The runtime is
 unchanged until the caller validates and publishes through the shared editing
 contract. A failed upload or load leaves the prior draft intact. The old direct
@@ -522,18 +606,22 @@ for operator recovery. A bookkeeping failure after activation does not undo the
 running import. Restart follows the committed intended pointer, and admitted
 execution continues with its original generation.
 
-The ZIP contains exactly `manifest.json`, `rest.json`, `execution.json`, and one YAML file per
+The ZIP contains `manifest.json`, `rest.json`, `execution.json`, optional `credentials.json`, and one YAML file per
 skill under `skills/`. All entry names are fixed or generated, never taken from
 source labels. The old `src/test/resources/fixtures/bundles/v1/` fixture remains
 only to prove that format 1 is rejected. JSON and YAML entry bytes are UTF-8. `rest.json` is
 `{"restRoutesYaml":"<exact authored YAML>"}`; it retains comments, sensitive
 literals and unresolved placeholders. `execution.json` is
-`{"executionConfigurationYaml":"<exact authored YAML>"}` and contains reference
-names, never resolved credential values. The manifest structure is:
+`{"executionConfigurationYaml":"<exact authored YAML>","credentialIdentifiers":[]}`
+and contains identifier inventory, never resolved credential values or the encryption key.
+Optional `credentials.json` contains `cipherFormat: "AES-256-GCM-v1"` and a
+`credentials` array of exact `identifier`, `version`, `ciphertext` records. It is
+inventoried and bounded like other payloads; identifiers and versions authenticate
+the ciphertext and must not be renamed. The manifest structure is:
 
 ```json
 {
-  "formatVersion": 2,
+  "formatVersion": 3,
   "sourceSnapshotId": "<runtime snapshot local UUID>",
   "producer": {
     "sidecarVersion": "<informational version>",
@@ -659,6 +747,9 @@ history and rollback workflows use these same contracts.
 | `loomspan-sidecar.executions.max-queued-input-size` | `64MB`; positive total serialized input bytes reserved by waiting work. |
 | `loomspan-sidecar.executions.diagnostics` | `NEVER`; allowed values are `NEVER`, `ONERROR`, and `ALWAYS`. |
 
+| `loomspan-sidecar.rest-routes` | File-mode REST route resource settings; `location` defaults to `classpath:/sidecar-empty-rest-routes.yaml`; changes require restart. |
+| `loomspan-sidecar.configuration.mode` | `database` (default) or `file`; startup-only authority, invalid values fail. |
+| `loomspan-sidecar.rest-routes.location` | `classpath:/sidecar-empty-rest-routes.yaml`; explicit missing/invalid resources fail file startup; restart applies changes. |
 <!-- configuration-reference:end -->
 
 The route schema and `${NAME}` bindings are described in

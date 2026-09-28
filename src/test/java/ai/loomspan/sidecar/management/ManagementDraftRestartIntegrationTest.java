@@ -34,7 +34,7 @@ class ManagementDraftRestartIntegrationTest {
             editing.lease = new ManagementEditingState.Lease(account, "old-session", "Console", Long.MAX_VALUE);
             editing.validation = new ManagementEditingState.Validation(saved.draftId(), saved.revision(),
                     saved.baseSnapshotId(), editing.lease.generation,
-                    new ai.loomspan.sidecar.storage.ConfigurationValidationResult(true, List.of()));
+                    new ai.loomspan.sidecar.storage.ConfigurationValidationResult(true, List.of()), null);
         }
         try (var context = start(db)) {
             assertThat(context.getBean(ConfigurationDraftStore.class).read(account)).isEqualTo(saved);

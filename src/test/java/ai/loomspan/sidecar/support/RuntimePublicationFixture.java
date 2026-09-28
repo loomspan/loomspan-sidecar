@@ -21,7 +21,11 @@ public final class RuntimePublicationFixture {
     }
 
     public ConfigurationSnapshot publish(ConfigurationDraft draft) {
-        return publish(draft, null);
+        return publish(draft, (UUID) null);
+    }
+
+    public ConfigurationSnapshot publish(ConfigurationDraft draft, java.util.List<ai.loomspan.sidecar.storage.EncryptedCredential> credentials) {
+        return runtime.publish(() -> admission(draft, null, credentials));
     }
 
     public ConfigurationSnapshot publish(ConfigurationDraft draft, UUID sourceId) {
@@ -33,12 +37,25 @@ public final class RuntimePublicationFixture {
     }
 
     private RuntimeConfigurationService.PublicationAdmission admission(ConfigurationDraft draft, UUID sourceId) {
+        return admission(draft, sourceId, null);
+    }
+    private RuntimeConfigurationService.PublicationAdmission admission(ConfigurationDraft draft, UUID sourceId,
+            java.util.List<ai.loomspan.sidecar.storage.EncryptedCredential> credentials) {
         draft.validatedCandidate();
         long account = accounts.insert(UUID.randomUUID() + "@fixture.test", "editor", 1);
         var original = drafts.createIfAbsent(account, runtime.publishedSnapshot());
+        if (credentials != null) {
+            for (String identifier : original.configuration().credentialIdentifiers())
+                original = drafts.removeCredential(account, original.draftId(), original.revision(),
+                        original.baseSnapshotId(), identifier);
+            for (var credential : credentials)
+                original = drafts.replaceCredential(account, original.draftId(), original.revision(),
+                        original.baseSnapshotId(), credential);
+        }
         var saved = drafts.replace(account, original.draftId(), original.revision(), original.baseSnapshotId(),
                 draft.baseSnapshotId(), draft.freeze().configuration(), sourceId);
         return new RuntimeConfigurationService.PublicationAdmission(account,
-                saved.draftId(), saved.revision(), saved.configuration(), sourceId, saved.baseSnapshotId());
+                saved.draftId(), saved.revision(), saved.configuration(), sourceId, saved.baseSnapshotId(),
+                runtime.validateWithCandidate(saved.configuration(), drafts.credentialVersions(account)).candidate(), false);
     }
 }

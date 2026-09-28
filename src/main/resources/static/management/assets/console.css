@@ -1466,3 +1466,8 @@ details .issues {
         grid-template-columns: 1fr
     }
 }
+.editor-config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.9rem;
+}

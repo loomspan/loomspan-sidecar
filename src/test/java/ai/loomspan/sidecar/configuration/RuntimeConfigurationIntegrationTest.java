@@ -13,7 +13,7 @@ import ai.loomspan.sidecar.storage.ConfigurationValidationIssue;
 import ai.loomspan.sidecar.storage.ManagedConfiguration;
 import ai.loomspan.sidecar.storage.SnapshotStatus;
 import ai.loomspan.sidecar.storage.StorageConfiguration;
-import ai.loomspan.sidecar.bundle.ConfigurationBundleV2;
+import ai.loomspan.sidecar.bundle.ConfigurationBundleV3;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.WebApplicationType;
@@ -69,7 +69,7 @@ class RuntimeConfigurationIntegrationTest {
                   execution-trace:
                     persistence: ONERROR
                 """;
-        try (var context = start(path)) {
+        try (var context = startWithProvider(path)) {
             var service = context.getBean(RuntimeConfigurationService.class);
             var base = service.publishedSnapshot();
             var draft = new ConfigurationDraft(base);
@@ -79,9 +79,10 @@ class RuntimeConfigurationIntegrationTest {
                     model: editor
                     planning_mode: false
                     """)), ConfigurationSnapshotStore.EMPTY_REST_ROUTES, execution));
-            assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(service, draft).successful()).isTrue();
+            var credentials = ai.loomspan.sidecar.support.SidecarApplicationFixture.encrypt(Map.of("provider.primary.key", "fixture-only-secret"));
+            assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(service, draft, credentials).successful()).isTrue();
             assertThat(service.publishedSnapshot().localId()).isEqualTo(base.localId());
-            var published = context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(draft);
+            var published = context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(draft, credentials);
             assertThat(published.configuration().executionConfigurationYaml()).isEqualTo(execution);
             assertThat(context.getBean(SkillReloader.class).snapshot().skill("modelSkill")).isPresent();
             assertThat(service.publishedSnapshot().localId()).isEqualTo(published.localId());
@@ -90,10 +91,38 @@ class RuntimeConfigurationIntegrationTest {
                             + "WHERE local_id = ?", String.class, published.localId().toString()))
                     .doesNotContain("fixture-only-secret");
         }
-        try (var restored = start(path)) {
+        try (var restored = startWithProvider(path)) {
             assertThat(restored.getBean(RuntimeConfigurationService.class).publishedSnapshot()
                     .configuration().executionConfigurationYaml()).isEqualTo(execution);
             assertThat(restored.getBean(SkillReloader.class).snapshot().skill("modelSkill")).isPresent();
+        }
+    }
+
+    @Test
+    void deploymentProviderChangesDoNotChangeValidatedDatabaseCandidate() {
+        Path path = directory.resolve("file-drift.db");
+        String selectedUrl = "http://127.0.0.1:19/v1";
+        try (var context = startWithProvider(path)) {
+            var runtime = context.getBean(RuntimeConfigurationService.class);
+            var base = runtime.publishedSnapshot();
+            var candidate = new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES,
+                    "loomspan:\n  session:\n    max-depth: 9\n");
+            var validated = runtime.validateWithCandidate(candidate, List.of());
+            assertThat(validated.result().successful()).isTrue();
+            context.getEnvironment().getPropertySources().addFirst(new org.springframework.core.env.MapPropertySource(
+                    "changed-file-provider", Map.of("loomspan.connections.primary.base-url", selectedUrl)));
+            assertThat(runtime.validateWithCandidate(candidate, List.of()).candidate().sameContent(validated.candidate())).isTrue();
+            assertThat(runtime.publishedSnapshot().localId()).isEqualTo(base.localId());
+            assertThat(context.getBean(ConfigurationSnapshotStore.class).current().localId()).isEqualTo(base.localId());
+            var draft = new ConfigurationDraft(base);
+            draft.replaceContent(candidate);
+            assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(runtime, draft).successful()).isTrue();
+            var published = context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(draft);
+            assertThat(published.effectiveExecutionYaml()).doesNotContain(selectedUrl).contains("max-depth: 9");
+        }
+        try (var restarted = startWithProvider(path)) {
+            var restored = restarted.getBean(RuntimeConfigurationService.class).publishedSnapshot();
+            assertThat(restored.effectiveExecutionYaml()).doesNotContain(selectedUrl).contains("max-depth: 9");
         }
     }
 
@@ -108,7 +137,7 @@ class RuntimeConfigurationIntegrationTest {
                         primary:
                           driver: openai
                           api-key-ref: provider.missing.key
-                    """);
+                    """, List.of());
             var reference = service.validate(missing);
             assertThat(reference.successful()).isFalse();
             assertThat(reference.issues()).anySatisfy(issue -> {
@@ -276,7 +305,8 @@ class RuntimeConfigurationIntegrationTest {
         var resources = org.mockito.Mockito.mock(ai.loomspan.sidecar.rest.GenerationRestResources.class);
         var executions = org.mockito.Mockito.mock(ai.loomspan.sidecar.execution.ExecutionCoordinator.class);
         org.mockito.Mockito.when(reloader.prepare(org.mockito.ArgumentMatchers.anyCollection(),
-                org.mockito.ArgumentMatchers.any(ai.loomspan.api.ExecutionConfiguration.class))).thenReturn(prepared);
+                org.mockito.ArgumentMatchers.any(ai.loomspan.api.ExecutionConfiguration.class),
+                org.mockito.ArgumentMatchers.anyMap())).thenReturn(prepared);
         org.mockito.Mockito.when(reloader.validate(org.mockito.ArgumentMatchers.anyCollection(),
                 org.mockito.ArgumentMatchers.any(ai.loomspan.api.ExecutionConfiguration.class)))
                 .thenReturn(new ai.loomspan.api.SkillValidationResult(List.of(), List.of()));
@@ -285,7 +315,9 @@ class RuntimeConfigurationIntegrationTest {
         var service = new RuntimeConfigurationService(store, reloader, resources,
                 new ai.loomspan.sidecar.rest.RestRouteCatalogValidator(), executions,
                 new ai.loomspan.sidecar.management.ManagementEditingState(),
-                org.mockito.Mockito.mock(ai.loomspan.sidecar.storage.ConfigurationDraftStore.class));
+                org.mockito.Mockito.mock(ai.loomspan.sidecar.storage.ConfigurationDraftStore.class),
+                new EffectiveExecutionConfiguration(new ProviderCredentialCipher(null)),
+                ConfigurationMode.DATABASE, null, null, null, null);
         var base = new ConfigurationSnapshot(java.util.UUID.randomUUID(), null, 1,
                 new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), SnapshotStatus.PUBLISHED);
 
@@ -312,7 +344,8 @@ class RuntimeConfigurationIntegrationTest {
                         new ai.loomspan.api.SkillValidationIssue(ai.loomspan.api.SkillValidationIssue.Severity.WARNING,
                                 "warning.yaml", "checkedSkill", "description", "Needs review")), List.of()));
         org.mockito.Mockito.when(reloader.prepare(org.mockito.ArgumentMatchers.anyCollection(),
-                org.mockito.ArgumentMatchers.any(ai.loomspan.api.ExecutionConfiguration.class)))
+                org.mockito.ArgumentMatchers.any(ai.loomspan.api.ExecutionConfiguration.class),
+                org.mockito.ArgumentMatchers.anyMap()))
                 .thenReturn(org.mockito.Mockito.mock(ai.loomspan.api.PreparedSkillUpdate.class));
         org.mockito.Mockito.when(resources.prepare(org.mockito.ArgumentMatchers.anyString())).thenReturn(staged);
         org.mockito.Mockito.when(staged.routes()).thenReturn(new ai.loomspan.sidecar.rest.RestRouteConfiguration(
@@ -320,7 +353,9 @@ class RuntimeConfigurationIntegrationTest {
         var service = new RuntimeConfigurationService(store, reloader, resources,
                 new ai.loomspan.sidecar.rest.RestRouteCatalogValidator(), executions,
                 new ai.loomspan.sidecar.management.ManagementEditingState(),
-                org.mockito.Mockito.mock(ai.loomspan.sidecar.storage.ConfigurationDraftStore.class));
+                org.mockito.Mockito.mock(ai.loomspan.sidecar.storage.ConfigurationDraftStore.class),
+                new EffectiveExecutionConfiguration(new ProviderCredentialCipher(null)),
+                ConfigurationMode.DATABASE, null, null, null, null);
         var result = service.validate(new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
         assertThat(result.successful()).isTrue();
         assertThat(result.issues()).singleElement().satisfies(issue -> {
@@ -332,7 +367,8 @@ class RuntimeConfigurationIntegrationTest {
         org.mockito.Mockito.verify(resources).release(staged);
         org.mockito.Mockito.verify(reloader)
                 .prepare(org.mockito.ArgumentMatchers.anyCollection(),
-                        org.mockito.ArgumentMatchers.any(ai.loomspan.api.ExecutionConfiguration.class));
+                        org.mockito.ArgumentMatchers.any(ai.loomspan.api.ExecutionConfiguration.class),
+                        org.mockito.ArgumentMatchers.anyMap());
     }
 
     @Test
@@ -410,9 +446,9 @@ class RuntimeConfigurationIntegrationTest {
                 var next = validDraft(service, store.current(), "afterExport");
                 context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(next);
                 assertThat(store.findByLocalId(captured.localId())).isNull();
-                Path bundle = ConfigurationBundleV2.write(captured);
+                Path bundle = ConfigurationBundleV3.write(captured);
                 try {
-                    var read = ConfigurationBundleV2.read(bundle);
+                    var read = ConfigurationBundleV3.read(bundle);
                     assertThat(read.sourceSnapshotId()).isEqualTo(captured.localId());
                     assertThat(read.configuration()).isEqualTo(captured.configuration());
                 } finally { java.nio.file.Files.deleteIfExists(bundle); }
@@ -427,10 +463,10 @@ class RuntimeConfigurationIntegrationTest {
         try (var a = start(directory.resolve("import-source.db"))) {
             var runtimeA = a.getBean(RuntimeConfigurationService.class);
             source = a.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(validDraft(runtimeA, runtimeA.publishedSnapshot(), "echoRest"));
-            bundle = ConfigurationBundleV2.write(source);
+            bundle = ConfigurationBundleV3.write(source);
         }
         try {
-            var imported = ConfigurationBundleV2.read(bundle);
+            var imported = ConfigurationBundleV3.read(bundle);
             try (var b = start(directory.resolve("import-destination.db"))) {
                 var runtimeB = b.getBean(RuntimeConfigurationService.class);
                 var storeB = b.getBean(ConfigurationSnapshotStore.class);
@@ -580,6 +616,22 @@ class RuntimeConfigurationIntegrationTest {
 
     private org.springframework.context.ConfigurableApplicationContext start(Path path) {
         return start(path, 10);
+    }
+
+    private org.springframework.context.ConfigurableApplicationContext startWithProvider(Path path) {
+        return new SpringApplicationBuilder(LoomspanSidecarApplication.class, ai.loomspan.sidecar.support.SidecarApplicationFixture.Credentials.class)
+                .web(WebApplicationType.NONE)
+                .run("--loomspan-sidecar.storage.database-path=" + path,
+                        "--loomspan.observability.enabled=false",
+                        "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+                        "--loomspan-sidecar.auth.jwt.audience=sidecar",
+                        "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem",
+                        "--provider.primary.key=fixture-only-secret",
+                        "--loomspan.connections.primary.driver=openai",
+                        "--loomspan.connections.primary.base-url=http://127.0.0.1:9/v1",
+                        "--loomspan.connections.primary.api-key=${provider.primary.key}",
+                        "--loomspan.models.editor.connection=primary",
+                        "--loomspan.models.editor.provider-model=fixture-model");
     }
 
     private org.springframework.context.ConfigurableApplicationContext start(Path path, int maxRetained) {

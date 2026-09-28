@@ -14,6 +14,7 @@ import ai.loomspan.sidecar.storage.ConfigurationSnapshotStore;
 import ai.loomspan.sidecar.storage.ConfigurationValidationIssue;
 import ai.loomspan.sidecar.storage.ConfigurationValidationResult;
 import ai.loomspan.sidecar.storage.ManagedConfiguration;
+import ai.loomspan.sidecar.storage.EncryptedCredential;
 import ai.loomspan.sidecar.storage.SnapshotStatus;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -31,7 +32,8 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(RuntimeConfigurationService.class);
     public record Inspection(UUID publishedId, UUID intendedId, SnapshotStatus intendedStatus, String mutationFault) {}
     public record Current(ConfigurationSnapshot published, UUID intendedId,
-            SnapshotStatus intendedStatus, String mutationFault) {}
+            SnapshotStatus intendedStatus, String mutationFault, String mode, boolean readOnly,
+            ai.loomspan.sidecar.storage.FileConfigurationStartupStore.Startup fileStartup) {}
     public static final class PublicationFailure extends IllegalStateException {
         private final String code;
         public PublicationFailure(String code, String message) { super(message); this.code = code; }
@@ -53,6 +55,13 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     private final ExecutionCoordinator executions;
     private final ManagementEditingState editing;
     private final ConfigurationDraftStore drafts;
+    private final EffectiveExecutionConfiguration effective;
+    private final ConfigurationMode mode;
+    private final ai.loomspan.sidecar.storage.FileConfigurationStartupStore fileStarts;
+    private final org.springframework.core.io.ResourceLoader resourceLoader;
+    private final ai.loomspan.sidecar.config.RestRoutesProperties routeProperties;
+    private final org.springframework.core.env.Environment environment;
+    private volatile ai.loomspan.sidecar.storage.FileConfigurationStartupStore.Startup fileStartup;
     private final ReentrantLock publication = new ReentrantLock(true);
     private final ReentrantLock transition = new ReentrantLock(true);
     private volatile ConfigurationSnapshot published;
@@ -64,7 +73,12 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
 
     public RuntimeConfigurationService(ConfigurationSnapshotStore store, SkillReloader reloader,
             GenerationRestResources resources, RestRouteCatalogValidator routes, ExecutionCoordinator executions,
-            ManagementEditingState editing, ConfigurationDraftStore drafts) {
+            ManagementEditingState editing, ConfigurationDraftStore drafts,
+            EffectiveExecutionConfiguration effective, ConfigurationMode mode,
+            ai.loomspan.sidecar.storage.FileConfigurationStartupStore fileStarts,
+            org.springframework.core.io.ResourceLoader resourceLoader,
+            ai.loomspan.sidecar.config.RestRoutesProperties routeProperties,
+            org.springframework.core.env.Environment environment) {
         this.store = store;
         this.reloader = reloader;
         this.resources = resources;
@@ -72,6 +86,9 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
         this.executions = executions;
         this.editing = editing;
         this.drafts = drafts;
+        this.effective = effective;
+        this.mode = mode; this.fileStarts = fileStarts; this.resourceLoader = resourceLoader;
+        this.routeProperties = routeProperties; this.environment = environment;
     }
 
     void hooks(Hooks hooks) { this.hooks = java.util.Objects.requireNonNull(hooks); }
@@ -81,9 +98,10 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     public void run(ApplicationArguments args) {
         publication.lock();
         try {
+            retirement = reloader.onGenerationRetired(resources::retire);
+            if (mode == ConfigurationMode.FILE) { startFiles(); return; }
             if (!reloader.snapshot().skills().isEmpty())
                 throw new IllegalStateException("Framework startup catalog must be empty before database activation");
-            retirement = reloader.onGenerationRetired(resources::retire);
             ConfigurationSnapshot selected = store.current();
             intendedId = selected.localId();
             intendedStatus = selected.status();
@@ -92,7 +110,8 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
             String phase = "skill preparation";
             try {
                 hooks.beforeStartupActivation();
-                prepared = prepare(selected.configuration());
+                prepared = prepare(selected.configuration().skillDocuments(),
+                        effective.restore(selected, store.credentialVersions(selected)));
                 phase = "REST staging";
                 GenerationRestResources.Resources staged = stage(prepared, selected.configuration());
                 generation = prepared.generationId();
@@ -116,6 +135,9 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                 String location = issue == null ? "" : " at " + issue.sourceLabel()
                         + (issue.location() == null ? "" : " [" + issue.location() + "]");
                 LOG.error("Selected configuration {} failed during {}{}", selected.localId(), phase, location);
+                if (failure instanceof ProviderCredentialCipher.Failure keyFailure)
+                    throw new IllegalStateException("Selected configuration " + selected.localId()
+                            + " cannot be restored: " + keyFailure.getMessage());
                 throw new IllegalStateException("Selected configuration activation or bookkeeping failed for "
                         + selected.localId() + " during " + phase + location
                         + "; inspect the database selection and restore a consistent backup if needed");
@@ -128,24 +150,130 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     }
 
     public ConfigurationValidationResult validate(ManagedConfiguration configuration) {
+        return validateWithCandidate(configuration, List.of()).result();
+    }
+
+    public ConfigurationMode mode() { return mode; }
+    public void requireDatabase() { mode.requireDatabase(); }
+
+    public record ExportCapture(ConfigurationSnapshot snapshot, List<EncryptedCredential> credentials) {}
+    public ExportCapture captureExport(boolean includeCredentials, Runnable authorize) {
+        requireDatabase();
+        publication.lock();
+        try {
+            authorize.run();
+            var snapshot = publishedSnapshot();
+            var credentials = includeCredentials ? store.credentialVersions(snapshot) : List.<EncryptedCredential>of();
+            authorize.run();
+            return new ExportCapture(snapshot, credentials);
+        } finally { publication.unlock(); }
+    }
+
+    public void authenticateCredentials(List<EncryptedCredential> credentials) {
+        effective.authenticate(credentials);
+    }
+
+    private void startFiles() {
+        hooks.beforeStartupActivation();
+        var catalog = reloader.snapshot();
+        GenerationRestResources.Resources staged = null;
+        try {
+            String yaml;
+            try (var input = resourceLoader.getResource(routeProperties.getRestRoutes().getLocation()).getInputStream()) {
+                yaml = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            }
+            staged = resources.prepare(yaml);
+            routes.validate(staged.routes(), catalog);
+            var inspection = new java.util.LinkedHashMap<String, Object>();
+            inspection.put("mode", "file");
+            inspection.put("skills", catalog.skills().stream().map(skill -> java.util.Map.of(
+                    "name", skill.name(), "kind", skill.kind().name())).toList());
+            inspection.put("routes", staged.routes().routes().keySet());
+            inspection.put("targets", staged.routes().targets().keySet());
+            var binder = org.springframework.boot.context.properties.bind.Binder.get(environment);
+            var connectionValues = binder.bind("loomspan.connections",
+                    org.springframework.boot.context.properties.bind.Bindable.mapOf(String.class, Object.class))
+                    .orElse(java.util.Map.of());
+            inspection.put("connections", redactFileSettings(connectionValues));
+            inspection.put("models", binder.bind("loomspan.models",
+                    org.springframework.boot.context.properties.bind.Bindable.mapOf(String.class, Object.class))
+                    .orElse(java.util.Map.of()));
+            inspection.put("session", binder.bind("loomspan.session",
+                    org.springframework.boot.context.properties.bind.Bindable.mapOf(String.class, Object.class))
+                    .orElse(java.util.Map.of()));
+            inspection.put("tracePersistence", environment.getProperty("loomspan.execution-trace.persistence", "Framework default"));
+            inspection.put("defaults", "Omitted execution settings use framework defaults");
+            fileStartup = fileStarts.record(inspection);
+            resources.stage(catalog.generationId(), staged, fileStartup.localId());
+            executions.openAfterActivation();
+        } catch (Exception failure) {
+            resources.discard(catalog.generationId());
+            if (staged != null) resources.release(staged);
+            throw new IllegalStateException("File configuration startup failed; check skills, execution settings and REST route resource");
+        }
+    }
+
+    public List<ai.loomspan.sidecar.storage.FileConfigurationStartupStore.Startup> fileHistory() {
+        return mode == ConfigurationMode.FILE ? fileStarts.history() : List.of();
+    }
+
+    private static Object redactFileSettings(Object value) {
+        if (!(value instanceof java.util.Map<?, ?> fields)) return value;
+        var safe = new java.util.LinkedHashMap<String, Object>();
+        fields.forEach((key, entry) -> {
+            String name = key.toString();
+            String normalized = name.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9]", "");
+            safe.put(name, java.util.Set.of("apikey", "headers", "credentialsjson", "credentialsuri",
+                    "credentialsref", "credentialsjsonref", "apikeyref", "headerrefs").contains(normalized)
+                    ? "Configured (value hidden)" : redactFileSettings(entry));
+        });
+        return safe;
+    }
+
+    public record ValidationAttempt(ConfigurationValidationResult result,
+            EffectiveExecutionConfiguration.Candidate candidate) {}
+
+    public ValidationAttempt validateWithCandidate(ManagedConfiguration configuration,
+            List<EncryptedCredential> credentials) {
+        return validateWithCandidate(configuration, credentials, null);
+    }
+
+    public ValidationAttempt validateWithCandidate(ManagedConfiguration configuration,
+            List<EncryptedCredential> credentials, UUID sourceId) {
+        return validateWithCandidate(configuration, credentials, sourceId, false);
+    }
+
+    public ValidationAttempt validateWithCandidate(ManagedConfiguration configuration,
+            List<EncryptedCredential> credentials, UUID sourceId, boolean retainedSource) {
+        requireDatabase();
+        EffectiveExecutionConfiguration.Candidate candidate;
+        try { candidate = candidateFor(configuration, credentials, sourceId, retainedSource); }
+        catch (RuntimeException failure) {
+            return new ValidationAttempt(new ConfigurationValidationResult(false,
+                    List.of(new ConfigurationValidationIssue(ConfigurationValidationIssue.Severity.ERROR,
+                            "execution-configuration.yaml", null, null,
+                            failure instanceof ProviderCredentialCipher.Failure keyFailure
+                                    ? keyFailure.getMessage()
+                                    : "Provider credential preparation failed; check the draft credentials and encryption key"))), null);
+        }
         ai.loomspan.api.SkillValidationResult checked;
         try {
-            checked = reloader.validate(configuration.skillDocuments(), execution(configuration));
+            checked = reloader.validate(configuration.skillDocuments(), new ExecutionConfiguration(candidate.yaml()));
         } catch (RuntimeException failure) {
-            return new ConfigurationValidationResult(false, List.of(new ConfigurationValidationIssue(
+            return new ValidationAttempt(new ConfigurationValidationResult(false, List.of(new ConfigurationValidationIssue(
                     ConfigurationValidationIssue.Severity.ERROR, "execution-configuration.yaml",
-                    null, null, "Execution configuration validation failed")));
+                    null, null, "Execution configuration validation failed"))), null);
         }
         var issues = new java.util.ArrayList<ConfigurationValidationIssue>();
         checked.issues().forEach(issue -> issues.add(new ConfigurationValidationIssue(
                 issue.severity() == SkillValidationIssue.Severity.WARNING
                         ? ConfigurationValidationIssue.Severity.WARNING : ConfigurationValidationIssue.Severity.ERROR,
                 issue.sourceName(), issue.skillName(), issue.fieldPath(), issue.message())));
-        if (!checked.valid()) return new ConfigurationValidationResult(false, issues);
+        if (!checked.valid()) return new ValidationAttempt(new ConfigurationValidationResult(false, issues), null);
         GenerationRestResources.Resources staged = null;
         boolean frameworkPrepared = false;
         try {
-            try (PreparedSkillUpdate ignored = prepare(configuration)) {
+            try (PreparedSkillUpdate ignored = prepare(configuration.skillDocuments(), candidate)) {
                 // Resolve external references and verify provider construction without activation.
             }
             frameworkPrepared = true;
@@ -156,12 +284,14 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
         } finally {
             if (staged != null) resources.release(staged);
         }
-        return new ConfigurationValidationResult(issues.stream().noneMatch(issue ->
+        var result = new ConfigurationValidationResult(issues.stream().noneMatch(issue ->
                 issue.severity() == ConfigurationValidationIssue.Severity.ERROR), issues);
+        return new ValidationAttempt(result, result.successful() ? candidate : null);
     }
 
     public record PublicationAdmission(long accountId, UUID draftId, long revision,
-            ManagedConfiguration configuration, UUID sourceId, UUID baseId) {}
+            ManagedConfiguration configuration, UUID sourceId, UUID baseId,
+            EffectiveExecutionConfiguration.Candidate validated, boolean retainedSource) {}
 
     /** Admission is re-evaluated after the publication gate is acquired. */
     public ConfigurationSnapshot publish(java.util.function.Supplier<PublicationAdmission> admission) {
@@ -174,6 +304,10 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                 UUID predecessor = published == null ? null : published.localId();
                 if (predecessor == null || !predecessor.equals(candidate.baseId()))
                     throw new IllegalStateException("Draft is based on a stale runtime snapshot");
+                var fresh = candidateFor(candidate.configuration(), drafts.credentialVersions(candidate.accountId()),
+                        candidate.sourceId(), candidate.retainedSource());
+                if (!fresh.sameContent(candidate.validated()))
+                    throw new ai.loomspan.sidecar.management.ManagementEditingService.Conflict("validation_required");
                 return publishCandidate(candidate.configuration(), candidate.sourceId(), predecessor, candidate);
             } finally { transition.unlock(); }
         } finally { publication.unlock(); }
@@ -186,7 +320,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
             GenerationRestResources.Resources staged;
             try {
                 hooks.beforePreparation();
-                prepared = prepare(configuration);
+                prepared = prepare(configuration.skillDocuments(), admission.validated());
                 staged = stage(prepared, configuration);
             } catch (RuntimeException failure) {
                 if (prepared != null) prepared.close();
@@ -202,7 +336,8 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
             ConfigurationSnapshot submitted;
             try {
                 hooks.beforeCommit();
-                submitted = store.submit(configuration, sourceId, predecessor);
+                submitted = store.submit(configuration, sourceId, predecessor,
+                        admission.validated().yaml(), admission.validated().retained());
             } catch (RuntimeException failure) {
                 resources.discard(generation);
                 prepared.close();
@@ -271,7 +406,8 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                     !draftCleared ? "draft_cleanup_failed"
                             : statusRecorded ? "history_pruning_failed" : "outcome_recording_failed", mutationFault);
             return new ConfigurationSnapshot(submitted.localId(), submitted.sourceId(),
-                    submitted.submissionSequence(), submitted.configuration(), SnapshotStatus.PUBLISHED);
+                    submitted.submissionSequence(), submitted.configuration(),
+                    submitted.effectiveExecutionYaml(), SnapshotStatus.PUBLISHED);
     }
 
     public Inspection inspect() {
@@ -283,6 +419,8 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     public Current current() {
         publication.lock();
         try {
+            if (mode == ConfigurationMode.FILE)
+                return new Current(null, null, null, null, mode.value(), true, fileStartup);
             Inspection inspected = inspectLocked();
             ConfigurationSnapshot runtime = published;
             if (runtime == null) throw new IllegalStateException("Runtime configuration is unavailable");
@@ -293,7 +431,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                 stored = null;
             }
             return new Current(stored == null ? runtime : stored,
-                    inspected.intendedId(), inspected.intendedStatus(), mutationFault);
+                    inspected.intendedId(), inspected.intendedStatus(), mutationFault, mode.value(), false, null);
         } finally { publication.unlock(); }
     }
 
@@ -309,17 +447,19 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
 
     public List<ConfigurationSnapshot> history() {
         publication.lock();
-        try { return store.history(); }
+        try { return mode == ConfigurationMode.FILE ? List.of() : store.history(); }
         finally { publication.unlock(); }
     }
 
     public ConfigurationSnapshot history(UUID id) {
         publication.lock();
-        try { return store.findByLocalId(id); }
+        try { return mode == ConfigurationMode.FILE ? null : store.findByLocalId(id); }
         finally { publication.unlock(); }
     }
 
     private Inspection inspectLocked() {
+        if (mode == ConfigurationMode.FILE)
+            return new Inspection(fileStartup == null ? null : fileStartup.localId(), null, null, null);
         try {
             ConfigurationSnapshot intended = store.current();
             return new Inspection(published == null ? null : published.localId(), intended.localId(), intended.status(), mutationFault);
@@ -331,12 +471,34 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
         }
     }
 
-    private PreparedSkillUpdate prepare(ManagedConfiguration configuration) {
-        return reloader.prepare(configuration.skillDocuments(), execution(configuration));
+    private PreparedSkillUpdate prepare(List<ai.loomspan.api.SkillDocument> documents,
+            EffectiveExecutionConfiguration.Candidate candidate) {
+        return reloader.prepare(documents, new ExecutionConfiguration(candidate.yaml()), candidate.values());
     }
 
-    private ExecutionConfiguration execution(ManagedConfiguration configuration) {
-        return new ExecutionConfiguration(configuration.executionConfigurationYaml());
+    private EffectiveExecutionConfiguration.Candidate candidateFor(ManagedConfiguration configuration,
+            List<EncryptedCredential> credentials, UUID sourceId, boolean retainedSource) {
+        if (retainedSource && sourceId != null) {
+            ConfigurationSnapshot source = store.findByLocalId(sourceId);
+            if (source != null && source.configuration().equals(configuration)
+                    && sameVersions(credentials, store.credentialVersions(source)))
+                return effective.restore(source, store.credentialVersions(source));
+        }
+        return effective.assemble(configuration, credentials);
+    }
+
+    private static boolean sameVersions(List<EncryptedCredential> left, List<EncryptedCredential> right) {
+        return left.stream().map(value -> value.identifier() + "\u0000" + value.version()).sorted().toList()
+                .equals(right.stream().map(value -> value.identifier() + "\u0000" + value.version()).sorted().toList());
+    }
+
+    public List<EncryptedCredential> retainedCredentials(ConfigurationSnapshot snapshot) {
+        return store.credentialVersions(snapshot);
+    }
+
+    public ConfigurationValidationResult validateRetained(ConfigurationSnapshot snapshot) {
+        return validateWithCandidate(snapshot.configuration(), store.credentialVersions(snapshot),
+                snapshot.localId(), true).result();
     }
 
     private GenerationRestResources.Resources stage(PreparedSkillUpdate prepared, ManagedConfiguration configuration) {
@@ -366,6 +528,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
 
     /** Editing operations share the transition gate with framework switches and confirmed imports. */
     public <T> T withEditingState(boolean mutation, Function<ConfigurationSnapshot, T> operation) {
+        requireDatabase();
         transition.lock();
         try {
             if (mutation) requireHealthy();
@@ -384,6 +547,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     }
 
     private void requireHealthy() {
+        requireDatabase();
         if (mutationFault != null) throw new IllegalStateException("Configuration mutations are stopped: " + mutationFault);
     }
 

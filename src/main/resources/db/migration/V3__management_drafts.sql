@@ -3,10 +3,25 @@ CREATE TABLE management_draft (
     draft_id TEXT NOT NULL UNIQUE,
     base_snapshot_id TEXT NOT NULL,
     source_snapshot_id TEXT,
+    retained_source INTEGER NOT NULL DEFAULT 0 CHECK (retained_source IN (0, 1)),
     revision INTEGER NOT NULL CHECK (revision > 0),
     document_count INTEGER NOT NULL CHECK (document_count >= 0),
     rest_routes_yaml TEXT NOT NULL,
     execution_configuration_yaml TEXT NOT NULL
+);
+
+CREATE TABLE management_draft_credential (
+    account_id INTEGER NOT NULL REFERENCES management_draft(account_id) ON DELETE CASCADE,
+    identifier TEXT NOT NULL,
+    version TEXT NOT NULL,
+    ciphertext TEXT NOT NULL,
+    PRIMARY KEY (account_id, identifier)
+);
+
+CREATE TABLE management_draft_credential_requirement (
+    account_id INTEGER NOT NULL REFERENCES management_draft(account_id) ON DELETE CASCADE,
+    identifier TEXT NOT NULL,
+    PRIMARY KEY (account_id, identifier)
 );
 
 CREATE TABLE management_draft_document (

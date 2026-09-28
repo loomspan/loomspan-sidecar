@@ -9,8 +9,12 @@ public final class TestDrafts {
     private TestDrafts() {}
 
     public static ConfigurationValidationResult validate(RuntimeConfigurationService runtime, ConfigurationDraft draft) {
+        return validate(runtime, draft, runtime.retainedCredentials(runtime.publishedSnapshot()));
+    }
+    public static ConfigurationValidationResult validate(RuntimeConfigurationService runtime, ConfigurationDraft draft,
+            java.util.List<ai.loomspan.sidecar.storage.EncryptedCredential> credentials) {
         var frozen = draft.freeze();
-        var result = runtime.validate(frozen.configuration());
+        var result = runtime.validateWithCandidate(frozen.configuration(), credentials).result();
         draft.recordValidation(frozen, result);
         return result;
     }

@@ -28,6 +28,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_PUT(self):
         self.reply()
 
+    def do_DELETE(self):
+        self.reply()
+
     def reply(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
         self.requests.append((self.command, self.path, dict(self.headers), body))
@@ -121,6 +124,11 @@ class ClientTest(unittest.TestCase):
             result = self.run_client("export", "--output", str(target))
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(target.read_bytes(), b"PK\x03\x04returned")
+            Handler.replies = [(200, b"PKencrypted")]
+            result = self.run_client("export", "--output", str(target), "--include-encrypted-credentials")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(Handler.requests[-1][1].endswith("export?includeEncryptedCredentials=true"))
+            self.assertEqual(target.read_bytes(), b"PKencrypted")
             large_bundle = b"PK\x03\x04" + b"x" * (17 * 1_048_576)
             Handler.replies = [(200, large_bundle)]
             result = self.run_client("export", "--output", str(target))
@@ -152,6 +160,31 @@ class ClientTest(unittest.TestCase):
                     self.assertEqual(json.loads(Handler.requests[0][3]), json.loads(payload))
                 self.assertEqual(len(Handler.requests), 1)
 
+    def test_write_only_credential_commands(self):
+        fields = {"editingSessionId": "s", "generation": "g", "draftId": "d",
+                  "revision": 4, "baseSnapshotId": "b", "identifier": "provider.primary"}
+        secret = "private-credential-value-8573"
+        Handler.replies = [(200, {"revision": 5, "accidental": secret}), (200, {"revision": 6})]
+        replaced = self.run_client("replace-credential", input=json.dumps({**fields, "value": secret}))
+        self.assertEqual(replaced.returncode, 0, replaced.stderr)
+        self.assertNotIn(secret, replaced.stdout + replaced.stderr)
+        self.assertIn("[redacted]", replaced.stdout)
+        self.assertEqual(Handler.requests[0][:2], ("PUT", "/api/management/editing/draft/credentials"))
+        self.assertEqual(json.loads(Handler.requests[0][3]), {**fields, "value": secret})
+        removed = self.run_client("remove-credential", input=json.dumps({**fields, "revision": 5}))
+        self.assertEqual(removed.returncode, 0, removed.stderr)
+        self.assertEqual(Handler.requests[1][:2], ("DELETE", "/api/management/editing/draft/credentials"))
+        self.assertEqual(json.loads(Handler.requests[1][3]), {**fields, "revision": 5})
+        self.assertEqual(len(Handler.requests), 2)
+
+    def test_credential_commands_reject_incomplete_bodies(self):
+        for command, body in (("replace-credential", {"identifier": "x", "value": "secret"}),
+                              ("remove-credential", {"identifier": "x", "extra": "secret"})):
+            with self.subTest(command=command):
+                result = self.run_client(command, input=json.dumps(body))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(Handler.requests, [])
+
     def test_import_load_fields_and_permissions(self):
         fields = {"editingSessionId": "s", "generation": "g", "draftId": "d",
                   "revision": 4, "baseSnapshotId": "b"}
@@ -159,9 +192,11 @@ class ClientTest(unittest.TestCase):
             bundle = Path(folder) / "bundle.zip"
             bundle.write_bytes(b"PK\x03\x04fixture")
             Handler.replies = [(200, {"revision": 5})]
-            result = self.run_client("import-load", "--bundle", str(bundle), input=json.dumps(fields))
+            result = self.run_client("import-load", "--bundle", str(bundle), "--credential-mode", "configuration-only", input=json.dumps(fields))
             self.assertEqual(result.returncode, 0, result.stderr)
             body = Handler.requests[0][3]
+            self.assertIn(b'name="credentialMode"', body)
+            self.assertIn(b'configuration-only', body)
             for name in fields:
                 self.assertIn(f'name="{name}"'.encode(), body)
             self.assertEqual(len(Handler.requests), 1)

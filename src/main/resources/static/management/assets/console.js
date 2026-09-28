@@ -351,7 +351,7 @@
     button.disabled = true;
     status('current-status', 'Preparing current configuration bundle…');
     try {
-      const response = await fetch('/api/management/configuration/export', { credentials: 'same-origin', headers: { Accept: 'application/zip' } });
+      const response = await fetch('/api/management/configuration/export?includeEncryptedCredentials=' + !!document.getElementById('current-export-credentials')?.checked, { credentials: 'same-origin', headers: { Accept: 'application/zip' } });
       if (response.status === 401) { lostSession(); return; }
       if (response.status === 403) { forbidden(); return; }
       if (!response.ok) {

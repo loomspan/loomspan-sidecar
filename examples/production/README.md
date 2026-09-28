@@ -17,7 +17,7 @@ Copy-Item examples/production/production.env.example examples/production/product
 ```
 
 On POSIX use `./mvnw`. Edit `production.env` and restrict it to the operator:
-it contains model and SMTP credentials and may contain a DNS API token. The
+it contains the credential encryption key and SMTP credentials and may contain a DNS API token. The
 example values are placeholders. Set `SITE_HOST` to the one name clients use,
 and `EXTERNAL_BASE_URL` to `https://SITE_HOST` with the actual HTTPS port
 (omit `:443`). This explicit URL is the trusted origin for emailed links. Bind
@@ -122,11 +122,20 @@ email. The local TLS fixture verifies direct HTTP and supplied application TLS
 with no Caddy request path.
 
 Set `JWT_ISSUER_URI` and `JWT_AUDIENCE` to the real token issuer and audience.
-Provision `PROVIDER_PRIMARY_KEY` as an external property for the Console's
-`api-key-ref: provider.primary.key`. Author the driver, base URL, model alias,
-session limits and trace policy in the Console and publish them with skills.
-Changing the external secret value requires a restart; changing publishable
-execution settings does not. For first administrator setup,
+The default `database` mode requires `LOOMSPAN_SIDECAR_CREDENTIAL_KEY` before saving
+provider credentials: supply the Base64 encoding of 32 random bytes through your
+protected deployment environment. Back up that key separately from SQLite.
+In the Console, save the write-only value for `provider.primary.key`, then author
+`api-key-ref: provider.primary.key` with the driver, base URL, model alias,
+session limits and trace policy. Validate and publish the complete draft.
+Credential replacement and configuration publication need no restart. Same-key
+destinations can import an optional encrypted export; different-key destinations
+choose configuration-only import and replace the required credentials explicitly.
+For file-managed deployments, select `LOOMSPAN_SIDECAR_CONFIGURATION_MODE=file`,
+mount documented framework configuration and skills plus
+`loomspan-sidecar.rest-routes.location`; apply every change by restart. See the
+[mode and recovery guide](../../docs/operations.md#configuration-modes-and-encryption-key-operations).
+For first administrator setup,
 generate `SETUP_TOKEN` with the packaged image using the
 [administrator access walkthrough](../../docs/admin-access.md). SMTP is optional
 for setup and local operator recovery.

@@ -110,6 +110,35 @@ class ConfigurationSnapshotRepositoryTest
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    void retainedCredentialIsCiphertextOnlyAndBundleKeepsIdentifier() throws Exception {
+        StoreFixture fixture = open(directory.resolve("retained-credential.db"));
+        String key = java.util.Base64.getEncoder().encodeToString(new byte[32]);
+        var cipher = new ai.loomspan.sidecar.configuration.ProviderCredentialCipher(key);
+        String version = UUID.randomUUID().toString();
+        String sentinel = "snapshot-secret-sentinel";
+        var encrypted = new EncryptedCredential("provider.snapshot.key", version,
+                cipher.encrypt("provider.snapshot.key", version, sentinel));
+        var authored = new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES,
+                "loomspan:\n  connections:\n    primary:\n      driver: openai\n      api-key-ref: provider.snapshot.key\n", List.of("provider.snapshot.key"));
+        var snapshot = fixture.store.submit(authored, null, fixture.store.current().localId(),
+                authored.executionConfigurationYaml(), List.of(encrypted));
+        assertThat(fixture.store.credentialVersions(snapshot)).containsExactly(encrypted);
+        var jdbc = new JdbcTemplate(fixture.source);
+        assertThat(jdbc.queryForObject("SELECT ciphertext FROM configuration_snapshot_credential WHERE snapshot_sequence = ?",
+                String.class, snapshot.submissionSequence())).isEqualTo(encrypted.ciphertext()).doesNotContain(sentinel);
+        assertThatThrownBy(() -> jdbc.update("UPDATE configuration_snapshot_credential SET ciphertext = 'changed' "
+                + "WHERE snapshot_sequence = ?", snapshot.submissionSequence())).isInstanceOf(RuntimeException.class);
+        Path bundle = ai.loomspan.sidecar.bundle.ConfigurationBundleV3.write(snapshot);
+        try {
+            byte[] bytes = java.nio.file.Files.readAllBytes(bundle);
+            assertThat(new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1)).doesNotContain(sentinel,
+                    encrypted.ciphertext());
+            var imported = ai.loomspan.sidecar.bundle.ConfigurationBundleV3.read(bundle);
+            assertThat(imported.configuration().credentialIdentifiers()).containsExactly("provider.snapshot.key");
+        } finally { java.nio.file.Files.deleteIfExists(bundle); }
+    }
+
     private StoreFixture open(Path path)
     {
         DataSource source = StorageConfiguration.dataSource(path);

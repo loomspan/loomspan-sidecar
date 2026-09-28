@@ -18,7 +18,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class ManagementConfigurationExportControllerTest {
     @Test void missingRuntimeExplainsExportUnavailability() throws Exception {
         var runtime = mock(RuntimeConfigurationService.class);
-        when(runtime.publishedSnapshot()).thenThrow(new IllegalStateException("unavailable"));
+        when(runtime.captureExport(org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.any())).thenThrow(new IllegalStateException("unavailable"));
         var mvc = MockMvcBuilders.standaloneSetup(new ManagementConfigurationController(
                 runtime, mock(ManagementEditingService.class), mock(ManagementConfigurationImportService.class),
                 mock(ManagementConfigurationRollbackService.class))).build();
@@ -32,8 +32,8 @@ class ManagementConfigurationExportControllerTest {
         var runtime = mock(RuntimeConfigurationService.class);
         var skills = new ArrayList<SkillDocument>();
         for (int i = 0; i < 9999; i++) skills.add(new SkillDocument("skill-" + i, "name: example\n"));
-        when(runtime.publishedSnapshot()).thenReturn(new ConfigurationSnapshot(UUID.randomUUID(), null, 1,
-                new ManagedConfiguration(skills, "targets: {}\nroutes: {}\n", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), SnapshotStatus.PUBLISHED));
+        when(runtime.captureExport(org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.any())).thenReturn(new RuntimeConfigurationService.ExportCapture(new ConfigurationSnapshot(UUID.randomUUID(), null, 1,
+                new ManagedConfiguration(skills, "targets: {}\nroutes: {}\n", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), SnapshotStatus.PUBLISHED), java.util.List.of()));
         var mvc = MockMvcBuilders.standaloneSetup(new ManagementConfigurationController(
                 runtime, mock(ManagementEditingService.class), mock(ManagementConfigurationImportService.class),
                 mock(ManagementConfigurationRollbackService.class))).build();

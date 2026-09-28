@@ -69,6 +69,7 @@ public final class ManagementBearerFilter extends OncePerRequestFilter {
         if ("GET".equals(method)) {
             if (path.equals("/api/management/configuration/current") || path.equals("/api/management/configuration/export")
                     || path.equals("/api/management/configuration/history")
+                    || path.equals("/api/management/configuration/file-startups")
                     || path.matches("/api/management/configuration/history/[0-9a-fA-F-]{36}")
                     || path.equals("/api/management/editing") || path.equals("/api/management/editing/draft")) return "read";
         } else if ("POST".equals(method)) {
@@ -78,7 +79,9 @@ public final class ManagementBearerFilter extends OncePerRequestFilter {
                     || path.equals("/api/management/editing/draft/reconcile") || path.equals("/api/management/editing/draft/validate")
                     || path.equals("/api/management/configuration/import/review") || path.equals("/api/management/configuration/import/load")
                     || path.matches("/api/management/configuration/rollback/[0-9a-fA-F-]{36}/(review|load)")) return "edit";
-        } else if (("PUT".equals(method) || "DELETE".equals(method)) && path.equals("/api/management/editing/draft")) return "edit";
+        } else if (("PUT".equals(method) || "DELETE".equals(method))
+                && (path.equals("/api/management/editing/draft")
+                    || path.equals("/api/management/editing/draft/credentials"))) return "edit";
         return null;
     }
 }

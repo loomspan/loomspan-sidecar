@@ -35,7 +35,7 @@ class ConfigurationReferenceTest {
         String production = Files.readString(Path.of("examples/production/compose.yaml"));
         String productionEnv = Files.readString(Path.of("examples/production/production.env.example"));
         String dockerfile = Files.readString(Path.of("Dockerfile"));
-        assertThat(defaults).contains("classpath:/sidecar-empty-skills/*.yaml", "url-variables: []", "port: 9091");
+        assertThat(defaults).contains("url-variables: []", "port: 9091");
         assertThat(defaults).contains("mail.smtp.starttls.required: ${LOOMSPAN_SIDECAR_SMTP_STARTTLS_REQUIRED:false}");
         assertThat(defaults).contains("database-path: /sidecar/data/sidecar.db");
         assertThat(defaults).contains("max-retained: 10");
@@ -53,7 +53,8 @@ class ConfigurationReferenceTest {
                 "LOOMSPAN_SIDECAR_SECURE_COOKIE: \"true\"", "LOOMSPAN_SIDECAR_SMTP_STARTTLS_REQUIRED: ${SMTP_STARTTLS:-true}", "stop_grace_period: 45s",
                 "LOOMSPAN_SIDECAR_URL_VARIABLES:", "/sidecar/keys/public.pem:ro")
                 .doesNotContain("9091:9091", "8080:8080", "/sidecar/skills/", "/sidecar/rest-routes.yaml");
-        assertThat(productionEnv).contains("JWT_ISSUER_URI=", "PROVIDER_PRIMARY_KEY=", "SMTP_HOST=",
+        assertThat(production).contains("LOOMSPAN_SIDECAR_CONFIGURATION_MODE: ${LOOMSPAN_SIDECAR_CONFIGURATION_MODE:-database}");
+        assertThat(productionEnv).contains("JWT_ISSUER_URI=", "LOOMSPAN_SIDECAR_CREDENTIAL_KEY=", "LOOMSPAN_SIDECAR_CONFIGURATION_MODE=database", "SMTP_HOST=",
                 "EXTERNAL_BASE_URL=https://", "URL_VARIABLES=TARGET_URL", "TARGET_URL=https://");
         assertThat(Files.exists(Path.of("examples/kubernetes/deployment.yaml"))).isFalse();
         assertThat(dockerfile).contains("mkdir -p /sidecar/data", "chown loomspan:loomspan /sidecar/data")

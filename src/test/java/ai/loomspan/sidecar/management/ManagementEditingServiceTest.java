@@ -35,8 +35,8 @@ class ManagementEditingServiceTest {
         when(runtime.withEditingState(anyBoolean(), any())).thenAnswer(call -> {
             Function<ConfigurationSnapshot, ?> action = call.getArgument(1); return action.apply(base);
         });
-        when(runtime.validate(any(ManagedConfiguration.class)))
-                .thenReturn(new ConfigurationValidationResult(false, List.of()));
+        when(runtime.validateWithCandidate(any(ManagedConfiguration.class), anyList(), nullable(UUID.class), eq(false)))
+                .thenReturn(new RuntimeConfigurationService.ValidationAttempt(new ConfigurationValidationResult(false, List.of()), null));
         when(runtime.publish(any())).thenThrow(new RuntimeConfigurationService.PublicationFailure(
                 "draft_cleanup_failed", "Published configuration draft could not be cleared"));
         when(runtime.inspect()).thenReturn(new RuntimeConfigurationService.Inspection(
@@ -51,7 +51,7 @@ class ManagementEditingServiceTest {
         var tokens = mock(ManagementPersonalTokenService.class);
         when(tokens.valid("token-id", 1L, "edit")).thenReturn(true);
         var service = new ManagementEditingService(runtime, new ManagementEditingState(), store, identity, tokens,
-                new SidecarManagementProperties(), Clock.fixed(Instant.parse("2026-09-18T00:00:00Z"), java.time.ZoneOffset.UTC));
+                new SidecarManagementProperties(), Clock.fixed(Instant.parse("2026-09-18T00:00:00Z"), java.time.ZoneOffset.UTC), new ai.loomspan.sidecar.configuration.ProviderCredentialCipher(null));
         var user = new ManagementUserDetailsService.Principal(1, "editor@example.test", "editor", 1, "hash", List.of());
         var auth = UsernamePasswordAuthenticationToken.authenticated(user, null, List.of());
         auth.setDetails(new ManagementCredential("token-id", "publish"));
@@ -83,7 +83,7 @@ class ManagementEditingServiceTest {
         when(runtime.withEditingState(anyBoolean(), any())).thenAnswer(call -> {
             Function<ConfigurationSnapshot, ?> action = call.getArgument(1); return action.apply(base);
         });
-        when(runtime.validate(any(ManagedConfiguration.class))).thenReturn(new ConfigurationValidationResult(true, List.of()));
+        when(runtime.validateWithCandidate(any(ManagedConfiguration.class), anyList(), nullable(UUID.class), eq(false))).thenReturn(new RuntimeConfigurationService.ValidationAttempt(new ConfigurationValidationResult(true, List.of()), null));
         var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
         when(runtime.publish(any())).thenAnswer(call -> {
             entered.countDown(); assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
@@ -103,7 +103,7 @@ class ManagementEditingServiceTest {
         when(tokens.valid("token-id", 1L, "edit")).thenAnswer(call -> valid.get());
         when(tokens.valid("token-id", 1L, "publish")).thenAnswer(call -> valid.get());
         var service = new ManagementEditingService(runtime, new ManagementEditingState(), store, identity, tokens,
-                new SidecarManagementProperties(), Clock.fixed(Instant.parse("2026-09-18T00:00:00Z"), java.time.ZoneOffset.UTC));
+                new SidecarManagementProperties(), Clock.fixed(Instant.parse("2026-09-18T00:00:00Z"), java.time.ZoneOffset.UTC), new ai.loomspan.sidecar.configuration.ProviderCredentialCipher(null));
         var user = new ManagementUserDetailsService.Principal(1, "editor@example.test", "editor", 1, "hash", List.of());
         var auth = UsernamePasswordAuthenticationToken.authenticated(user, null, List.of());
         auth.setDetails(new ManagementCredential("token-id", "publish"));
@@ -136,9 +136,9 @@ class ManagementEditingServiceTest {
             Function<ConfigurationSnapshot, ?> action = call.getArgument(1); return action.apply(base);
         });
         var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
-        when(runtime.validate(any(ManagedConfiguration.class))).thenAnswer(call -> {
+        when(runtime.validateWithCandidate(any(ManagedConfiguration.class), anyList(), nullable(UUID.class), eq(false))).thenAnswer(call -> {
             entered.countDown(); assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
-            return new ConfigurationValidationResult(true, List.of());
+            return new RuntimeConfigurationService.ValidationAttempt(new ConfigurationValidationResult(true, List.of()), null);
         });
         var identity = mock(ManagementIdentityService.class);
         when(identity.account(1L)).thenReturn(new ManagementAccountRepository.Account(
@@ -151,7 +151,7 @@ class ManagementEditingServiceTest {
         var tokens = mock(ManagementPersonalTokenService.class);
         when(tokens.valid("token-id", 1L, "edit")).thenAnswer(call -> valid.get());
         var service = new ManagementEditingService(runtime, new ManagementEditingState(), store, identity, tokens,
-                new SidecarManagementProperties(), Clock.fixed(Instant.parse("2026-09-18T00:00:00Z"), java.time.ZoneOffset.UTC));
+                new SidecarManagementProperties(), Clock.fixed(Instant.parse("2026-09-18T00:00:00Z"), java.time.ZoneOffset.UTC), new ai.loomspan.sidecar.configuration.ProviderCredentialCipher(null));
         var user = new ManagementUserDetailsService.Principal(1, "editor@example.test", "editor", 1, "hash", List.of());
         var auth = UsernamePasswordAuthenticationToken.authenticated(user, null, List.of());
         auth.setDetails(new ManagementCredential("token-id", "edit"));
@@ -182,9 +182,9 @@ class ManagementEditingServiceTest {
             Function<ConfigurationSnapshot, ?> action = call.getArgument(1); return action.apply(base);
         });
         var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
-        when(runtime.validate(any(ManagedConfiguration.class))).thenAnswer(call -> {
+        when(runtime.validateWithCandidate(any(ManagedConfiguration.class), anyList(), nullable(UUID.class), eq(false))).thenAnswer(call -> {
             entered.countDown(); assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
-            return new ConfigurationValidationResult(true, List.of());
+            return new RuntimeConfigurationService.ValidationAttempt(new ConfigurationValidationResult(true, List.of()), null);
         });
         var identity = mock(ManagementIdentityService.class);
         when(identity.account(1L)).thenReturn(new ManagementAccountRepository.Account(
@@ -194,14 +194,14 @@ class ManagementEditingServiceTest {
                 1, base.configuration()));
         when(store.createIfAbsent(eq(1L), any())).thenAnswer(call -> saved.get());
         when(store.read(1L)).thenAnswer(call -> saved.get());
-        when(store.replace(eq(1L), any(), anyLong(), any(), any(), any(), any())).thenAnswer(call -> {
+        when(store.replace(eq(1L), any(), anyLong(), any(), any(), any(), any(), nullable(List.class))).thenAnswer(call -> {
             var old = saved.get();
             var next = new ConfigurationDraftStore.Saved(1, old.draftId(), old.baseSnapshotId(), null,
                     old.revision() + 1, call.getArgument(5));
             saved.set(next); return next;
         });
         var service = new ManagementEditingService(runtime, new ManagementEditingState(), store, identity, null,
-                new SidecarManagementProperties(), Clock.fixed(Instant.parse("2026-09-18T00:00:00Z"), java.time.ZoneOffset.UTC));
+                new SidecarManagementProperties(), Clock.fixed(Instant.parse("2026-09-18T00:00:00Z"), java.time.ZoneOffset.UTC), new ai.loomspan.sidecar.configuration.ProviderCredentialCipher(null));
         var user = new ManagementUserDetailsService.Principal(1, "editor@example.test", "editor", 1, "hash", List.of());
         var session = mock(HttpSession.class); when(session.getId()).thenReturn("session");
         when(session.getAttribute(ManagementSessionGuard.ACTIVITY)).thenReturn(Instant.parse("2026-09-18T00:00:00Z").toEpochMilli());

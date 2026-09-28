@@ -128,7 +128,9 @@ Standing guidance for our work together:
 
 ## Atomic configuration publication and one framework shutdown budget
 
-- **Decision:** Restore the database-selected snapshot at startup. Publish complete
+- **Decision:** Select complete file/database authority at startup. File mode uses
+  framework files and Sidecar REST files, applies changes by restart and prohibits
+  management mutations. Database mode restores the selected complete publication. Publish complete
   validated skill, REST route, and execution snapshots through the public framework reload contract;
   activation does not require restart. Recheck live authorization, ownership and
   exact candidate/base under the publication gate. Preserve old generations for
@@ -139,9 +141,16 @@ Standing guidance for our work together:
 - **Why this is non-obvious:** Queue draining, ordered listeners or early client
   teardown can defeat the framework's existing deadline and nested work.
 - **Applies to:** Configuration, workers, HTTP clients, readiness and packaging.
-- **Exceptions:** External credential provisioning and process settings still require
-  restart; model connections, aliases, session limits and trace persistence are
-  published with skills and REST routes. Draft validation neither activates nor executes skills.
+- **Exceptions:** Process settings and externally provisioned environment values
+  still require restart. Database publications retain complete execution settings
+  and encrypted credential versions with no environment/file provider fallback.
+  File startup records safe inspection metadata for execution correlation without
+  changing database selection. Optional ciphertext bundles preserve authenticated
+  identifiers/versions and can move between environments sharing the key; an
+  explicit configuration-only import permits destination credential replacement.
+  The encryption key remains outside database and bundles. Draft validation never
+  activates or executes skills.
+
 
 ## Preserve the available diagnostic contract
 

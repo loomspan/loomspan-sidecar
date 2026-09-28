@@ -169,6 +169,8 @@ def publish_fixture(opener, origin, csrf):
                                  {**cap,
                                   "skillDocuments": skill_documents, "restRoutesYaml": routes,
                                   "executionConfigurationYaml": execution}, csrf), 200))
+    saved = json.loads(need(*send(opener, origin + "/api/management/editing/draft/credentials", "PUT",
+                                 {**candidate(cap, saved), "identifier": "provider.primary.key", "value": "fixture-only"}, csrf), 200))
     published = publish_draft(opener, origin, csrf, candidate(cap, saved))
     assert published["localId"]
     return published["localId"]
@@ -222,7 +224,7 @@ def main():
             "CADDY_CONFIG_FILE": str(ROOT / "examples/production/Caddyfile.internal"),
             "JWT_PUBLIC_KEY_FILE": str(ROOT / "examples/quickstart/host/public.pem"),
             "JWT_ISSUER_URI": "http://host:8081", "JWT_AUDIENCE": "loomspan-sidecar",
-            "PROVIDER_PRIMARY_KEY": "fixture-only",
+            "LOOMSPAN_SIDECAR_CREDENTIAL_KEY": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
             "SETUP_TOKEN": "", "SMTP_FROM": "", "EXTERNAL_BASE_URL": origin,
             "SMTP_HOST": "", "SMTP_PORT": "2525", "SMTP_USERNAME": "", "SMTP_PASSWORD": "",
             "SMTP_AUTH": "false", "SMTP_STARTTLS": "false", "URL_VARIABLES": "TARGET_URL",
@@ -507,7 +509,7 @@ def main():
                     "/api/management/configuration/current"), 200))["published"]["localId"] == second_current
                 review = json.loads(need(*multipart(second_client, second_origin +
                     "/api/management/configuration/import/review", exported, second_csrf), 200))
-                assert review["validation"]["successful"] and review["sourceSnapshotId"] == snapshot
+                assert not review["validation"]["successful"] and review["sourceSnapshotId"] == snapshot  # configuration-only requires credentials
                 fields = held
                 stale = dict(fields, baseSnapshotId=str(uuid.uuid4()))
                 need(*multipart(second_client, second_origin + "/api/management/configuration/import/load",
@@ -519,6 +521,8 @@ def main():
                 assert loaded["revision"] > before["revision"] and loaded["sourceSnapshotId"] == snapshot
                 assert json.loads(need(*send(second_client, second_origin +
                     "/api/management/configuration/current"), 200))["published"]["localId"] == second_current
+                loaded = json.loads(need(*send(second_client, second_origin + "/api/management/editing/draft/credentials", "PUT",
+                    {**candidate(held, loaded), "identifier": "provider.primary.key", "value": "fixture-only"}, second_csrf), 200))
                 imported = publish_draft(second_client, second_origin, second_csrf, candidate(held, loaded))
                 imported_id = imported["localId"]
                 assert imported_id not in (snapshot, second_current) and imported["sourceId"] == snapshot

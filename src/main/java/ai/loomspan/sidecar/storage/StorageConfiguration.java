@@ -2,6 +2,8 @@ package ai.loomspan.sidecar.storage;
 
 import ai.loomspan.sidecar.config.SidecarStorageProperties;
 import ai.loomspan.sidecar.config.SidecarSnapshotProperties;
+import ai.loomspan.sidecar.configuration.ProviderCredentialCipher;
+import ai.loomspan.sidecar.configuration.EffectiveExecutionConfiguration;
 import ai.loomspan.sidecar.management.ManagementAccountRepository;
 import ai.loomspan.sidecar.management.ManagementPersonalTokenRepository;
 import org.flywaydb.core.Flyway;
@@ -9,6 +11,7 @@ import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteDataSource;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -26,6 +29,16 @@ import java.sql.Statement;
 @Configuration
 public class StorageConfiguration
 {
+    @Bean
+    ProviderCredentialCipher providerCredentialCipher(ai.loomspan.sidecar.configuration.ConfigurationMode mode) {
+        return new ProviderCredentialCipher(mode == ai.loomspan.sidecar.configuration.ConfigurationMode.FILE
+                ? null : System.getenv("LOOMSPAN_SIDECAR_CREDENTIAL_KEY"));
+    }
+
+    @Bean
+    EffectiveExecutionConfiguration effectiveExecutionConfiguration(ProviderCredentialCipher cipher) {
+        return new EffectiveExecutionConfiguration(cipher);
+    }
     @Bean(destroyMethod = "close")
     StorageLock storageLock(SidecarStorageProperties properties)
     {
@@ -76,12 +89,19 @@ public class StorageConfiguration
 
     @Bean
     ConfigurationSnapshotStore configurationSnapshotStore(ConfigurationSnapshotRepository repository,
-            DataSourceTransactionManager transactionManager, SidecarSnapshotProperties properties)
+            DataSourceTransactionManager transactionManager, SidecarSnapshotProperties properties,
+            ai.loomspan.sidecar.configuration.ConfigurationMode mode)
     {
         var store = new ConfigurationSnapshotStore(repository, new TransactionTemplate(transactionManager),
                 properties.getMaxRetained());
-        store.initialize();
+        if (mode == ai.loomspan.sidecar.configuration.ConfigurationMode.DATABASE) store.initialize();
         return store;
+    }
+
+    @Bean
+    FileConfigurationStartupStore fileConfigurationStartupStore(DataSource storageDataSource, Flyway storageFlyway,
+            SidecarSnapshotProperties properties) {
+        return new FileConfigurationStartupStore(new JdbcTemplate(storageDataSource), properties.getMaxRetained());
     }
 
     public static DataSource dataSource(Path path)
