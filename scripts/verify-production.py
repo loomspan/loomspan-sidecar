@@ -261,7 +261,7 @@ def main():
             config = json.loads(rendered)
             service = config["services"]["sidecar"]
             assert service["environment"]["LOOMSPAN_SIDECAR_SMTP_PASSWORD"] == ""
-            assert service["environment"]["LOOMSPAN_CONNECTIONS_PRIMARY_API_KEY"] == "fixture-only"
+            assert "LOOMSPAN_CONNECTIONS_PRIMARY_API_KEY" not in service["environment"]
             assert len([key for key in config["services"] if key == "sidecar"]) == 1
             assert service["user"] == "10001:10001"
             assert not service.get("ports"), service.get("ports")
