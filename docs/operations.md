@@ -46,7 +46,15 @@ python scripts/verify-image.py --image loomspan-sidecar:sc5-local `
 
 With a stopped, isolated test database containing the authored quickstart
 planner and routes, verify SIGTERM during nested work and at the framework
-deadline:
+deadline.
+
+If the selected database configuration uses encrypted provider credentials,
+provision `LOOMSPAN_SIDECAR_CREDENTIAL_KEY` in the verifier's process environment
+with the same key that encrypted them before running the command. The production
+verifier passes its fixture environment to the shutdown verifier automatically.
+Database mode needs this key when encrypting or decrypting provider credentials;
+an empty database can start without it. File mode neither requires nor inspects
+the key.
 
 ```powershell
 python scripts/verify-shutdown.py --image loomspan-sidecar:sc5-local --database-dir C:/path/to/stopped-test-data

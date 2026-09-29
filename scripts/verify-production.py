@@ -199,6 +199,13 @@ def browser(origin, email, password, setup_link=None, recovery_link=None, editor
               env=environment, timeout=180)
 
 
+def verify_shutdown(image_name, database_dir, environment):
+    image.run(sys.executable, str(ROOT / "scripts/verify-shutdown.py"), "--image", image_name,
+              "--database-dir", str(database_dir), "--api-port", str(port()),
+              "--host-port", str(port()), "--management-port", str(port()),
+              env=environment, timeout=240)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--image", required=True)
@@ -690,9 +697,7 @@ def main():
             assert login(client(), origin, email, replacement)
             print("PASS production stopped-volume offline reset and manual redemption", flush=True)
 
-            image.run(sys.executable, str(ROOT / "scripts/verify-shutdown.py"), "--image", args.image,
-                      "--database-dir", str(backup), "--api-port", str(port()),
-                      "--host-port", str(port()), "--management-port", str(port()), timeout=240)
+            verify_shutdown(args.image, backup, compose_environment)
             print("PASS admitted-work completion and framework cutoff across SIGTERM", flush=True)
         finally:
             image.require_cleanup(*command, "down", "--volumes", "--remove-orphans",
