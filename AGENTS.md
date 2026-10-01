@@ -43,9 +43,10 @@
 
 ## Dependency and release policy
 
-- Framework beta 6 source reviewed for PR 7: `56c750b`;
-  Maven dependency: `ai.loomspan:loomspan-spring-boot-starter:1.0.0-beta.6-SNAPSHOT`.
-  Use the snapshot installed in the developer's local Maven repository. The
+- Maven dependency: `ai.loomspan:loomspan-spring-boot-starter:1.0.0-beta.7`.
+  Consult the matching `v1.0.0-beta.7` tag in the local framework checkout
+  when its development branch has advanced. For future snapshot development,
+  use the snapshot installed in the developer's local Maven repository. The
   developer runs a new framework install after framework changes, keeping that
   artifact aligned with `C:/opendev/code/loomspan-framework` for source lookups.
   Rely on this workflow; no separate artifact/source-revision verification is
@@ -55,12 +56,12 @@
   snapshot repository is introduced.
 - Consult documentation in the matching local framework checkout during development.
   The separately installed `0.1.0-SNAPSHOT` documentation skill is stale for
-  beta 6.
+  beta 7.
 - Prove Sidecar integration against the snapshot before final framework release
   checks using local integration evidence. Publish the framework to Maven Central
-  first, then switch Sidecar's framework dependency to `1.0.0-beta.6` for its
+  first, then pin Sidecar's framework dependency to the released version for its
   final build/tests and final commit. Hosted CI resolves that published artifact; its execution is deferred
   until publication. Verify before releasing Sidecar. Never overwrite a release.
 - Sidecar and framework versions advance independently. Sidecar development is
-  `1.0.0-beta.1-SNAPSHOT`; its first planned release is `1.0.0-beta.1`, tagged
-  `v1.0.0-beta.1`. Keep the framework dependency pinned to its tested version.
+  `1.0.0-beta.2-SNAPSHOT`; its next planned release is `1.0.0-beta.2`, tagged
+  `v1.0.0-beta.2`. Keep the framework dependency pinned to its tested version.

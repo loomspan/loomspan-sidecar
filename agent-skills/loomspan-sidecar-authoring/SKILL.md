@@ -4,7 +4,7 @@ description: Build application endpoints and matching Loomspan Sidecar REST skil
 metadata:
   loomspan-component: sidecar
   loomspan-version: "1.0.0-beta.2-SNAPSHOT"
-  loomspan-framework-version: "1.0.0-beta.6"
+  loomspan-framework-version: "1.0.0-beta.7"
 ---
 
 # Author application backed Sidecar skills
@@ -13,7 +13,7 @@ Work in the integrating application's checkout. Inspect its behavior, data model
 
 Read [client setup and commands](references/client-usage.md) for authoring, [execution configuration](references/execution-configuration.md) for publishable framework settings, [REST configuration](references/rest-configuration.md) for routes, and [integration](references/integration.md) for server setup, JWTs and direct execution API requests/polling. These resources and [record example](examples/remote-authoring/README.md) are bundled.
 
-Use this bundle to access the existing Sidecar management Console API from a developer LLM. The separately installed `loomspan-docs` at exactly `1.0.0-beta.6` is an explicit dependency for deeper framework syntax and semantics, as declared by `loomspan-framework-version`. Load only relevant guidance. If unavailable, explain the missing matching guidance rather than inventing semantics or assuming a framework checkout. `loomspan-install` selects exact sources; no live service is needed for installation.
+Use this bundle to access the existing Sidecar management Console API from a developer LLM. The separately installed `loomspan-docs` at exactly `1.0.0-beta.7` is an explicit dependency for deeper framework syntax and semantics, as declared by `loomspan-framework-version`. Load only relevant guidance. If unavailable, explain the missing matching guidance rather than inventing semantics or assuming a framework checkout. `loomspan-install` selects exact sources; no live service is needed for installation.
 
 Direct API integration requires no SDK. When the application uses an SDK, its independently versioned `loomspan-sdk-<language>` skill owns language setup, authentication integration, callbacks, request context, lifecycle and application changes. This skill owns Sidecar server configuration. Load the SDK specialist only when relevant and available; do not invent SDK protocols. Applications send execution requests to Sidecar; REST callbacks travel from Sidecar into the application and require independent application authentication and data authorization.
 

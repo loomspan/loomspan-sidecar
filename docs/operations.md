@@ -4,7 +4,7 @@ This guide covers local builds, production deployment, configuration publication
 
 ## Build from source
 
-Sidecar currently depends on `ai.loomspan:loomspan-spring-boot-starter:1.0.0-beta.6-SNAPSHOT` installed in the local Maven repository from `C:/opendev/code/loomspan-framework`. Run `./mvnw` on POSIX or `.\mvnw.cmd` on Windows.
+Sidecar currently depends on the released `ai.loomspan:loomspan-spring-boot-starter:1.0.0-beta.7`. Consult the matching `v1.0.0-beta.7` tag in `C:/opendev/code/loomspan-framework` for framework documentation. Run `./mvnw` on POSIX or `.\mvnw.cmd` on Windows.
 
 ```powershell
 .\mvnw.cmd -B -ntp verify
@@ -835,14 +835,13 @@ Without it, the framework's Google GenAI / Google Auth dependency chain selects
 Error Prone annotations use the transitive dependency version; Sidecar does not
 require a separate annotation-version override.
 
-Push and pull-request CI is prepared to override the dependency with published
-`1.0.0-beta.6` through job-level `MAVEN_ARGS`, including Maven subprocesses
-launched by the production Compose browser verifier. Local verification keeps
-the POM's snapshot default. Hosted verification is deferred until that artifact exists on
-Maven Central. The delivery order is local Sidecar integration against the
-snapshot, framework release checks and publication, then Sidecar verification
-against the released artifact. This project does not build framework source in
-its own build or CI.
+Local builds and push/pull-request CI use published framework `1.0.0-beta.7`.
+CI pins that same version through job-level `MAVEN_ARGS`, including Maven
+subprocesses launched by the production Compose browser verifier. For future
+framework upgrades, the delivery order is local Sidecar integration against
+the development snapshot, framework release checks and publication, then
+Sidecar verification against the released artifact. This project does not
+build framework source in its own build or CI.
 
 ### Version commands
 
@@ -851,7 +850,7 @@ authoring skill metadata, including the pinned framework version. From a clean
 worktree, prepare a version change with:
 
 ```powershell
-python scripts/sidecar_version.py set 1.0.0-beta.1
+python scripts/sidecar_version.py set 1.0.0-beta.2
 python scripts/sidecar_version.py check
 ```
 
@@ -860,7 +859,7 @@ It preserves the framework dependency, historical evidence, and release examples
 Review, verify, and commit the changes before creating the local annotated tag:
 
 ```powershell
-python scripts/sidecar_version.py tag 1.0.0-beta.1
+python scripts/sidecar_version.py tag 1.0.0-beta.2
 ```
 
 `tag` requires a clean worktree, matching POM and skill metadata, a matching
@@ -871,23 +870,72 @@ After release, use `set <next-version>-SNAPSHOT` to start the next development
 version. The packaging helper below remains responsible for release downloads.
 
 Release tags are exactly `v<project-version>`. The guarded workflow requires a
-non-SNAPSHOT Sidecar version and framework `1.0.0-beta.6`, reruns Maven and image
+non-SNAPSHOT Sidecar version and framework `1.0.0-beta.7`, reruns Maven and image
 verification, then publishes an immutable GHCR version tag and a GitHub release
 containing the executable JAR, a reproducible ZIP archive, and SHA-256 files.
 Local preparation is intentionally nonpublishing:
 
 ```powershell
-python scripts/prepare-release.py --validate-only --project-version 1.0.0-beta.1 --loomspan-version 1.0.0-beta.6 --tag v1.0.0-beta.1
+python scripts/prepare-release.py --validate-only --project-version 1.0.0-beta.2 --loomspan-version 1.0.0-beta.7 --tag v1.0.0-beta.2
 ```
 
-Sidecar development is on `1.0.0-beta.1-SNAPSHOT` for the
-[management console roadmap](../ai/thoughts/phases/2026-09-16-management-console-roadmap.md).
-The framework dependency remains `1.0.0-beta.6-SNAPSHOT`. Final dependency changes,
-release tags and publication follow the separate release verification workflow;
-the framework must be published and resolvable before final Sidecar verification.
-Sidecar and framework versions advance independently. The first planned Sidecar
-release is `1.0.0-beta.1`, tagged `v1.0.0-beta.1`, bundling framework
-`1.0.0-beta.6`. Historical acceptance evidence retains the versions tested then.
+Sidecar development is on `1.0.0-beta.2-SNAPSHOT`; the next planned release is
+`1.0.0-beta.2`, tagged `v1.0.0-beta.2`, bundling framework `1.0.0-beta.7`.
+Sidecar and framework versions advance independently. Historical acceptance
+evidence retains the versions tested then.
+
+### Publish Sidecar 1.0.0-beta.2
+
+Commit the reviewed framework upgrade first: the version helper requires a
+clean worktree. Confirm framework beta 7 is resolvable from Maven Central and
+that the remote Sidecar tag is unused (`git ls-remote --tags origin
+refs/tags/v1.0.0-beta.2` must print no matching tag). On Windows, prepare and
+verify the release from the repository root:
+
+```powershell
+python scripts/sidecar_version.py set 1.0.0-beta.2
+python scripts/sidecar_version.py check
+python scripts/prepare-release.py --validate-only --project-version 1.0.0-beta.2 --loomspan-version 1.0.0-beta.7 --tag v1.0.0-beta.2
+python -m unittest discover -s scripts -p 'test_*.py' -v
+python -m unittest discover -s agent-skills/loomspan-sidecar-authoring/client -p 'test_*.py' -v
+.\mvnw.cmd -B -ntp -Prelease verify
+docker build --tag loomspan-sidecar:beta2-release-check .
+python scripts/verify-image.py --image loomspan-sidecar:beta2-release-check
+python scripts/verify-production.py --image loomspan-sidecar:beta2-release-check
+```
+
+Stop on any failure. These image checks use disposable local fixture
+deployments and require Docker. On a fresh machine, install Playwright's
+Chromium before running the production verifier:
+
+```powershell
+.\mvnw.cmd -B -ntp test-compile org.codehaus.mojo:exec-maven-plugin:3.6.2:java "-Dexec.mainClass=com.microsoft.playwright.CLI" "-Dexec.classpathScope=test" "-Dexec.args=install chromium"
+```
+
+Review the version diff and commit it, then push the
+release commit and wait for its CI to pass before pushing the tag:
+
+```powershell
+git add pom.xml agent-skills/loomspan-sidecar-authoring/SKILL.md
+git commit -m "Release Sidecar 1.0.0-beta.2 with Loomspan 1.0.0-beta.7"
+git push origin main
+# Wait for this commit's CI to pass, then:
+python scripts/sidecar_version.py tag 1.0.0-beta.2
+git push origin v1.0.0-beta.2
+```
+
+Pushing the tag triggers `.github/workflows/release.yml`. Wait for both its
+verification and publication jobs to pass, then check the GitHub release
+downloads/checksums and GHCR image tag `1.0.0-beta.2`. Never overwrite an
+existing release or image tag. After successful publication, start the next
+development version from a clean worktree:
+
+```powershell
+python scripts/sidecar_version.py set 1.0.0-beta.3-SNAPSHOT
+git add pom.xml agent-skills/loomspan-sidecar-authoring/SKILL.md
+git commit -m "Start Sidecar 1.0.0-beta.3-SNAPSHOT development"
+git push origin main
+```
 
 ## Management personal tokens
 

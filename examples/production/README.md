@@ -8,7 +8,7 @@ runs as UID/GID 10001:10001 and contains no SMTP capture server, model fixture,
 or private signing key. The private HTTP hop is deliberate; this stack does not
 provide end-to-end TLS to Sidecar.
 
-From the repository root, build against the installed Loomspan beta 6 snapshot:
+From the repository root, build against the pinned Loomspan 1.0.0-beta.7 release:
 
 ```powershell
 .\mvnw.cmd -B -ntp package

@@ -1,6 +1,6 @@
 # REST skill and route authoring
 
-The matching beta.6 framework REST manifest needs `name`, `description`, and `rest: true`. `input_schema` and `rbac_roles` are optional. REST manifests must omit model and prompt fields, including null or empty declarations. Sidecar's framework parser and validation remain authoritative; this guide is an example, not a second validator.
+The matching beta.7 framework REST manifest needs `name`, `description`, and `rest: true`. `input_schema` and `rbac_roles` are optional. REST manifests must omit model and prompt fields, including null or empty declarations. Sidecar's framework parser and validation remain authoritative; this guide is an example, not a second validator.
 
 One complete snapshot has ordered `skillDocuments` entries (`sourceName`, raw `yaml`), one raw `restRoutesYaml`, and [execution settings](execution-configuration.md). Each REST skill needs one exact case-sensitive route. A target has a literal or allowlisted environment-resolved base URL and an authentication mode of `none`, `static`, or `caller-passthrough`. See the matching installed `loomspan-docs` skill for framework REST syntax and the bundled [route contract](integration.md#rest-skill-routes) for Sidecar configuration.
 
