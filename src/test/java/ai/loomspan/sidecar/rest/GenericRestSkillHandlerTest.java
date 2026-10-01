@@ -8,6 +8,8 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 import org.springframework.boot.ssl.SslBundles;
 import org.springframework.core.io.DefaultResourceLoader;
@@ -204,38 +206,43 @@ class GenericRestSkillHandlerTest {
                 .isInstanceOf(SkillException.class).hasMessageContaining("unsupported response Content-Type");
     }
 
-    @Test
-    void abortsOversizeAndErrorStreamsWithoutWaitingForTheirRemainder() throws Exception {
-        for (int status : List.of(200, 503)) {
-            var entered = new java.util.concurrent.CountDownLatch(1);
-            var release = new java.util.concurrent.CountDownLatch(1);
-            var server = server(exchange -> {
-                exchange.getResponseHeaders().set("Content-Type", "text/plain");
-                exchange.sendResponseHeaders(status, 0);
-                try (var output = exchange.getResponseBody()) {
+    @ParameterizedTest(name = "HTTP {0} aborts before the response remainder")
+    @ValueSource(ints = {200, 503})
+    void abortsOversizeAndErrorStreamsWithoutWaitingForTheirRemainder(int status) throws Exception {
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var server = server(exchange -> {
+            // Readiness must not depend on a response write the client may abort.
+            entered.countDown();
+            exchange.getResponseHeaders().set("Content-Type", "text/plain");
+            exchange.sendResponseHeaders(status, 0);
+            try (var output = exchange.getResponseBody()) {
+                if (status == 200) {
                     output.write("SECRET".getBytes(StandardCharsets.UTF_8));
                     output.flush();
-                    entered.countDown();
-                    release.await(5, java.util.concurrent.TimeUnit.SECONDS);
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
                 }
-            });
-            var handler = handler(routes(server, "lookup: {target: callback, method: GET, path: /lookup}",
-                    "none", "", "5B", "5s"));
-            var worker = java.util.concurrent.Executors.newSingleThreadExecutor();
-            try {
-                var outcome = worker.submit(() -> org.assertj.core.api.Assertions.catchThrowable(
-                        () -> handler.handle(new RestSkillInvocation("lookup", Map.of(), "test-generation"))));
-                assertThat(entered.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-                assertThat(outcome.get(2, java.util.concurrent.TimeUnit.SECONDS))
-                        .isInstanceOf(SkillException.class)
-                        .hasMessageContaining(status == 200 ? "byte limit" : "HTTP status 503")
-                        .hasMessageNotContaining("SECRET");
-            } finally {
-                release.countDown();
-                worker.shutdownNow();
+                // Only test cleanup may release the remainder, including the chunk terminator.
+                release.await();
+                output.write("SECRET remainder".getBytes(StandardCharsets.UTF_8));
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
             }
+        });
+        var handler = handler(routes(server, "lookup: {target: callback, method: GET, path: /lookup}",
+                "none", "", "5B", "5s"));
+        var worker = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            var outcome = worker.submit(() -> org.assertj.core.api.Assertions.catchThrowable(
+                    () -> handler.handle(new RestSkillInvocation("lookup", Map.of(), "test-generation"))));
+            assertThat(entered.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(outcome.get(2, java.util.concurrent.TimeUnit.SECONDS))
+                    .isInstanceOf(SkillException.class)
+                    .hasMessageContaining(status == 200 ? "byte limit" : "HTTP status 503")
+                    .hasMessageNotContaining("SECRET");
+            assertThat(release.getCount()).as("response remainder remains withheld").isEqualTo(1);
+        } finally {
+            release.countDown();
+            worker.shutdownNow();
         }
     }
 
