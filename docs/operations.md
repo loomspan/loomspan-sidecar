@@ -844,6 +844,32 @@ snapshot, framework release checks and publication, then Sidecar verification
 against the released artifact. This project does not build framework source in
 its own build or CI.
 
+### Version commands
+
+Use `python scripts/sidecar_version.py check` to check the root POM and
+authoring skill metadata, including the pinned framework version. From a clean
+worktree, prepare a version change with:
+
+```powershell
+python scripts/sidecar_version.py set 1.0.0-beta.1
+python scripts/sidecar_version.py check
+```
+
+`set` changes only the Sidecar version in the root POM and authoring skill.
+It preserves the framework dependency, historical evidence, and release examples.
+Review, verify, and commit the changes before creating the local annotated tag:
+
+```powershell
+python scripts/sidecar_version.py tag 1.0.0-beta.1
+```
+
+`tag` requires a clean worktree, matching POM and skill metadata, a matching
+release version, a non-SNAPSHOT framework dependency, and an unused local tag.
+It does not build, verify remote tag availability, push, or publish. Check remote
+tags and complete release verification before pushing the commit and tag.
+After release, use `set <next-version>-SNAPSHOT` to start the next development
+version. The packaging helper below remains responsible for release downloads.
+
 Release tags are exactly `v<project-version>`. The guarded workflow requires a
 non-SNAPSHOT Sidecar version and framework `1.0.0-beta.6`, reruns Maven and image
 verification, then publishes an immutable GHCR version tag and a GitHub release

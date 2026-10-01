@@ -75,7 +75,7 @@ class SidecarAgentSkillsTest(unittest.TestCase):
                 if mutation == "marker":
                     text = text.replace("loomspan-component: sidecar", "loomspan-component: framework")
                 elif mutation == "version":
-                    text = text.replace('loomspan-version: "1.0.0-beta.1-SNAPSHOT"', 'loomspan-version: "0.0.0"')
+                    text = re.sub(r'(?m)^  loomspan-version: .*$', '  loomspan-version: "0.0.0"', text)
                 elif mutation == "framework":
                     text = text.replace('loomspan-framework-version: "1.0.0-beta.6"', 'loomspan-framework-version: "0.0.0"')
                 elif mutation == "absent-marker":

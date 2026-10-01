@@ -28,6 +28,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python scripts/sidecar_version.py check
           chmod +x mvnw
           version="$(./mvnw -q -DforceStdout help:evaluate -Dexpression=project.version)"
           loomspan="$(./mvnw -q -DforceStdout help:evaluate -Dexpression=loomspan.version)"

@@ -22,6 +22,8 @@ jobs:
           cache: maven
       - name: Verify portable Sidecar guidance and client
         run: |
+          python scripts/sidecar_version.py check
+          python -m unittest discover -s scripts -p 'test_sidecar_version.py' -v
           python -m unittest discover -s scripts -p 'test_agent_skills.py' -v
           python -m unittest discover -s agent-skills/loomspan-sidecar-authoring/client -p 'test_*.py' -v
       - name: Install Chromium for browser integration checks
