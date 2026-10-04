@@ -9,9 +9,20 @@ metadata:
 
 # Author application backed Sidecar skills
 
+This is an Agent Skill for developing applications with Sidecar, not for changing
+Sidecar's implementation. Application skills are the YAML capabilities you author
+and execute. In this bundle, the management console means Sidecar's built-in
+configuration UI; the separate Loomspan Console and its matching Agent Skill own
+runtime investigation through MCP.
+
 Work in the integrating application's checkout. Inspect its behavior, data model, existing authentication, per-record authorization, and tests before changing endpoints. Repository access comes from the agent's environment; Sidecar does not grant code access. Define a narrow endpoint that independently checks its caller and authorizes the requested data. Add application tests for allowed and denied access.
 
-Read [client setup and commands](references/client-usage.md) for authoring, [execution configuration](references/execution-configuration.md) for publishable framework settings, [REST configuration](references/rest-configuration.md) for routes, and [integration](references/integration.md) for server setup, JWTs and direct execution API requests/polling. These resources and [record example](examples/remote-authoring/README.md) are bundled.
+Read [client setup and commands](references/client-usage.md) for authoring, [execution configuration](references/execution-configuration.md) for publishable framework settings, [REST configuration](references/rest-configuration.md) for routes, and [integration](references/integration.md) for server setup, JWTs and direct execution API requests/polling. For exact [editing/publication APIs](references/management-api.md),
+[access and personal tokens](references/management-access.md),
+[configuration modes and key operations](references/configuration-modes.md),
+[snapshot lifecycle](references/configuration-lifecycle.md), and
+[configuration bundles](references/configuration-bundles.md), load only the
+reference needed for the task. These resources and [record example](examples/remote-authoring/README.md) are bundled.
 
 Use this bundle to access the existing Sidecar management Console API from a developer LLM. The separately installed `loomspan-docs` at exactly `1.0.0-beta.7` is an explicit dependency for deeper framework syntax and semantics, as declared by `loomspan-framework-version`. Load only relevant guidance. If unavailable, explain the missing matching guidance rather than inventing semantics or assuming a framework checkout. `loomspan-install` selects exact sources; no live service is needed for installation.
 

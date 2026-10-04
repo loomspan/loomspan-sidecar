@@ -1,0 +1,13 @@
+name: triageSupportRequest
+description: Turn a customer issue into an actionable engineering triage brief.
+model: assistant
+prompt: >
+  Assess customer impact and urgency, distinguish reported facts from hypotheses,
+  and propose the next investigation steps. Identify missing information.
+  Do not claim to have checked systems or taken action.
+input_schema:
+  type: object
+  properties:
+    customerMessage: { type: string }
+  required: [customerMessage]
+  additionalProperties: false

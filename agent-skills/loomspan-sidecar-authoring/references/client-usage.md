@@ -1,5 +1,8 @@
 # Client setup and commands
 
+The [management API reference](management-api.md) owns request and concurrency contracts;
+[management access](management-access.md) owns authentication and token permissions.
+
 Requires Python 3.9 or newer and only its standard library. Resolve the bundled [client](../client/sidecar_authoring.py) from the installed skill root supplied by the host; the customer's current directory remains their application project. There is no agent allowlist or proprietary dependency. Set `$skillRoot` below to that host-resolved absolute path, not a guessed agent directory.
 
 ```powershell
@@ -18,7 +21,11 @@ Do not type a real token into an agent prompt, shell command, repository file, o
 
 Commands are `current`, `history`, `draft`, `lease-status`, `acquire`, `handoff`, `renew`, `release`, `save`, `replace-credential`, `remove-credential`, `reconcile`, `validate`, `publish`, `export --output FILE`, `import-review --bundle FILE`, and `import-load --bundle FILE`. Mutating JSON bodies are read from stdin or `--file FILE`, never from a command argument. Send credential replacement JSON through stdin from a secret store or trusted process rather than a persistent file; the client does not print the submitted value. Export writes the server ZIP unchanged. Import review sends only the `bundle` multipart field; import load sends that bundle and exactly the five current candidate fields in the JSON file. The client does not parse or validate skill YAML or bundle internals.
 
-Sample save body (use actual IDs, revision and complete content from fresh reads):
+Sample save body for an isolated record lookup (use actual IDs and revision from
+fresh reads, replace the example target with your application's endpoint, and
+retain all other content needed in your complete candidate). If replacing a
+model-backed draft, remove now-unused credential identifiers with
+`remove-credential` before validation; replacing YAML does not delete them:
 
 ```json
 {
@@ -28,7 +35,7 @@ Sample save body (use actual IDs, revision and complete content from fresh reads
   "revision": 1,
   "baseSnapshotId": "<current snapshot ID>",
   "skillDocuments": [{"sourceName": "records.yaml", "yaml": "name: readRecord\ndescription: Read an owned record\nrest: true\n"}],
-  "restRoutesYaml": "targets: {}\nroutes: {}\n",
+  "restRoutesYaml": "targets:\n  records:\n    base-url: https://records.example.test\n    auth: {mode: caller-passthrough}\n    connect-timeout: 5s\n    read-timeout: 30s\n    max-response-size: 1MB\nroutes:\n  readRecord: {target: records, method: GET, path: '/records/{recordId}'}\n",
   "executionConfigurationYaml": "loomspan: {}\n"
 }
 ```

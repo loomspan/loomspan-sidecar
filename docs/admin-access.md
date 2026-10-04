@@ -6,17 +6,9 @@ there is no default password. Entering an email address during setup does not
 prove mailbox ownership. Keep terminal output and shell history containing
 credentials private.
 
-Build the image from the repository root (`./mvnw` on POSIX):
-
-```powershell
-.\mvnw.cmd -B -ntp package
-docker build --tag loomspan-sidecar:sc5-local .
-```
-
-```sh
-./mvnw -B -ntp package
-docker build --tag loomspan-sidecar:sc5-local .
-```
+Obtain a matching image using [runtime setup](setup.md#obtain-a-runtime).
+Commands below use the local image tag `loomspan-sidecar:sc5-local`; replace it
+with your chosen exact image consistently when using a release image.
 
 The image generates a fresh 32-byte, unpadded base64url setup credential on
 each invocation. This command needs no database, server, SMTP, or model settings.
@@ -79,7 +71,8 @@ Do not use `down -v` unless deliberately discarding the installation.
 ## Production (Caddy HTTPS)
 
 Follow the [production Compose guide](../examples/production/README.md) for
-JWT, model, Caddy hostname, certificate, and volume preparation. Set
+JWT, Caddy hostname, certificate, and volume preparation. Configure models through
+the complete draft in database mode; see [execution settings](../agent-skills/loomspan-sidecar-authoring/references/execution-configuration.md). Set
 `SIDECAR_IMAGE` in `examples/production/production.env`. SMTP settings may be
 left empty. Generate the setup credential into the shell before `up`; the
 shell variable overrides `SETUP_TOKEN` in the env file:
@@ -170,21 +163,9 @@ setup and this operator recovery still work.
 
 ## Personal access tokens
 
-Sign in to the console and open **Personal tokens**. Any active account can create,
-list and revoke its own tokens. Select Read, Edit, or Publish and optionally set a
-future expiry no more than 30 days away. The default is seven days. Creation
-shows the opaque secret once; later lists contain only its identifier, preset,
-timestamps and revocation state. Copy it immediately and inject it into the
-client's environment. Sidecar stores a SHA-256 digest, so it cannot recover a
-lost secret. Revoke a lost or exposed token and issue a new one. At most five
-tokens may be issued per account per hour and 20 may be active at once.
-
-Read can inspect current configuration, exports, history, editing status and
-the owner's saved draft. Edit adds lease control, same-user handoff, draft
-changes, import and rollback loading, and validation. Publish adds activation
-of the exact validated candidate. The account's current role is always an
-additional limit: viewers can only read even with a Publish token. Personal
-tokens cannot manage accounts, tokens, sessions or administrator takeover.
-Password changes, password reset/recovery and account disablement revoke all
-tokens for that account. Re-enabling does not revive them. Role changes narrow
-effective permissions immediately. Revocation leaves saved drafts intact.
+Sign in and open **Personal tokens** to create, list or revoke your own tokens.
+Choose Read, Edit or Publish, copy the one-time secret, and inject it through
+your client's protected environment. See [token permissions, lifetime and
+revocation](../agent-skills/loomspan-sidecar-authoring/references/management-access.md#management-personal-tokens)
+for the authoritative contract and the [client workflow](../agent-skills/loomspan-sidecar-authoring/references/client-usage.md)
+for remote authoring. Execution uses a separate JWT.

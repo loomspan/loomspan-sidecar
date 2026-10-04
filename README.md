@@ -1,123 +1,120 @@
 # Loomspan Sidecar
 
-Loomspan Sidecar runs Loomspan YAML skills as a separate service for applications
-that want to call them over HTTP. An application sends a JWT-authenticated
-request to start a skill and polls for its result. Operators use the included
-browser console to validate and publish skill definitions and REST routes
-without redeploying the calling application.
+Loomspan Sidecar brings AI reasoning into your application through an HTTP
+service. Define reusable **application skills** that reason with a model or call
+your application's REST endpoints. Compose them into a hierarchy so a model can
+break down a task within the capabilities you provide.
+
+For example, turn a customer's checkout failure report into an engineering
+triage brief, then add authorized order and payment lookups when the workflow
+needs evidence from your systems.
+
+## Why Sidecar?
+
+- **Integrate from any language.** Send JSON over an authenticated HTTP API,
+  then poll for the result. No Loomspan SDK is required.
+- **Keep application operations under your control.** Expose narrow REST
+  endpoints with their own authentication and data-access checks.
+- **Evolve skills independently of the caller.** Publish validated configuration
+  through Sidecar's management UI/API, or deploy files and restart.
+- **Investigate with your assistant.** Use version-matched Agent Skills for
+  development and Loomspan Console MCP for runtime evidence.
+
+Choose Sidecar when a separate service fits your application. Choose
+[embedded Loomspan Framework](https://github.com/loomspan/loomspan-framework)
+when you want in-process Java integration and Java application skills. Sidecar
+hosts YAML model and REST skills; it does not host Java `@SkillMethod` skills.
+Read [architecture and tradeoffs](docs/architecture.md) before choosing the boundary.
+
+## Work with your AI assistant
+
+Loomspan is designed for AI-assisted integration. **Application skills** execute
+inside Loomspan; **Agent Skills** guide your development assistant. Installing
+guidance and connecting Console MCP are separate setup steps. Humans can read
+the same documentation and references directly.
+
+Paste this discovery prompt into your assistant:
 
 ```text
-Your application -- JWT + JSON --> Sidecar -- model or REST call --> Your services
-Your application <-- execution result -- Sidecar
-Operator -- browser console --> Sidecar (skill and route configuration)
+Read https://github.com/loomspan/loomspan-sidecar/blob/main/README.md
+and follow its architecture and setup links. Explain what Sidecar would add
+to my application, its tradeoffs, and whether HTTP Sidecar or embedded Java
+fits my needs. Review the linked Loomspan Agent Skill installation guidance.
+Determine the exact Sidecar version I intend to use and its bundled Framework
+version before selecting guidance. Explain how Console MCP supports runtime
+troubleshooting and how it differs from Sidecar's management UI and API.
+Distinguish verified capabilities from assumptions. Start with an assessment
+before changing my project.
 ```
 
-Use Sidecar when your application needs a managed catalog of model-backed or
-REST-backed skills, authenticated asynchronous execution, and a way to update
-those skills while the service is running. Sidecar is a Java 21 / Spring Boot
-4.1 service, not a library added to the calling application. It stores
-configuration snapshots in SQLite; execution records are held in memory.
+When ready, follow [assistant setup](docs/setup.md#equip-your-development-assistant)
+to install matching guidance, then [Console setup](docs/console-setup.md).
 
-## Try the local service
+## From customer report to engineering triage
 
-For first administrator setup and SMTP-free recovery, follow the
-[administrator access walkthrough](docs/admin-access.md). It covers the local
-loopback HTTP console and the production Caddy HTTPS console.
+Start with a skill that assesses a support report and identifies what an engineer
+should investigate:
 
-Follow the [source-build prerequisites](docs/operations.md#build-from-source),
-then build the JAR and image from the repository root. Docker Compose starts
-Sidecar with a local JWT issuer and deterministic model fixture; no model
-provider account is needed.
-
-```powershell
-.\mvnw.cmd -B -ntp package
-docker build --tag loomspan-sidecar:sc5-local .
-$env:SIDECAR_IMAGE = "loomspan-sidecar:sc5-local"
-docker compose -f examples/quickstart/compose.yaml up -d --build
-$token = (Invoke-RestMethod http://localhost:8081/token).access_token
-$headers = @{ Authorization = "Bearer $token" }
-Invoke-RestMethod http://localhost:8080/v1/skills -Headers $headers
+```yaml
+name: triageSupportRequest
+description: Turn a customer issue into an actionable engineering triage brief.
+model: assistant
+prompt: >
+  Assess customer impact and urgency, distinguish reported facts from hypotheses,
+  and propose the next investigation steps. Identify missing information.
+  Do not claim to have checked systems or taken action.
+input_schema:
+  type: object
+  properties:
+    customerMessage: { type: string }
+  required: [customerMessage]
+  additionalProperties: false
 ```
 
-On a new volume, the response is `[]`: the service starts with no published
-skills. This check verifies the running API and test token, not a completed
-skill execution. The YAML files under `examples/quickstart/sidecar/` are
-authoring examples; they are not automatically loaded into the database. Stop
-the local stack with:
+After publishing it with an `assistant` model connection, your application sends:
 
-```powershell
-docker compose -f examples/quickstart/compose.yaml down
+```http
+POST /v1/skills/triageSupportRequest/executions
+Authorization: Bearer <execution-access-token>
+Content-Type: application/json
+
+{"customerMessage":"Since this morning's deployment, checkout times out after payment. Three customers were charged without an order confirmation. Retrying sometimes creates two orders."}
 ```
 
-On POSIX systems use `./mvnw` for the build. The local Compose file publishes
-HTTP on loopback for development. For a deployed installation, follow the
-[production Compose guide](examples/production/README.md), then sign in to the
-console to add, validate, and publish skills.
+Sidecar returns `202 Accepted` with an execution ID and `Location`. Poll that
+location with a token for the same issuer and subject until `COMPLETED` or
+`FAILED`. The result is text: an assessment of the reported impact, possible
+causes, and next checks. This skill reasons over the supplied report; it does
+not inspect payments or orders, and its conclusions need review.
 
-## Connect an application
+The [complete quickstart](docs/quickstart.md) provides the build, local JWT
+fixture, administrator setup, model credentials, publication, invocation, and
+polling steps. It makes a real model request. To extend it, add application REST
+capabilities using the [authoring guide](agent-skills/loomspan-sidecar-authoring/SKILL.md).
 
-Configure Sidecar to trust your access-token issuer and audience. Your
-application supplies a bearer access token and a JSON object as input:
+## Before deploying
 
-```text
-GET  /v1/skills
-POST /v1/skills/{name}/executions  ->  202 Accepted + execution ID
-GET  /v1/executions/{id}          ->  poll until COMPLETED or FAILED
-```
+Sidecar is in beta. Pin an exact runtime and review [upgrade guidance](docs/upgrades.md).
+This checkout's POM and authoring bundle identify Sidecar `1.0.0-beta.2` with
+Framework `1.0.0-beta.7`; their version numbers advance independently.
 
-The same verified issuer and subject can poll an execution. Sidecar does not
-issue tokens. Execution records disappear on restart, so callers should handle
-an unavailable or expired result. See the [integration guide](docs/integration.md)
-for JWT configuration, skill and REST route authoring, request examples, results,
-and limits.
+The supported deployment uses one Sidecar instance per persistent local SQLite
+volume. Configuration and accounts persist; execution records are memory-only
+and expire or disappear on restart. Your application supplies execution JWTs;
+Sidecar does not issue them. See [setup](docs/setup.md) for authentication and
+configuration choices, and [operations](docs/operations.md) for recovery.
 
-## Install agent guidance
+| Goal | Start here |
+| --- | --- |
+| Evaluate architecture and tradeoffs | [Architecture](docs/architecture.md) |
+| Run a complete first skill | [Quickstart](docs/quickstart.md) |
+| Set up deployment and assistant guidance | [Setup](docs/setup.md) |
+| Author skills and integrate HTTP calls | [Application integration](docs/integration.md) |
+| Investigate execution with Console MCP | [Console setup](docs/console-setup.md) |
+| Deploy HTTPS and manage recovery | [Production Compose](examples/production/README.md), [operations](docs/operations.md) |
+| Find the authoritative reference | [Documentation map](docs/README.md) |
 
-Read the official [loomspan-install instructions](https://github.com/loomspan/loomspan-framework/tree/main/agent-skills/loomspan-install) through your agent host. Select the exact Sidecar target from your deployment metadata; no application POM, Loomspan checkout or live server is required. The installer reads that release's POM to select matching framework guidance and defaults to the host's project scope. Updates change only selected skills, not dependencies or runtime targets.
-
-The sibling skills are `loomspan` (orientation), `loomspan-docs` (framework semantics), `loomspan-console` (runtime evidence), and [loomspan-sidecar-authoring](agent-skills/loomspan-sidecar-authoring/SKILL.md) (server setup and direct API authoring). Install complete exact-revision folders through the host, including their resources and client.
-
-Each Sidecar release bundles a tested Loomspan framework version, recorded in
-that release's [pom.xml](pom.xml). Missing exact agent-skill sources stop
-preflight; published releases are never overwritten to add these skills.
-
-Future `loomspan-sdk-<language>` skills live with their SDKs and use their own dependency versions and published compatibility facts. They own application lifecycle, security integration, request context and callbacks; Sidecar guidance owns server setup. Equal versions do not establish compatibility. Direct API users need no SDK.
-
-## Planned SDKs
-
-Client SDKs for Sidecar's public HTTP API will live in this repository under
-`sdks/`, with independently built and published language packages. These are
-placeholder directories only; no SDKs are implemented or published yet.
-
-```text
-sdks/
-  java/     # Java; planned standalone Maven library
-  go/       # Go
-  node/     # Node.js (JavaScript)
-  ruby/     # Ruby / Ruby on Rails
-  python/   # Python
-  dotnet/   # .NET
-```
-
-The Java SDK will have its own `sdks/java/pom.xml` when implemented. The root
-`pom.xml` continues to build the Sidecar service.
-
-## Configure and operate
-
-The embedded console lets administrators manage accounts and lets editors
-publish complete skill, REST route, and execution snapshots. A new database is empty.
-Select `LOOMSPAN_SIDECAR_CONFIGURATION_MODE=file|database` at startup (default
-`database`). Database mode publishes complete settings and encrypted credentials
-through the Console/API. File mode uses deployment files and applies changes by
-restart; its configuration Console is read-only. Optional encrypted exports work
-at destinations sharing the externally provisioned encryption key. JWT trust,
-SMTP and deployment URL values remain deployment
-settings. The supported production deployment is one Sidecar instance
-per persistent local SQLite volume, served through HTTPS by Caddy.
-
-- [Integration guide](docs/integration.md): connect a caller, configure skills
-  and routes, and use the execution API.
-- [Operations guide](docs/operations.md): build, management console, snapshots,
-  configuration reference, backup, recovery, and release status.
-- [Production Compose guide](examples/production/README.md): deploy HTTPS,
-  configure credentials, and set up the first administrator.
+Developing an application **with** Sidecar is different from developing Sidecar
+itself. Repository contributors should begin with [AGENTS.md](AGENTS.md);
+maintainer audit material is parked in [ai/throughts](ai/throughts/readme-maintainer-material.md)
+for review, outside the application learning path.

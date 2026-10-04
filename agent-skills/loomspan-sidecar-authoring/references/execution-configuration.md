@@ -22,32 +22,16 @@ loomspan:
     persistence: ONERROR
 ```
 
-Read `current.mode` before authoring. In `file` mode the configuration is read-only:
-deploy complete framework skill/configuration files and the Sidecar REST route file,
-then restart. Literal file credentials and external references are supported; prefer
-secret-store provisioning. File mode never changes the selected database publication.
+For file versus database authority, managed credential restrictions, encryption
+keys, rotation and cross-environment credential transfer, see
+[configuration modes](configuration-modes.md). The [bundle contract](configuration-bundles.md)
+owns archive format and import/export behavior; the [management API](management-api.md)
+owns candidate fields, revisions, grants, and publication checks.
 
-In `database` mode authored providers and settings are complete and never inherit
-file fields or external credentials. `api-key-ref`, `gemini.credentials-json-ref`
-and `header-refs` identify values saved through write-only `replace-credential`.
-Gemini Vertex requires `credentials-json-ref`; application-default credentials and
-credential file/URI references are prohibited in database candidates. An Edit
-token/session needs the current lease, revision and base. Send values once from a
-trusted secret source; saved values cannot be read back. Replacement advances revision
-and requires validation. Never put provider plaintext into ordinary save payloads,
-prompts, logs or exports. Preparation makes no model request. Missing, blank or unused
-references prevent activation and preserve the draft.
-After removing an imported provider from the YAML, use `remove-credential` to
-remove its configured or still-required identifier before validation.
-
-Default exports require destination credentials. `export --include-encrypted-credentials`
-adds authenticated ciphertext, requiring Edit authority. With the same externally
-provisioned `LOOMSPAN_SIDECAR_CREDENTIAL_KEY`, a destination can use all included values.
-Users may share keys; distinct environment keys are not required. Wrong/missing keys
-or tampering fail without mutation. Explicitly choose `import-load --credential-mode
-configuration-only` for different-key promotion, then supply destination replacements.
-Imports are drafts; validate and publish normally. Local rollback retains encrypted
-versions. Full-installation migration uses a consistent database backup and separately
-provisioning its original key. Never put that key in database or export files.
-
-Only `loomspan.connections`, `loomspan.models`, `loomspan.session`, and `loomspan.execution-trace.persistence` are publishable. Framework process settings, Sidecar settings, Spring Boot settings, and secret provisioning remain deployment configuration and may require a restart. The database-selected complete configuration is restored at Sidecar restart.
+Only `loomspan.connections`, `loomspan.models`, `loomspan.session`, and
+`loomspan.execution-trace.persistence` are publishable. Framework process settings,
+Sidecar settings, Spring Boot settings, and secret provisioning remain deployment
+configuration and may require a restart. Preparation makes no model request.
+Missing, blank or unused credential references prevent activation and preserve
+the draft. Remove unneeded configured or required identifiers with
+`remove-credential` after removing their YAML references.

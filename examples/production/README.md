@@ -8,15 +8,14 @@ runs as UID/GID 10001:10001 and contains no SMTP capture server, model fixture,
 or private signing key. The private HTTP hop is deliberate; this stack does not
 provide end-to-end TLS to Sidecar.
 
-From the repository root, build against the pinned Loomspan 1.0.0-beta.7 release:
+Obtain the image using [runtime setup](../../docs/setup.md#obtain-a-runtime), then
+copy the deployment settings from the repository root:
 
 ```powershell
-.\mvnw.cmd -B -ntp package
-docker build --tag loomspan-sidecar:sc5-local .
 Copy-Item examples/production/production.env.example examples/production/production.env
 ```
 
-On POSIX use `./mvnw`. Edit `production.env` and restrict it to the operator:
+On POSIX use `cp` for the file copy. Edit `production.env` and restrict it to the operator:
 it contains the credential encryption key and SMTP credentials and may contain a DNS API token. The
 example values are placeholders. Set `SITE_HOST` to the one name clients use,
 and `EXTERNAL_BASE_URL` to `https://SITE_HOST` with the actual HTTPS port
@@ -118,8 +117,7 @@ by the application UID; do not set `SERVER_SSL_ENABLED=false`. Configure
 `SERVER_FORWARD_HEADERS_STRATEGY=framework` only when an ingress proxy strips
 untrusted forwarded headers and supplies the authoritative external origin.
 Keep `LOOMSPAN_SIDECAR_EXTERNAL_BASE_URL` set to the trusted HTTPS URL used in
-email. The local TLS fixture verifies direct HTTP and supplied application TLS
-with no Caddy request path.
+email.
 
 Set `JWT_ISSUER_URI` and `JWT_AUDIENCE` to the real token issuer and audience.
 The default `database` mode requires `LOOMSPAN_SIDECAR_CREDENTIAL_KEY` before saving
@@ -134,7 +132,7 @@ choose configuration-only import and replace the required credentials explicitly
 For file-managed deployments, select `LOOMSPAN_SIDECAR_CONFIGURATION_MODE=file`,
 mount documented framework configuration and skills plus
 `loomspan-sidecar.rest-routes.location`; apply every change by restart. See the
-[mode and recovery guide](../../docs/operations.md#configuration-modes-and-encryption-key-operations).
+[mode and credential guide](../../agent-skills/loomspan-sidecar-authoring/references/configuration-modes.md).
 For first administrator setup,
 generate `SETUP_TOKEN` with the packaged image using the
 [administrator access walkthrough](../../docs/admin-access.md). SMTP is optional
@@ -205,21 +203,9 @@ Configuration ZIP export/import transfers authored YAML and route text between
 installations, with destination-specific allowlisted URL values supplied by
 each process. It creates a new local snapshot and does not transfer accounts or
 source history. Retained-history rollback validates and publishes a new local
-snapshot from a source still present in the same installation. Review the
-destination's URL bindings and the documented draft-loss confirmation before
-either cutover. Neither operation replaces the full stopped database recovery
+snapshot from a source still present in the same installation. Review the destination's URL bindings and saved draft before loading: import and
+rollback replace only your draft, then require validation and explicit publication. Neither operation replaces the full stopped database recovery
 procedure.
-
-For local verification, run `python scripts/verify-production-tls.py --image
-loomspan-sidecar:sc5-local` and `python scripts/verify-production.py --image
-loomspan-sidecar:sc5-local` from the repository root. They create only
-disposable containers, Compose projects, volumes, certificates, fixture
-issuer/model and SMTP capture; they do not use `production.env`, contact real
-mail recipients, request public certificates, or modify DNS. The TLS fixture
-tests local private-CA automation, trust and recreation, supplied replacement,
-and Caddyfile adaptation for public and Cloudflare DNS modes. Actual public CA
-issuance and Cloudflare DNS updates require a separately authorized,
-configured-environment check and are not established by the local tests.
 
 Caddy reference: [automatic HTTPS](https://caddyserver.com/docs/automatic-https),
 [TLS configuration](https://caddyserver.com/docs/caddyfile/directives/tls),

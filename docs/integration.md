@@ -1,15 +1,24 @@
-# Integrating an application with Loomspan Sidecar
+# Developing an application with Sidecar
 
-Deploy Sidecar using the [production Compose guide](../examples/production/README.md), or follow the [README smoke check](../README.md). See [operations](operations.md) for deployment and administration.
+Use the [quickstart](quickstart.md) for a complete first invocation or
+[setup](setup.md) for deployment choices. Application work belongs in your
+application repository; it does not require modifying Sidecar's Java code.
 
-The portable authoring skill owns the operational guide:
+The [Sidecar authoring Agent Skill](../agent-skills/loomspan-sidecar-authoring/SKILL.md)
+guides endpoint design, authorization, complete drafts, validation, and publication.
+Its references are readable without an assistant:
 
-- [Runtime configuration](../agent-skills/loomspan-sidecar-authoring/references/integration.md#runtime-configuration)
-- [REST routes](../agent-skills/loomspan-sidecar-authoring/references/integration.md#rest-skill-routes)
-- [JWT authentication](../agent-skills/loomspan-sidecar-authoring/references/integration.md#jwt-authentication)
-- [Execution requests, polling and errors](../agent-skills/loomspan-sidecar-authoring/references/integration.md#execution-api)
-- [Remote configuration authoring](../agent-skills/loomspan-sidecar-authoring/references/integration.md#remote-configuration-authoring)
+- [Execution API, JWTs and polling](../agent-skills/loomspan-sidecar-authoring/references/integration.md#execution-api)
+- [REST routes and transport](../agent-skills/loomspan-sidecar-authoring/references/integration.md#rest-skill-routes)
+- [REST skill design and application authorization](../agent-skills/loomspan-sidecar-authoring/references/rest-configuration.md)
+- [Publishable execution settings](../agent-skills/loomspan-sidecar-authoring/references/execution-configuration.md)
+- [Management API and exact publication checks](../agent-skills/loomspan-sidecar-authoring/references/management-api.md)
+- [Python authoring client](../agent-skills/loomspan-sidecar-authoring/references/client-usage.md)
+- [Record-access example](../agent-skills/loomspan-sidecar-authoring/examples/remote-authoring/README.md)
 - [Retention and diagnostics](../agent-skills/loomspan-sidecar-authoring/references/integration.md#capacity-retention-and-diagnostics)
-- [Complete record example](../agent-skills/loomspan-sidecar-authoring/examples/remote-authoring/README.md)
 
-A new database has no skills. Sign in, author the complete configuration, validate and publish, then use an execution JWT to inspect the catalog, start work and poll its returned location. Copying example YAML does not activate it.
+A new database has no skills. Publish a complete configuration before invoking
+it; copying YAML into the checkout does not activate it. Management credentials
+author configuration, while separate execution JWTs invoke skills. Validate the
+configuration, then verify real application access, including denied records.
+Configuration validation alone cannot prove endpoint connectivity or authorization.

@@ -6,13 +6,9 @@ Contents: [runtime](#runtime-configuration), [routes](#rest-skill-routes), [JWTs
 
 ## Runtime configuration
 
-Startup selects `loomspan-sidecar.configuration.mode=file|database` (default
-`database`; environment `LOOMSPAN_SIDECAR_CONFIGURATION_MODE`). File mode uses
-complete deployment skills, routes, execution settings and credentials, exposes
-read-only management inspection, and applies changes only after restart.
-Database mode starts a new database with empty skills/routes and `loomspan: {}`,
-then restores only the selected complete publication and encrypted provider
-credentials. Deployment provider settings and credentials are never fallback inputs.
+Select file or database configuration at startup. See the authoritative
+[configuration modes](configuration-modes.md) for file locations, complete
+database authority, encryption-key provisioning and credential rotation.
 
 Each model-backed manifest names a model. Author its connection and provider
 model in the same complete Console draft; the manifest does not create them:
@@ -31,18 +27,9 @@ loomspan:
 ```
 
 Save `provider.primary.key` through the write-only draft credential control or API;
-never put the resolved credential in authored YAML. Provision the external
-`LOOMSPAN_SIDECAR_CREDENTIAL_KEY` encryption key separately and preserve it for recovery. Publishable connections,
-model aliases, session settings, and trace persistence activate with skills and
-REST routes without restart. Provider credential replacement is a draft edit requiring validation and publication.
-The REST URL allowlist and other process settings require deployment configuration
-and may require restart. Successful framework publication clears only the
-publishing user's saved draft and lease; other users' durable drafts become
-stale and require explicit current-base reconciliation and fresh validation.
-Publish rechecks live account, session, editing generation, saved revision,
-validation and base after waiting for the publication lock. Import and rollback
-load into the same draft workflow before validation and publication, assigning
-fresh local IDs with source provenance when published.
+never put the resolved credential in authored YAML. Publish complete
+[execution settings](execution-configuration.md) with skills and routes. The
+[management API](management-api.md) owns draft, validation and publication checks.
 
 ## REST skill routes
 
@@ -196,8 +183,8 @@ kind is `INPUT_VALIDATION`, `ACCESS_DENIED`, or `SKILL_FAILURE`.
 ```powershell
 $headers = @{ Authorization = "Bearer $env:SIDECAR_ACCESS_TOKEN" }
 Invoke-RestMethod http://localhost:8080/v1/skills -Headers $headers
-$accepted = Invoke-RestMethod http://localhost:8080/v1/skills/example/executions `
-  -Method Post -Headers $headers -ContentType application/json -Body '{"message":"hello"}'
+$accepted = Invoke-RestMethod http://localhost:8080/v1/skills/triageSupportRequest/executions `
+  -Method Post -Headers $headers -ContentType application/json -Body '{"customerMessage":"Checkout times out after payment; retrying sometimes creates duplicate orders."}'
 Invoke-RestMethod "http://localhost:8080/v1/executions/$($accepted.id)" -Headers $headers
 ```
 
@@ -230,37 +217,13 @@ with a route; the local test fixture exercises both allowed and denied record
 access. Install or load the complete skill through the host; no specific agent
 product or access allowlist is required.
 
-An active management user creates a Read, Edit or Publish personal token in
-`/management/personal-tokens`. The secret appears once. Provide it to the
-client through its environment and send `Authorization: Bearer <token>` over
-HTTPS. Do not place it in URLs, request JSON, command-line arguments or
-repository files. Sidecar stores only the digest and cannot return the secret
-later. Revocation and expiry stop further use; there is no refresh endpoint.
-
-Browser and bearer clients use the same `/api/management/configuration/**` and
-`/api/management/editing/**` routes and payloads. Read inspects current
-configuration, export, history, lease status and the caller's saved draft.
-Edit adds acquire, explicit same-user handoff, renewal, release, save,
-reconcile, discard, validation, import review/load and rollback review/load.
-Publish adds `POST /api/management/configuration/publish`. Publication requires
-the exact validated draft revision, lease generation and current base; no
-console approval is required. The account's live role is intersected with the
-token preset. A viewer cannot edit with a high-scope token; a token never
-permits account administration, token administration or administrator takeover.
-Browser cookie requests still require CSRF for mutations. Never mix bearer and
-session cookies in one request.
-
-Personal tokens are local management credentials. They are not execution JWTs
-and cannot invoke `/v1/**`; execution JWTs cannot manage configuration.
-Use explicit lease renewal while actively editing. A handoff reads the current
-publication and saved draft again under the new grant; it invalidates delayed
-old-holder writes. Expired or revoked credentials require a newly issued token,
-while the saved draft remains. A changed published base requires a reviewed,
-complete reconciliation and fresh validation. After an ambiguous publication
-error, inspect current status and the draft before trying another mutation.
-Validation cannot prove endpoint connectivity or data access: verify the
-published skill through `/v1/**` with a separate execution JWT. Bundle
-export/import is an optional transfer workflow, not a deployment requirement.
+Use a scoped personal token for authoring and a separate execution JWT for
+verification. See [management access](management-access.md) for token permissions,
+revocation, and browser-session differences, and [management API](management-api.md)
+for exact draft, lease, handoff, validation and publication contracts.
+After an ambiguous update, inspect current runtime state before another mutation.
+Validation does not prove endpoint connectivity or data authorization; test both
+allowed and denied application access after publication.
 
 ## Capacity, retention, and diagnostics
 
