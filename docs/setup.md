@@ -9,7 +9,7 @@ package and compatibility evidence before adopting one.
 ## Obtain a runtime
 
 Select an exact Sidecar release and use that revision's documentation and POM.
-The POM in this checkout declares Sidecar `1.0.0-beta.3` and Framework
+The POM in this checkout declares Sidecar `1.0.0-beta.4-SNAPSHOT` and Framework
 `1.0.0-beta.8`. This is source metadata, not verification that a corresponding
 image or release download is published. Check the
 [Sidecar releases](https://github.com/loomspan/loomspan-sidecar/releases) for
@@ -71,7 +71,7 @@ Framework dependency, verifies complete source bundles, and uses the host's
 supported skill manager. It does not require your application to have a POM or a
 running Sidecar instance. Project scope is the default where supported.
 
-For this checkout, Sidecar authoring guidance is beta.3; `loomspan`,
+For this checkout, Sidecar authoring guidance is beta.4-SNAPSHOT; `loomspan`,
 `loomspan-docs`, and `loomspan-console` guidance match Framework beta.8. An older
 release may lack a required skill; report that limitation instead of substituting
 latest guidance. Install complete folders, including references and the bundled

@@ -3,7 +3,7 @@ name: loomspan-sidecar-authoring
 description: Build application endpoints and matching Loomspan Sidecar REST skills through the shared management API. Use when working in an integrating application's repository to inspect its data access, author a complete Sidecar draft, validate it, hand off editing control, and optionally publish. Do not use for execution JWT issuance or management token administration.
 metadata:
   loomspan-component: sidecar
-  loomspan-version: "1.0.0-beta.3"
+  loomspan-version: "1.0.0-beta.4-SNAPSHOT"
   loomspan-framework-version: "1.0.0-beta.8"
 ---
 

@@ -62,7 +62,6 @@
   first, then pin Sidecar's framework dependency to the released version for its
   final build/tests and final commit. Hosted CI resolves that published artifact; its execution is deferred
   until publication. Verify before releasing Sidecar. Never overwrite a release.
-- Sidecar and framework versions advance independently. The current release
-  preparation is `1.0.0-beta.3`, tagged `v1.0.0-beta.3`. After successful
-  publication, start `1.0.0-beta.4-SNAPSHOT` development. Keep the framework
-  dependency pinned to its tested version.
+- Sidecar and framework versions advance independently. Sidecar development is
+  `1.0.0-beta.4-SNAPSHOT`; its next planned release is `1.0.0-beta.4`, tagged
+  `v1.0.0-beta.4`. Keep the framework dependency pinned to its tested version.
