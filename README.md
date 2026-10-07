@@ -95,7 +95,7 @@ capabilities using the [authoring guide](agent-skills/loomspan-sidecar-authoring
 ## Before deploying
 
 Sidecar is in beta. Pin an exact runtime and review [upgrade guidance](docs/upgrades.md).
-This checkout's POM and authoring bundle identify Sidecar `1.0.0-beta.2` with
+This checkout's POM and authoring bundle identify Sidecar `1.0.0-beta.3` with
 Framework `1.0.0-beta.8`; their version numbers advance independently.
 
 The supported deployment uses one Sidecar instance per persistent local SQLite
