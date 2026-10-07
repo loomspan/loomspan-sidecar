@@ -117,6 +117,12 @@ class AuthenticatedExecutionApiIntegrationTest {
         assertThat(authenticated.statusCode()).isEqualTo(200);
         assertThat(authenticated.body()).contains("echoRest", "REST", "inputSchema");
 
+        var restSkill = send("GET", "/v1/skills/echoRest", JwtTestTokens.token("reader", List.of()), null);
+        assertThat(restSkill.statusCode()).isEqualTo(200);
+        JsonNode descriptor = mapper.readTree(restSkill.body());
+        assertThat(descriptor.has("outputSchema")).isTrue();
+        assertThat(descriptor.get("outputSchema").isNull()).isTrue();
+
         var missing = send("GET", "/v1/skills/missing", JwtTestTokens.token("reader", List.of()), null);
         assertThat(missing.statusCode()).isEqualTo(404);
         assertThat(missing.headers().firstValue("content-type").orElse("")).contains("application/problem+json");

@@ -81,7 +81,7 @@ class RestRouteStartupIntegrationTest {
                 factory.getBeanProvider(org.springframework.boot.ssl.SslBundles.class));
         var parsed = loader.parse(Files.readString(routes), "catalog-routes.yaml");
         var nonRestCatalog = catalog(java.util.List.of(
-                new SkillDescriptor("yamlSkill", "YAML", SkillKind.YAML, "{}")));
+                new SkillDescriptor("yamlSkill", "YAML", SkillKind.YAML, "{}", null)));
         assertThatThrownBy(() -> new RestRouteCatalogValidator().validate(parsed, nonRestCatalog))
                 .hasMessageContaining("non-REST skill", "yamlSkill");
 

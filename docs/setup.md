@@ -10,7 +10,7 @@ package and compatibility evidence before adopting one.
 
 Select an exact Sidecar release and use that revision's documentation and POM.
 The POM in this checkout declares Sidecar `1.0.0-beta.2` and Framework
-`1.0.0-beta.7`. This is source metadata, not verification that a corresponding
+`1.0.0-beta.8`. This is source metadata, not verification that a corresponding
 image or release download is published. Check the
 [Sidecar releases](https://github.com/loomspan/loomspan-sidecar/releases) for
 available artifacts and checksums. Do not infer compatibility from equal numbers.
@@ -44,7 +44,7 @@ for exact file locations, key provisioning, and rotation. The process-key table
 lives in [operations](operations.md#sidecar-configuration-reference).
 
 Framework supports OpenAI, Anthropic, Gemini and Ollama connections; use its
-matching [connection reference](https://github.com/loomspan/loomspan-framework/blob/v1.0.0-beta.7/agent-skills/loomspan-docs/references/skill-authoring/model-selection-and-connections.md)
+matching [connection reference](https://github.com/loomspan/loomspan-framework/blob/v1.0.0-beta.8/agent-skills/loomspan-docs/references/skill-authoring/model-selection-and-connections.md)
 for driver-specific settings. For real model access, choose a connection and a model your
 account can use. Model aliases referenced by skills belong in the same complete
 configuration. Database mode uses write-only credential controls and an external
@@ -65,14 +65,14 @@ Protect and back up SQLite and the external credential key separately.
 
 ## Equip your development assistant
 
-Follow Framework's [loomspan-install workflow](https://github.com/loomspan/loomspan-framework/blob/v1.0.0-beta.7/agent-skills/loomspan-install/SKILL.md)
+Follow Framework's [loomspan-install workflow](https://github.com/loomspan/loomspan-framework/blob/v1.0.0-beta.8/agent-skills/loomspan-install/SKILL.md)
 through your assistant host. It resolves the exact Sidecar revision, reads its
 Framework dependency, verifies complete source bundles, and uses the host's
 supported skill manager. It does not require your application to have a POM or a
 running Sidecar instance. Project scope is the default where supported.
 
 For this checkout, Sidecar authoring guidance is beta.2; `loomspan`,
-`loomspan-docs`, and `loomspan-console` guidance match Framework beta.7. An older
+`loomspan-docs`, and `loomspan-console` guidance match Framework beta.8. An older
 release may lack a required skill; report that limitation instead of substituting
 latest guidance. Install complete folders, including references and the bundled
 client. Guidance installation does not change runtime dependencies or configure MCP.

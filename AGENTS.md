@@ -43,8 +43,8 @@
 
 ## Dependency and release policy
 
-- Maven dependency: `ai.loomspan:loomspan-spring-boot-starter:1.0.0-beta.7`.
-  Consult the matching `v1.0.0-beta.7` tag in the local framework checkout
+- Maven dependency: `ai.loomspan:loomspan-spring-boot-starter:1.0.0-beta.8`.
+  Consult the matching `v1.0.0-beta.8` tag in the local framework checkout
   when its development branch has advanced. For future snapshot development,
   use the snapshot installed in the developer's local Maven repository. The
   developer runs a new framework install after framework changes, keeping that
@@ -56,7 +56,7 @@
   snapshot repository is introduced.
 - Consult documentation in the matching local framework checkout during development.
   The separately installed `0.1.0-SNAPSHOT` documentation skill is stale for
-  beta 7.
+  beta 8.
 - Prove Sidecar integration against the snapshot before final framework release
   checks using local integration evidence. Publish the framework to Maven Central
   first, then pin Sidecar's framework dependency to the released version for its

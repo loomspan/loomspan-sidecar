@@ -174,6 +174,7 @@ GET  /v1/executions/{id}
 ```
 
 Catalog discovery exposes every descriptor, including role-restricted skills;
+descriptors include nullable `outputSchema` metadata (null for REST skills).
 authorization is enforced when POST validates the JSON-object input. Accepted
 requests return `202`, an `id`, and a `Location` header without waiting. Poll the
 location until `COMPLETED` or `FAILED`. Successful results are the framework's

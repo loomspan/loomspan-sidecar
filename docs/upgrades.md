@@ -15,9 +15,18 @@ before upgrading. Sidecar and Framework versions advance independently.
 4. Test the target in an isolated environment using representative application
    invocations, polling, allowed and denied callbacks, publication, restart, and
    recovery. Verify file-mode startup or database-mode restoration as applicable.
-5. Update the runtime deliberately. Follow the [version-aware installer](https://github.com/loomspan/loomspan-framework/blob/v1.0.0-beta.7/agent-skills/loomspan-install/SKILL.md)
+5. Update the runtime deliberately. Follow the [version-aware installer](https://github.com/loomspan/loomspan-framework/blob/v1.0.0-beta.8/agent-skills/loomspan-install/SKILL.md)
    to select guidance for the new Sidecar and its bundled Framework. Update Console
    to the coordinated Framework version and verify MCP connectivity separately.
+
+## Framework beta.8
+
+This checkout bundles Framework `1.0.0-beta.8`. Use the matching Console and
+framework authoring guidance. Catalog responses from `/v1/skills` and
+`/v1/skills/{name}` now include nullable `outputSchema` metadata; REST skills
+have no output schema. Clients that enforce an exact descriptor shape must
+accept this field. This dependency upgrade requires no Sidecar development-data
+reset.
 
 ## Earlier development data
 

@@ -3,8 +3,8 @@
 Sidecar includes a **management UI** for accounts and configuration. **Loomspan
 Console** is a separate application for runtime investigation, with read-only
 MCP tools for development assistants. Its version is coordinated with the bundled
-Framework, not Sidecar's version number: this checkout pairs Framework beta.7
-with Console beta.7.
+Framework, not Sidecar's version number: this checkout pairs Framework beta.8
+with Console beta.8.
 
 ## Enable Sidecar observability
 
@@ -27,13 +27,13 @@ filter. No Java security configuration changes are needed.
 
 Point Console at the application listener (8080 locally), not the health port
 9091. Use HTTPS beyond a trusted local boundary. The observability key cannot
-authenticate execution or management APIs. For the exact beta.7 adapter settings
+authenticate execution or management APIs. For the exact beta.8 adapter settings
 and diagnostic behavior, consult the matching
-[Framework observability setup](https://github.com/loomspan/loomspan-framework/blob/v1.0.0-beta.7/README.md#opt-in-console-observability-rest-api).
+[Framework observability setup](https://github.com/loomspan/loomspan-framework/blob/v1.0.0-beta.8/agent-skills/loomspan-docs/references/skill-authoring/observability-http.md).
 
 ## Connect Console and the assistant
 
-Follow the matching [Console runtime package guide](https://github.com/loomspan/loomspan-framework/blob/v1.0.0-beta.7/loomspan-console/release/README.md)
+Follow the matching [Console runtime package guide](https://github.com/loomspan/loomspan-framework/blob/v1.0.0-beta.8/loomspan-console/release/README.md)
 to obtain and start Console. Open its printed loopback pairing URL and configure
 the Sidecar target address and observability key. In the paired browser's
 Settings, enable MCP. Configure your assistant host with the Console loopback
@@ -43,7 +43,7 @@ Install the matching `loomspan-console` Agent Skill via [assistant setup](setup.
 The host must be able to reach the local Console listener. Installing the skill
 alone does not connect it, and enabling MCP does not publish Sidecar skills.
 
-For ongoing investigation, follow the [Console skill](https://github.com/loomspan/loomspan-framework/blob/v1.0.0-beta.7/loomspan-console/agent-skills/loomspan-console/SKILL.md).
+For ongoing investigation, follow the [Console skill](https://github.com/loomspan/loomspan-framework/blob/v1.0.0-beta.8/loomspan-console/agent-skills/loomspan-console/SKILL.md).
 Start with a reproducible application invocation and its execution ID; distinguish
 Sidecar's retained HTTP result from Framework's available observability evidence.
 Neither promises permanent or complete history. If the adapter is unavailable,

@@ -24,7 +24,7 @@ deployment, and polling responsibilities that in-process callers do not have.
 Loomspan uses hierarchical task planning: a model-backed parent works within its
 declared child capabilities. Start with one skill when that is enough; add a tree
 when the task needs decomposition and application operations. See the matching
-[Framework mental model](https://github.com/loomspan/loomspan-framework/blob/v1.0.0-beta.7/agent-skills/loomspan-docs/references/skill-authoring/mental-model.md).
+[Framework mental model](https://github.com/loomspan/loomspan-framework/blob/v1.0.0-beta.8/agent-skills/loomspan-docs/references/skill-authoring/mental-model.md).
 Validation constrains accepted inputs and outputs, but cannot prove a model's
 factual correctness or undo external effects.
 
