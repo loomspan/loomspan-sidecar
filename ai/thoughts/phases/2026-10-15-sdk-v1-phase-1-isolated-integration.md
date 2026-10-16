@@ -76,7 +76,9 @@ Implement Phase 1 rows with their own focused and real integration evidence;
 Phase 3 ownership never defers initial protected mutation denial or durable state.
 
 - Implement the Phase 0 HTTP core, discovery/submission/handle/status/wait APIs,
-  result fidelity and typed conversion, actionable errors and resource ownership.
+  opaque result preservation, typed API envelopes, actionable client/protocol/
+  execution errors and resource ownership. Applications own result parsing and
+  business interpretation; SDK v1 has no result converters or provider adapters.
 - Implement all four credential strategies and shared Spring/custom issuance;
   preserve customer login and application authorization.
 - Implement both callback-chain arrangements, issuer-aware principals/roles and
@@ -99,11 +101,12 @@ Phase 3 ownership never defers initial protected mutation denial or durable stat
 - Preserve token-purpose/sender-constraint rejection, unchanged credential
   passthrough, destination controls and separate management/execution access.
 - Demonstrate acceptance-unknown, no submission/callback replay, retained IDs and
-  resumed polling, terminal failure with completed callback effects and conversion
-  failure without rerunning work.
-- Preserve unchanged result text, typed envelopes, snapshot IDs, validation/problem
-  details and available diagnostics, including TypeSafe conversion. Distinguish
-  explicit rejection, demonstrable pre-send failure, acceptance unknown, protocol/
+  resumed polling, terminal failure with completed callback effects and unchanged
+  returned context after application-side parsing failure, with no new SDK requests.
+- Preserve unchanged result text, typed API envelopes, snapshot IDs, validation/problem
+  details and available diagnostics. Validate the Sidecar API envelope, not result
+  content or discovered business schemas; content never overrides reported status.
+  Distinguish explicit rejection, demonstrable pre-send failure, acceptance unknown, protocol/
   polling failure, timeout/interruption and HTTP-200 execution failure. Preserve 404
   ambiguity; a stopped wait neither cancels nor resubmits work. No blind-retry advice,
   exactly-once guarantee or promised lost-ID recovery. Provide safe timing/identifier
@@ -158,8 +161,10 @@ assigns the full roadmap scenarios. Ticket acceptance must explicitly include:
   response loss; committed callback effects despite execution failure; interruption/
   failed polling/deadline expiry with resumed lookup and bounded read retries.
   Demonstrate application-owned stable operation IDs and atomic duplicate handling
-  separately from transport retries and repeated skill actions. Conversion errors
-  retain execution/result context without re-execution.
+  separately from transport retries and repeated skill actions. Plain text and
+  JSON-looking or schema-mismatched result strings remain unchanged and successful
+  when Sidecar reports COMPLETED. A test application's parsing failure preserves
+  its returned snapshot/ID/history and causes no new SDK requests.
 
 Complete implementation and setup documentation with evidence for the isolated
 matrix and applicable Phase 0 negative scenarios. Any intentionally deferred
@@ -169,9 +174,23 @@ while adding a deliberate Java-to-Sidecar SDK path.
 
 ## Dependencies and intended ticket boundaries
 
-Depends on Phase 0 contracts. Split implementation into the HTTP core, credential
-strategies/issuance, callback integration, Sidecar trust changes, isolated bootstrap
-and test-suite scenarios as justified by the design. Each unit includes its own
-verification/documentation and explicit cross-repository prerequisites. Phase 2
-extends the integration to trusted groups; Phase 3 completes lifecycle assurance.
+Depends on Phase 0 contracts. Deliver five implementation tickets in this order:
+
+1. [PR-8.1.1 — Standalone SDK client](../tickets/PR-8.1.1-standalone-sdk-client.md):
+   independent build, HTTP outcomes/opaque results/resources and initial harness/agreement.
+2. [PR-8.1.2 — Credentials and signing](../tickets/PR-8.1.2-credentials-and-signing.md):
+   all four strategies, durable signing, public export and optional JWKS publication.
+3. [PR-8.1.3 — Sidecar trust and management](../tickets/PR-8.1.3-sidecar-trust-and-management.md):
+   working protected console/API trust configuration through execution admission.
+4. [PR-8.1.4 — Spring callback security](../tickets/PR-8.1.4-spring-callback-security.md):
+   both callback arrangements, application authorization and session/context isolation.
+5. [PR-8.1.5 — Isolated deployments and integration proof](../tickets/PR-8.1.5-isolated-deployments-and-integration.md):
+   bootstrap, required transport compositions, fault/effects fixtures and complete evidence.
+
+Each ticket includes its own tests/documentation and explicit cross-repository
+prerequisites. Internal component boundaries do not require separate pipeline runs.
+The [matrix ownership registry](2026-10-15-sdk-v1-acceptance-matrix.md#phase-1-ticket-ownership)
+maps the unchanged source assertions to these tickets. Initial harness work supports
+the client; deployment/fault assets finish with integration, without deferring required
+component tests. Phase 2 extends to trusted groups; Phase 3 completes lifecycle assurance.
 

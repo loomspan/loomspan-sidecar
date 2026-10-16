@@ -663,8 +663,10 @@ complete before a later failure. A failed execution does not imply no side effec
 rollback. Preserve failure details without automatic execution reruns. Prohibit automatic
 callback retries by Sidecar's outbound HTTP client and callback-path proxies, including
 on timeout, connection recovery or credential/TLS refresh. Configure reference proxies
-and document this requirement for customer-managed proxies. Conversion errors also must
-not cause re-execution. Safe SDK status-read retries remain a separate policy.
+and document this requirement for customer-managed proxies. Skill result content is
+opaque to the SDK; application-side parsing errors must not cause SDK re-execution
+or be reclassified as server execution failures. No SDK result converter is required.
+Safe SDK status-read retries remain a separate policy.
 
 Transport retry prevention does not stop separate repeated skill actions or user
 submissions. Applications own duplicate protection for consequential business operations,
@@ -684,7 +686,9 @@ prove no automatic replay after response loss; document equivalent customer-prox
 Demonstrate application-owned duplicate protection in a fixture with repeated operation
 IDs, distinguishing separate skill actions from transport retries and application guarantees
 from SDK guarantees.
-Include conversion failures without re-execution. These are planned integration tests,
+Include a test application that fails to parse a returned opaque result while the
+original snapshot/ID/history remain available and SDK request counts stay unchanged.
+This exercises the SDK boundary, not an SDK conversion feature. These are planned integration tests,
 not new evidence of completed behavior or authorization for real business operations.
 
 ## Existing Sidecar baseline

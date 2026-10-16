@@ -30,27 +30,42 @@ version `1.0.0-beta.1-SNAPSHOT`, planned first release `1.0.0-beta.1`:
 | --- | --- | --- |
 | `loomspan-sdk-core` | `ai.loomspan.sdk`: HTTP DTOs, blocking/async client, credential strategies, signing/public export primitives | Neither Spring Boot runtime nor embedded Framework; Apache HTTP, Jackson JSON and maintained Nimbus JWT/JOSE; SDK owns pools/executor by default |
 | `loomspan-sdk-spring-boot-starter` | `ai.loomspan.sdk.spring`: property/bean wiring, MVC/Security callbacks, optional public JWKS route | Core and Boot 4.1.0 managed servlet/Security APIs; uses existing application server, never starts a callback server |
-| `loomspan-sdk-typesafe` | `ai.loomspan.sdk.typesafe`: optional application-side TypeSafe output adapter | Core plus explicitly tested public Framework dependency; never transitive from core/starter |
 
 Keep root Sidecar Maven build independent; no root aggregation or version coupling.
-Sidecar remains `1.0.0-beta.4-SNAPSHOT`, Framework starter `1.0.0-beta.8`. SDK core
-does not depend on Sidecar classes or reproduce Framework execution/validation.
-Architecture checks apply the closed public `ai.loomspan.api` boundary to optional
-integration; no internal/autoconfigure imports, new SPI, bean replacement, reflection
-or Sidecar Java `@SkillMethod`. `RestSkillHandler` remains the authorized public SPI.
+Sidecar remains `1.0.0-beta.4-SNAPSHOT`, Framework starter `1.0.0-beta.8`. The SDK
+uses Sidecar's public HTTP API; its modules have no Framework or Sidecar Java
+dependency and do not reproduce skill execution or validation. Architecture and
+dependency checks enforce that boundary. Sidecar's own Framework integration uses
+only the closed supported `ai.loomspan.api` surface and authorized `RestSkillHandler`;
+no internal/autoconfigure imports, new SPI, bean replacement, reflection or Sidecar
+Java `@SkillMethod` are authorized.
 
 The external suite's existing Java 21/Boot 4.1.0 embedded lane intentionally uses
 Framework beta.9-SNAPSHOT and pinned beta.3 Sidecar source. Preserve it, its Python
 path, equipment-service fixtures and synthetic/frozen TypeSafe replay packs. Add
-a separate SDK v1 lane selecting this Sidecar revision and beta.8. Never infer beta.8
-TypeSafe runtime capability from beta.9 tests. Core JSON/typed mapping is independent
-of Framework. TypeSafe conversion accepts caller-provided output metadata and a
-public adapter only; it decodes retained text, never invokes a skill. Its beta.8
-clean-consumer feasibility is an explicit Phase 1 gate. A missing required public
-API blocks that adapter in Framework, rather than allowing internals or a hidden
-dependency upgrade. No such missing contract is demonstrated by current inspection.
+a separate SDK v1 lane selecting this Sidecar revision and beta.8. Preserving those
+fixtures creates no SDK TypeSafe integration or decoding requirement. SDK consumer
+checks prove the HTTP contract and dependency isolation; they do not claim provider
+capabilities for the selected server baseline.
 Any snapshot lane records its distinct revisions; final release claims use tested
 published artifacts under repository publication policy.
+
+## SDK boundary: API envelopes and opaque skill results
+
+The SDK decodes and validates Sidecar's HTTP response envelopes: execution IDs,
+statuses, timestamps, problems, failure details and available diagnostics. It
+preserves known execution context through polling and client failures. Typed DTOs
+and typed SDK errors describe that API contract, not the business meaning of a result.
+
+**Skill result content is opaque to the SDK.** The `result` field remains the exact
+string supplied by Sidecar after JSON-envelope decoding. The SDK does not parse
+that string as JSON, validate it against `outputSchema`, map it to application Java
+types, interpret provider-specific values, sanitize it or infer execution success
+from its contents. SDK v1 has no result-conversion helpers or TypeSafe adapter.
+Applications own any parsing, schema checks and business interpretation after receipt.
+Such application failures do not change the server-reported status or trigger SDK
+submission, polling or retry behavior. This boundary does not remove validation of
+API envelopes, credentials, transport configuration or callback authentication.
 
 ## 1. Discovery and execution
 
@@ -104,10 +119,13 @@ reads; a late read cannot reopen the wait or change its requested ID.
 Names are encoded as a single URI path segment, never concatenated as arbitrary URLs.
 `ObjectNode` must be an object; reject null, arrays and scalar input locally. Copy
 input at capture to prevent caller mutation during async send. Do not coerce JSON
-or silently drop fields. Sidecar remains responsible for skill validation and limits.
+or silently drop fields. This is transport-shape validation only; the SDK does not
+validate business inputs against a discovered schema. Sidecar/Framework remain
+responsible for server-side skill validation and limits.
 GET `/v1/skills` and `/v1/skills/{name}` return DTOs with `name, description, kind,
 inputSchema, outputSchema`; schemas retain their wire string, optional output schema
-may be absent. No Framework Java type is required in core.
+may be absent. Schema strings are descriptive metadata for the caller; the SDK
+does not compile or enforce them against skill inputs or results.
 
 POST `/v1/skills/{name}/executions` returns 202 `{id: UUID}` plus Location.
 `AcceptedExecution(id, statusUri)` means accepted, never completed; submit does not
@@ -137,9 +155,10 @@ backoff is clamped to remaining time; do not start a read when none remains.
 Read retry applies only to GET discovery/status on transient connection/timeout,
 trusted 429/502/503/504 (including proxy responses as read failures). Use at most
 maxReadAttempts per logical read with exponential capped backoff and bounded
-Retry-After; no parallel speculative request. 401/403/404, invalid JSON/schema,
-conflicting IDs and other protocol failures stop immediately. No automatic credential
-refresh. A nonterminal successful read resets that per-read counter, not the total
+Retry-After; no parallel speculative request. 401/403/404, malformed response-envelope
+JSON or an invalid API-envelope structure, conflicting IDs and other protocol failures
+stop immediately. Skill result text is never parsed or schema-validated by this policy.
+No automatic credential refresh. A nonterminal successful read resets that per-read counter, not the total
 deadline. Await timeout preserves last snapshot/ID; exhausted read retries preserves
 ID, cause and attempt count. A getExecution call also has finite HTTP/retry budgets.
 
@@ -151,7 +170,7 @@ when available through `SubmissionObservation`, rather than fabricating rejectio
 Closing a client stops waits with a typed local-closed error retaining IDs. No wait
 termination, 404, expiry, reconnect or recovery submits again or sends cancellation.
 
-## 3. Result fidelity
+## 3. Execution tracking and response preservation
 
 `ExecutionSnapshot` contains `id, skillName, status, createdAt, completedAt, result,
 failure, configurationSnapshotId, events`. Status is QUEUED/RUNNING/COMPLETED/FAILED;
@@ -168,15 +187,19 @@ additional problem/event JSON fields in immutable extension values. Do not suppr
 an execution failure because diagnostics are unavailable. Event DTOs preserve public
 timestamp/level/type/details/frameId/route without reconstructing internals.
 
-`ResultConversions.json(snapshot)`, `typed(snapshot, JavaType)` and optional
-`TypeSafeResults.decode(snapshot, outputMetadata)` require a COMPLETED snapshot.
-They parse existing unchanged text; no HTTP or model execution occurs. Return a
-`ConvertedResult<T>(snapshot,value)` or throw `ResultConversionFailed(snapshot,
-targetType,safeCause)`. Malformed JSON, incompatible shape/type and TypeSafe contract
-failure preserve ID, result text, snapshot ID and diagnostics; never resubmit/retry
-execution. API callers may explicitly inspect original text or correct their mapper.
+Envelope validity and result content are separate. A COMPLETED snapshot whose
+string result is plain text, empty, JSON-looking but malformed, or inconsistent
+with a discovered output schema remains COMPLETED. Conversely, malformed envelope
+JSON or a non-string value where the API requires a result string is a protocol
+error. `requireCompleted` checks only the reported status. Applications can inspect
+or parse the returned text themselves; their parsing failures leave the immutable
+snapshot, ID and diagnostics available and cause no new SDK requests.
 
-## 4. Errors and acceptance classification
+## 4. Client, protocol and execution errors
+
+SDK errors describe local client/credential failures, HTTP/protocol failures and
+server-reported execution outcomes. They do not classify application parsing errors
+or infer an execution failure from business content, provider fields or message text.
 
 All typed failures contain operation, reliable execution ID if any, optional last
 snapshot/problem, safe cause, request/attempt timing and classification. Sensitive
@@ -197,7 +220,6 @@ never silent truncation of a successful result. Users can raise the limit explic
 | Status 404 | `StatusUnavailable` | ID; could be unknown, expired, nonowner or restart loss; no inferred rejection/cancellation |
 | Total wait exhausted / interruption / local async cancellation | `WaitTimedOut` / `WaitInterrupted` / local cancellation observation | Known ID and last snapshot; work may continue; resume lookup deliberately |
 | HTTP 200 status FAILED | Terminal snapshot, or explicit `ExecutionFailed` convenience | Complete primary failure/issues/history; effects may already have committed |
-| Optional JSON/typed/TypeSafe decoding fails | `ResultConversionFailed` | Original terminal snapshot and text; no rerun |
 
 Reliable-ID rule: accept a UUID from a complete validated acceptance body or a
 same-origin, exact configured status-path Location with one UUID and no query,
@@ -324,7 +346,7 @@ No execution failure, wait termination, reconnect or distrust implies rollback.
 No SDK currently exists; Sidecar lacks finite managed trust/purpose/binding rules,
 withdrawal queue gates and material-reload pools. Planned units in the matrix own
 those gaps and tests. No new missing public Framework contract is demonstrated.
-If public-only implementation cannot satisfy callback isolation, atomic publication,
-TypeSafe conversion or connection cutoff, stop affected planning/sign-off and record
+If public-only implementation cannot satisfy callback isolation, atomic publication
+or connection cutoff, stop affected planning/sign-off and record
 an owning-repository dependency. Never weaken the contracts or import internals.
 This document closes API design choices only; all runtime acceptance remains planned.

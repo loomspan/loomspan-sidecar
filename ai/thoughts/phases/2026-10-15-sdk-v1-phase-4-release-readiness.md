@@ -71,6 +71,11 @@ shared component proofs never substitute for required real composed integration.
 
 - Verify independent Maven packaging and clean-consumer usage, SDK/Sidecar/Framework
   compatibility facts and the standalone HTTP core. Keep package versions independent.
+- Verify the opaque-result boundary: SDK DTOs/errors describe Sidecar API envelopes;
+  result strings and available diagnostics survive unchanged. Plain text or content
+  inconsistent with a business schema does not become an SDK protocol/execution
+  failure. Application parsing is outside the SDK; no result-conversion helper,
+  TypeSafe adapter or Framework Java dependency is required or included in SDK v1.
 - Complete setup, callback, trust, export, credential strategy and operational guidance
   for direct HTTP/HTTPS and both mTLS paths, including mixed/no-callback applications.
   Cover local/Compose export retrieval and interactive upload, customer-managed

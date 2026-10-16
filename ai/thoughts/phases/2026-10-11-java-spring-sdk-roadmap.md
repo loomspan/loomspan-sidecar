@@ -1062,6 +1062,15 @@ material and Auth0/Okta/Entra manual recipes, all externally unverified.
 
 ## SDK functionality
 
+**Skill result content is opaque to the SDK.** The SDK owns the Sidecar HTTP
+protocol, execution tracking and client/security integration. It decodes API
+envelopes and preserves the result string, IDs, server-reported failures and
+available diagnostics. Applications own parsing, schema validation and business
+interpretation of result content. SDK v1 includes no result-conversion helpers,
+TypeSafe adapter or Framework Java dependency. Typed envelopes/errors refer to
+the HTTP contract, not typed business results. Discovered skill schemas are
+metadata for callers, not instructions for SDK validation of inputs or results.
+
 1. **Discovery and execution:** list skills, retrieve descriptors, submit JSON-object
    inputs, return an execution handle upon a valid acceptance response without waiting
    for completion, and retrieve status by ID. Do not promise a handle when the
@@ -1070,15 +1079,18 @@ material and Auth0/Okta/Entra manual recipes, all externally unverified.
    wait deadlines from HTTP timeouts. Preserve the ID through polling failures and
    wait termination for resumed polling. Stopping a
    client wait does not cancel accepted server work.
-3. **Result fidelity:** typed response envelopes, unchanged result text and explicit
-   optional JSON/typed conversion. Preserve snapshot IDs and available diagnostics.
-   Conversion failures remain distinct from execution failures, including TypeSafe
-   output handling.
-4. **Errors:** distinguish explicit submission rejection, acceptance unknown,
-   transport/protocol failure, local timeout and terminal execution failure returned
+3. **Execution tracking and response preservation:** expose typed API envelopes,
+   preserve unchanged opaque result text, execution/configuration IDs, server
+   failures and available diagnostics. Keep known context through polling failures
+   and wait termination. An application's inability to interpret a result does not
+   change the reported execution status or trigger SDK requests.
+4. **Client, protocol and execution errors:** distinguish explicit submission
+   rejection, acceptance unknown, transport/protocol failure, local timeout and terminal execution failure returned
    with HTTP 200. Execution failure does not establish absence or rollback of business
    side effects. Preserve validation/problem
-   details; do not invent distinctions hidden by a 404 response.
+   details; do not invent distinctions hidden by a 404 response. Validate the API
+   envelope, not the skill result's content or business schema; do not infer failure
+   from result text or classify application parsing errors as SDK execution errors.
 5. **User-security integration:** implement Relay, Exchange, Spring-issued and Custom
    identity with SDK-managed JWT handling, shared issuance and validated callback
    identity mapping. Preserve native Spring identity, roles and existing authorization;
@@ -1129,8 +1141,9 @@ failure details and avoid automatic whole-execution reruns. **Prohibit automatic
 retries by Sidecar's outbound HTTP client and callback-path proxies.** Configure reference
 proxies accordingly and document the same requirement for customer-managed proxies.
 Timeouts, connection recovery and credential/TLS refresh must not replay callbacks.
-Result-conversion failure likewise does not justify re-execution. This callback policy
-is separate from the bounded retry policy for SDK status reads.
+An application's failure to interpret a returned result does not cause SDK
+re-execution; the SDK neither performs nor handles that application conversion.
+This callback policy is separate from the bounded retry policy for SDK status reads.
 
 Disabling transport retries does not prevent a skill from invoking the same operation
 again as a separate action, or a user from submitting another execution. Applications
@@ -1155,9 +1168,10 @@ Sidecar's client and each reference-proxy path to prove response loss does not t
 automatic replay. Document equivalent verification for customer-managed proxies. Use
 an application fixture to demonstrate duplicate protection for repeated business
 operation IDs and distinguish deliberate repeated skill actions from transport retries;
-do not attribute the fixture's business guarantee to the SDK. Verify conversion failure preserves the
-execution/result context without re-execution. These are planned acceptance requirements,
-not completed verification; use local fixtures without real business operations or live
+do not attribute the fixture's business guarantee to the SDK. Verify opaque result
+preservation and that a test application's parsing failure leaves the returned
+snapshot/ID/history unchanged, with zero further SDK requests. These are planned
+acceptance requirements, not completed verification; use local fixtures without real business operations or live
 external-service dependencies.
 
 ## Ownership and current evidence
@@ -1345,7 +1359,7 @@ Smallstep setup and exact planned commands now have named owners. The consolidat
 matrix preserves 108 preceding scenario IDs and explicitly expands 72 compulsory
 primary/mixed/outbound compositions. None is completed runtime evidence.
 
-Implementation must prove callback isolation, public-only TypeSafe integration,
+Implementation must prove callback isolation, opaque result preservation,
 atomic state/publication and connection cutoffs on those baselines. A demonstrated
 missing public contract blocks affected work in its owning repository; no hidden
 Framework SPI or internal import is authorized. Keep the suite's beta.9 embedded

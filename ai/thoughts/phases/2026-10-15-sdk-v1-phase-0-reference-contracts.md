@@ -91,6 +91,9 @@ or mistake unrun scenarios for completed support.
 - Specify SDK submission/polling/result/error contracts, acceptance uncertainty,
   retained IDs, deadlines and safe status-read retry policy. Prohibit automatic
   submission/callback retries and preserve business side-effect uncertainty.
+  Keep skill result content opaque: decode API envelopes and preserve their data;
+  applications own result parsing and interpretation. Typed API DTOs/errors do not
+  imply result-conversion helpers, provider adapters or a Framework SDK dependency.
 - Preserve unchanged-token passthrough and its reusable-credential limitations,
   restricted recipients/audiences, redirect controls and infrastructure credential
   protections without adding business-data sanitization.
@@ -155,7 +158,7 @@ scenarios and owning tickets, not treat a row as a single happy-path test.
 | [Business-data responsibility](2026-10-11-java-spring-sdk-roadmap.md#v1-business-data-responsibility-and-no-sanitization) | Phase 1: content/diagnostic fidelity and infrastructure protections; Phase 2: proxy-path checks; Phase 4: accurate user guidance. |
 | [Console trust, management access and optional JWKS](2026-10-11-java-spring-sdk-roadmap.md#agreed-verification-key-configuration-and-optional-jwks-endpoint) | Phase 1: console/API trust sources, management tokens and authorization, shared signing/publication and optional endpoint. Phase 3: rotation, cache/outage, revocation and emergency distrust. |
 | [Public JWKS file export](2026-10-11-java-spring-sdk-roadmap.md#agreed-public-jwks-file-export--2026-10-15) | Phase 1: both interfaces, disabled/no-listener behavior, safe writes and errors; Phase 3: key-change/withdrawal snapshots and repeated startup. |
-| [SDK functionality](2026-10-11-java-spring-sdk-roadmap.md#sdk-functionality) | Phase 1: all eight areas, including diagnostics/TypeSafe conversion and resource ownership; Phase 3: reload/lifecycle; Phase 4: clean-consumer ergonomics. |
+| [SDK functionality](2026-10-11-java-spring-sdk-roadmap.md#sdk-functionality) | Phase 1: all eight areas, including opaque result/diagnostic preservation and resource ownership; Phase 3: reload/lifecycle; Phase 4: clean-consumer ergonomics. No SDK interpretation or conversion of skill results. |
 | [Submission uncertainty and side effects](2026-10-11-java-spring-sdk-roadmap.md#agreed-submission-uncertainty-and-side-effect-semantics--2026-10-15) | Phase 1: outcome distinctions, attempt counts, retained IDs and application duplicate-protection fixture; Phase 2: group proxy paths; Phase 3: no replay on lifecycle recovery. |
 | [Local test boundary](2026-10-11-java-spring-sdk-roadmap.md#agreed-local-integration-test-boundary--2026-10-15) and [primary/focused matrix](2026-10-11-java-spring-sdk-roadmap.md#agreed-primary-transport-evidence-matrix--2026-10-15) | Phase 0: exact matrix, versions and commands. Phases 1/2: isolated/group scenarios; Phase 3: lifecycle; Phase 4: all required local evidence. |
 | [Enterprise/cloud recipes](2026-10-11-java-spring-sdk-roadmap.md#enterprise-and-cloud-integration) | Phase 0: recipe/manual-check scope; Phase 3: local material integration and documented external checks; Phase 4: honest compatibility status, without a cloud release gate. |
