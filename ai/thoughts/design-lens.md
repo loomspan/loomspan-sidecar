@@ -67,6 +67,19 @@ Standing guidance for our work together:
   Planned opaque personal access tokens belong to local management users; they
   are not execution JWTs. Credentials, caller identity and permissions come from
   trusted server authentication, never model inputs or a skill's instructions.
+- **Planned SDK refinement:** The
+  [identity/callback reference](phases/2026-10-15-sdk-v1-identity-callback-reference.md)
+  requires distinct access-token purpose and sender-constraint validation at
+  admission and callbacks, explicit per-issuer role maps and pair-preserving native
+  principals. Token snapshot is default; explicit live-account policy intersects
+  mapped token permissions with live account rights, never unions them. Callback
+  authentication ignores sessions and preserves browser security in both supported
+  chain arrangements. Future finite group issuer trust is a deliberate Sidecar
+  extension: current Sidecar remains single issuer, and workload membership grants
+  no issuer authority. Trust mechanisms remain PR-8.0.2 work. All SDK support and
+  the [scenario matrix](phases/2026-10-15-sdk-v1-identity-callback-scenarios.md) are
+  planned; unchanged captured credentials remain reusable by approved recipients
+  within actual admission/authorization, lifetime and peer policy.
 - **Why this is non-obvious:** Request-thread authentication is lost at ordinary
   executor boundaries; input-carried identity is not a trusted substitute.
 - **Applies to:** Execution and management APIs, authorization, ownership,

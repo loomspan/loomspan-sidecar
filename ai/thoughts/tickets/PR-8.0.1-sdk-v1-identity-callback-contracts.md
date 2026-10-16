@@ -1,4 +1,4 @@
-# Settle SDK v1 identity and callback security contracts
+# PR #8.0.1 — Settle SDK v1 identity and callback security contracts
 
 ## Development constraints
 
@@ -77,25 +77,25 @@ evidence that the planned integrations already work.
 
 ## Acceptance criteria
 
-- [ ] The reference design specifies all four strategies, shared issuance, Java and
+- [x] The reference design specifies all four strategies, shared issuance, Java and
   Spring integration, trusted adapter contracts and a named/versioned local Exchange
   profile with explicit failures and no fallback or replacement login service.
-- [ ] Admission and callback validation tables define accepted profiles and rejection
+- [x] Admission and callback validation tables define accepted profiles and rejection
   behavior for invalid signature/algorithm/time/claims, audience/purpose substitution,
   ID tokens, DPoP and malformed/unknown sender constraints across transports.
-- [ ] Identity/authority contracts and planned scenarios cover default/resolved
+- [x] Identity/authority contracts and planned scenarios cover default/resolved
   principals, multiple roles, issuer collisions, invalid-token resolver exclusion,
   failed lookup, no implicit linking, same-pair renewal, changed-pair ownership,
   live/snapshot policy, logout, disabled accounts and queue/callback expiry.
-- [ ] Both callback composition recipes specify matcher/order/hooks/diagnostics and
+- [x] Both callback composition recipes specify matcher/order/hooks/diagnostics and
   planned evidence for bearer Alice with session Bob, missing/invalid bearer with
   valid cookies, cookie-only/bearer-only requests, URL/method/record authorization,
   browser CSRF/session preservation, JWKS separation and context cleanup under
   sequential, concurrent, error and supported asynchronous execution.
-- [ ] Passthrough requirements and scenarios cover approved-recipient reuse, limited
+- [x] Passthrough requirements and scenarios cover approved-recipient reuse, limited
   audiences, callback peer restrictions, redirect/leakage rejection and unchanged
   captured credentials without sanitization or replay-prevention claims.
-- [ ] Relevant roadmap obligations have named planned scenarios and owners; Sidecar
+- [x] Relevant roadmap obligations have named planned scenarios and owners; Sidecar
   gaps and public Framework dependencies are explicit, lens/plan conflicts are
   reconciled, and unresolved developer decisions prevent affected contract sign-off.
 
@@ -143,3 +143,90 @@ Retain ArchUnit prohibitions on `ai.loomspan.internal..` and
   release or require intermediate hosted CI. No code/build breakage is intended by
   this design ticket; any later intentional breakage must name impact, remaining
   verification and the dependent restoration unit, with evidence outstanding until fixed.
+
+## Execution notes — 2026-10-15
+
+Full 5-Step Pipeline explicitly approved. Pre-existing developer edits are the
+PR-number prefixes in this ticket and PR-8.0.2/.3 headings; preserve them, and
+leave .2/.3 otherwise unchanged. No product/build/test/version changes, data reset,
+commit, push, release or live-service execution belongs to this documentation unit.
+
+Deliverables: [reference contract](../phases/2026-10-15-sdk-v1-identity-callback-reference.md)
+and [57 named planned scenarios](../phases/2026-10-15-sdk-v1-identity-callback-scenarios.md),
+with AC1–AC6 traceability and phase/repository owners. Checkboxes above record
+documentation implementation/verification; final completion still requires independent
+Step 5 review. No scenario is represented as a passing runtime test. Full Phase 0
+and PR-8.0.2/.3 trust/lifecycle/runtime/deployment decisions remain outstanding.
+
+Material selections: Keycloak 26.4.0 standard V2 same-realm exchange; explicit
+application-execution-v1 and keycloak-access-v1 profiles; 300s issuance/accepted
+maximum lifetime and 60s verifier skew; token snapshot default and explicit live
+account intersection; pair-preserving native wrapper; servlet-first supported
+callback/async boundaries and fail-closed restrictions for both chain arrangements.
+No new Framework SPI is identified/authorized. An inability to safely compose the
+application-owned chain on the final runtime blocks implementation sign-off rather
+than permitting session loading or weaker guarantees. No unresolved material choice
+within this ticket is knowingly left as an implementation assumption.
+
+### Step 4 verification evidence
+
+- Pre-change command: `Test-Path ai/thoughts/phases/2026-10-15-sdk-v1-identity-callback-reference.md; Test-Path ai/thoughts/phases/2026-10-15-sdk-v1-identity-callback-scenarios.md` — both False. This is document absence, not a red runtime test.
+- `python --version` — Python 3.13.13.
+- `git diff --check` — exit 0, no whitespace errors (Git emits configured LF/CRLF conversion notices).
+- `git diff --name-only`; `git status --short`; `git diff -- ai/thoughts/tickets/PR-8.0.2-sdk-v1-trust-bootstrap-lifecycle-contracts.md ai/thoughts/tickets/PR-8.0.3-sdk-v1-sdk-deployment-evidence-contracts.md` — documentation-only scope; .2/.3 changes are solely original headings.
+- Exact local checker invocation below — PASS, 9 files, 56 local links at first run and 58 after ticket evidence links, 57 unique scenarios in 9 families; untracked files included for whitespace/fence checks. This checks structure/targets, not security semantics; the scoped consistency/AC review maps semantics, and Step 5 independently reviews them.
+
+```powershell
+@'
+from pathlib import Path
+import re
+files = [
+'ai/thoughts/phases/2026-10-15-sdk-v1-identity-callback-reference.md',
+'ai/thoughts/phases/2026-10-15-sdk-v1-identity-callback-scenarios.md',
+'ai/thoughts/phases/2026-10-11-java-spring-sdk-roadmap.md',
+'ai/thoughts/phases/2026-10-15-sdk-v1-phase-0-reference-contracts.md',
+'ai/thoughts/design-lens.md',
+'ai/thoughts/tickets/PR-8.0.1-sdk-v1-identity-callback-contracts.md',
+'ai/thoughts/plans/PR-8.0.1-sdk-v1-identity-callback-contracts.md',
+'ai/thoughts/plans/PR-8.0.1-sdk-v1-identity-callback-contracts-testing.md',
+'ai/thoughts/research/PR-8.0.1-sdk-v1-identity-callback-contracts.md']
+errors = []; links = 0
+for name in files:
+    p = Path(name); raw = p.read_text(encoding='utf-8'); fenced = False; prose = []
+    for n, line in enumerate(raw.splitlines(), 1):
+        if line.rstrip() != line: errors.append(f'{name}:{n}: trailing whitespace')
+        if line.lstrip().startswith('```'): fenced = not fenced; continue
+        if not fenced: prose.append(line)
+    if fenced: errors.append(f'{name}: unclosed fence')
+    for target in re.findall(r'!?\[[^\]]*\]\(([^\n)]+)\)', '\n'.join(prose)):
+        target = target.strip().split(' "', 1)[0].strip('<>')
+        if re.match(r'^[a-zA-Z][\w+.-]*:', target) or target.startswith('#'): continue
+        dest = target.split('#', 1)[0]
+        if dest:
+            links += 1
+            if not (p.parent / dest).exists(): errors.append(f'{name}: missing {dest}')
+matrix = Path(files[1]).read_text(encoding='utf-8')
+ids = re.findall(r'^\| ((?:STRATEGY|EXCHANGE|TOKEN|ISSUER|IDENTITY|FRESHNESS|CALLBACK|PASSTHROUGH|TRANSPORT)-\d+) ', matrix, re.M)
+if len(ids) != len(set(ids)): errors.append('duplicate scenario IDs')
+for family in ['STRATEGY','EXCHANGE','TOKEN','ISSUER','IDENTITY','FRESHNESS','CALLBACK','PASSTHROUGH','TRANSPORT']:
+    if not any(x.startswith(family+'-') for x in ids): errors.append('missing family '+family)
+assert not errors, '\n'.join(errors)
+print(f'PASS: {len(files)} files, {links} local links, {len(ids)} unique scenarios in 9 families; whitespace/fences clean')
+'@ | python -
+```
+
+Additional executed scope/preservation check: inline Python compared the full .2/.3
+contents with `git show HEAD:<path>` after substituting only their original heading,
+asserted the original .1 heading, and asserted every `git diff --name-only` and
+`git ls-files --others --exclude-standard` path is under `ai/thoughts/` and ends
+`.md`. PASS: all three headings preserved, .2/.3 otherwise match HEAD, six tracked
+and five untracked documentation paths at that run. Full ticket-scoped semantic
+review checked explicit strategy/Java equivalence, provider registration, independent
+validation, issuer/resolver/authority policy, both callback arrangements, bounded
+async/lifetime behavior and all nine scenario families against AC1–AC6.
+
+NOT RUN: `.\mvnw.cmd -B -ntp verify`, Docker/Keycloak/SDK/transport integration and
+hosted CI — no product artifacts changed; future runtime scenarios intentionally
+remain PLANNED. Primary provider/security sources are linked in the reference;
+provider documentation is not interoperability evidence. Optional developer checks:
+none for this documentation unit; independent review is the next required gate.

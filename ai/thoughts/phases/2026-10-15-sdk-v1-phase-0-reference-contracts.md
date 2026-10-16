@@ -163,6 +163,15 @@ scenarios and owning tickets, not treat a row as a single happy-path test.
 
 ## Dependencies and completion
 
+PR-8.0.1 supplies the scoped
+[identity/callback reference](2026-10-15-sdk-v1-identity-callback-reference.md) and
+[named planned scenarios](2026-10-15-sdk-v1-identity-callback-scenarios.md).
+These settle credential/identity/callback policy, subject to independent review;
+they do not prove runtime support or complete this phase. PR-8.0.2 must specify
+trust/bootstrap/lifecycle mechanisms against those policy fields; PR-8.0.3 must
+reconcile the servlet/async baseline, deployment/evidence contracts and complete
+matrix, including all remaining roadmap families and exact local commands.
+
 Inputs are the roadmap and its security research. Output is a reference design
 with resolved material choices, concrete contracts, supported configurations and
 an acceptance matrix. Record any developer decision still needed rather than

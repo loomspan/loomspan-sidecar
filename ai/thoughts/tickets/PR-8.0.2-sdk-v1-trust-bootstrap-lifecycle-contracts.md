@@ -1,4 +1,4 @@
-# Settle SDK v1 trust administration, bootstrap and lifecycle contracts
+# PR #8.0.2 — Settle SDK v1 trust administration, bootstrap and lifecycle contracts
 
 ## Development constraints
 

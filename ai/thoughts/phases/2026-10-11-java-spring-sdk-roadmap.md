@@ -246,6 +246,14 @@ no complete proxy-managed recipe or automated bootstrap is yet proven.
 
 ## SDK-managed JWT and user security
 
+The [identity/callback reference](2026-10-15-sdk-v1-identity-callback-reference.md)
+now defines the concrete PR-8.0.1 design: strategy/API/settings names, Keycloak
+26.4.0 exchange, token profiles, authority freshness and both callback recipes.
+Its [planned scenario matrix](2026-10-15-sdk-v1-identity-callback-scenarios.md)
+preserves the detailed obligations below. It supersedes corresponding illustrative
+names/configuration and open design statements here, not acceptance requirements.
+These contracts remain subject to independent review and are not implemented support.
+
 The SDK should manage as much JWT and user-security plumbing as possible. Customers
 select a credential strategy and configure trust, retaining their existing login and
 business authorization. Supported integrations must not require customers to write
@@ -684,6 +692,14 @@ that user may do. Any live account/permission lookup follows the explicitly sele
 freshness policy; the diagrams do not settle that policy.
 
 ## Proposed customer configuration examples
+
+**Identity/callback refinement:** the concrete credential and callback fragments in
+the [PR-8.0.1 reference](2026-10-15-sdk-v1-identity-callback-reference.md) supersede
+the common callback and four strategy examples below, including `security.strategy`,
+`custom-identity`, mapper names and illustrative lifetime. The historical examples
+retain rationale; use the reference for the planned contract. Trust/signing-store,
+JWKS/export and transport mechanisms remain PR-8.0.2/.3 work. Nothing here is
+installation guidance or evidence of a runnable SDK.
 
 **Illustrative design only: none of the `loomspan-sdk.*` settings, provider names,
 adapter contracts or generated trust-file formats below are implemented or finalized.**
@@ -1305,25 +1321,24 @@ that the console or SDK already implements these capabilities.
 
 ## Remaining scope decisions
 
-- Named local authorization server/version and exchange profile, test prerequisites and
-  tiers, and named hosted-provider/cloud compatibility claims with required evidence.
-- Exact configurer, matcher, ordering and authorization-hook contracts for the two
-  agreed callback integration options, including scoped session/CSRF behavior and
-  configuration diagnostics. The bearer-only/ignore-session-cookie policy is settled.
+- PR-8.0.1's [reference](2026-10-15-sdk-v1-identity-callback-reference.md) settles the
+  local Keycloak 26.4.0 profile, credential contracts, issuer/authority policy,
+  callback composition and bounded servlet async behavior. Independent review
+  remains required. PR-8.0.3 still owns exact test prerequisites/tiers, final runtime
+  compatibility and hosted-provider/cloud claims with separately attributed evidence.
 
 - Concrete automatic isolated Compose provisioning recipe and configuration-authority
   integration; Compose and deployment-specific signing keys are the agreed default.
 - Concrete proxy membership policy, placement, protected local hops, callback routes
   and certificate lifecycle, including existing connections on member removal.
 - Management/browser ingress alongside workload mTLS without opening an execution bypass.
-- Exact configuration and integration contracts for all four agreed credential strategies,
-  including supported exchange servers/flows and trusted custom identity hooks.
-- Issuer/audience trust for independently issuing group applications, signing-key
-  provisioning/rotation, claim mapping, permission freshness, logout and execution expiry.
-- Blocking/async APIs and servlet/reactive support in the first release.
-- Exact bean/principal contracts for the agreed issuer-aware local-account resolver
-  and authority-source precedence; management authoring, code generation,
-  streaming and server cancellation are not assumed initial SDK features.
+- Trust storage/admin/lifecycle and signing-key provisioning/rotation must implement
+  PR-8.0.1's finite issuer/audience/profile/role model without implying current
+  Sidecar multi-issuer support. PR-8.0.2 owns these mechanisms.
+- Final blocking/async client APIs and runtime baseline remain PR-8.0.3 work; its
+  servlet/reactive decision must reconcile the reference's servlet-first supported
+  callback/async boundaries. Management authoring, code generation, streaming and
+  server cancellation are not assumed initial SDK features.
 
 Protected local HTTP, HTTPS and mTLS are v1 transport options, independently selected
 for invocation and callbacks. Both mTLS client paths and all four credential strategies
