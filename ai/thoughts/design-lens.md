@@ -157,6 +157,19 @@ Standing guidance for our work together:
 - **Decision:** Return text unchanged and retain all selected public observer
   events without Sidecar size truncation. Preserve the facade's primary failure.
   History is available completed diagnostics, not a guaranteed complete trace.
+- **V1 data responsibility:** Sidecar, its SDK and console do not classify,
+  mask, redact or sanitize caller-supplied business inputs, prompts or callback
+  responses. If a caller or callback puts credentials or other sensitive content
+  in that data, responsibility for its inclusion remains with that application;
+  the data can flow into model context, results and selected diagnostics under
+  their normal contracts. Do not promise detection or removal. Infrastructure
+  must not itself copy authentication credentials, private keys or internal
+  security context into business payloads, model inputs, logs or diagnostics.
+  Supported transport authentication and verified identity/authority integration
+  remain separate from business content. Protect access using authentication,
+  authorization and visibility boundaries, not content rewriting. Preserve the
+  framework's supported public diagnostic output, including any existing
+  framework-owned projection behavior; do not extend it into Sidecar sanitization.
 - **Why this is non-obvious:** An observer may never run after pre-session or
   mapping/finalization failures. Waiting for it or parsing internal traces creates
   unsupported behavior. Diagnostic events may contain business data.
