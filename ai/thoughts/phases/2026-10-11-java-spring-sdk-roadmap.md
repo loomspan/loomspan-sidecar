@@ -32,6 +32,16 @@ records the deployment patterns and independently selectable transport options.
 
 ## V1 transport composition and deployment patterns
 
+The [trust/bootstrap/lifecycle reference](2026-10-15-sdk-v1-trust-bootstrap-lifecycle-reference.md)
+now settles PR-8.0.2's concrete source/state/admin, signer/endpoint/export, Smallstep
+bootstrap and separate JWT/TLS lifecycle contracts. Its
+[named planned scenarios](2026-10-15-sdk-v1-trust-bootstrap-lifecycle-scenarios.md)
+assign initial enforcement to Phase 1, group extension to Phase 2 and lifecycle
+mechanisms/stress to Phase 3. It supersedes the corresponding illustrative settings
+and open mechanism statements below, preserving acceptance requirements. These are
+contracts, not implemented support; PR-8.0.3 still owns pinned runtime/deployment
+versions, exact commands/topologies and the consolidated evidence matrix.
+
 Invocation (SDK to Sidecar) and callbacks (Sidecar to application) independently
 select HTTP, HTTPS or mTLS. Proxy placement is another independent choice, as is the
 JWT credential strategy. This supersedes the earlier restriction to two fixed security
@@ -1327,14 +1337,15 @@ that the console or SDK already implements these capabilities.
   remains required. PR-8.0.3 still owns exact test prerequisites/tiers, final runtime
   compatibility and hosted-provider/cloud claims with separately attributed evidence.
 
-- Concrete automatic isolated Compose provisioning recipe and configuration-authority
-  integration; Compose and deployment-specific signing keys are the agreed default.
-- Concrete proxy membership policy, placement, protected local hops, callback routes
-  and certificate lifecycle, including existing connections on member removal.
+- PR-8.0.2's trust reference selects guarded SDK signing initialization, separate
+  Smallstep TLS provisioning, authority guards and membership/connection gates.
+  PR-8.0.3 must supply exact Compose services/networks/commands and pinned tooling
+  versions, including management ingress and callback routes, to realize that contract.
 - Management/browser ingress alongside workload mTLS without opening an execution bypass.
-- Trust storage/admin/lifecycle and signing-key provisioning/rotation must implement
+- Trust storage/admin/lifecycle and signing-key provisioning/rotation follow
   PR-8.0.1's finite issuer/audience/profile/role model without implying current
-  Sidecar multi-issuer support. PR-8.0.2 owns these mechanisms.
+  Sidecar multi-issuer support and PR-8.0.2's concrete protected state/mechanisms.
+  Both references require their named runtime evidence before support claims.
 - Final blocking/async client APIs and runtime baseline remain PR-8.0.3 work; its
   servlet/reactive decision must reconcile the reference's servlet-first supported
   callback/async boundaries. Management authoring, code generation, streaming and

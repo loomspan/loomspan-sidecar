@@ -91,7 +91,8 @@ issuance strategies. `IssuerSettings` contains exact issuer, audience set, lifet
 approved input-authority-to-token-role map and a reference to one signing-state owner.
 It issues the application-execution-v1 profile below, with UUID `jti`, current `iat`,
 `exp=iat+lifetime`, fresh `kid` selection from active signing state, and selected roles.
-No arbitrary claim passthrough. Signing lifecycle/provisioning is PR-8.0.2's contract;
+No arbitrary claim passthrough. Signing lifecycle/provisioning follows the
+[trust/bootstrap/lifecycle reference](2026-10-15-sdk-v1-trust-bootstrap-lifecycle-reference.md);
 a missing/unusable signer fails, with no ephemeral replacement key.
 
 All credential failures are typed SDK errors (`IdentityUnavailable`,
@@ -386,9 +387,10 @@ Single-issuer deployments use one such policy without group extension. Independe
 issuing applications in a group require future Sidecar multi-issuer dispatch and
 per-issuer mappings plus independent receiver trust; sharing one approved provider
 issuer is also possible. Equal `sub` across issuers remains different ownership.
-PR-8.0.2 owns trust storage/admin/bootstrap/key lifecycle, atomic publication and
-withdrawal timing. These policy fields constrain that work without selecting its
-persistence schema or implying mTLS membership permits trust administration.
+The [trust/bootstrap/lifecycle reference](2026-10-15-sdk-v1-trust-bootstrap-lifecycle-reference.md)
+defines trust storage/admin/bootstrap/key lifecycle, atomic publication and withdrawal
+timing. These policy fields constrain that schema; mTLS membership never permits
+trust administration. Its companion scenario matrix is planned evidence only.
 
 ## Callback composition
 
@@ -531,7 +533,7 @@ application tasks have no automatic propagation guarantee; missing scope fails
 `IdentityUnavailable`. Servlet async execution must use the configured wrappers;
 unsupported adapters unable to open independent scopes cannot enable that mode.
 
-Optional JWKS publication has its own path and access policy under PR-8.0.2, disjoint
+Optional JWKS publication has its own path and access policy in the trust reference, disjoint
 from the callback namespace; reject collision at startup. A public key route never
 permits unauthenticated callback business requests. No callbacks means no callback
 chain/listener/TLS configuration; optional JWKS hosting is a separate opt-in.
@@ -553,7 +555,7 @@ not refresh/revalidate expiry automatically. Framework retains supported executi
 authorization. A token expiring in the queue can therefore lead to a callback 401;
 that failure is reported without replay, renewal, exchange or substitution. Long
 workflows must fit expiry or tolerate explicit callback failure; Sidecar does not
-mint longer tokens or require automatic retries. PR-8.0.2 separately defines emergency
+mint longer tokens or require automatic retries. The trust reference separately defines emergency
 distrust timing for queued/admitted work; this reference promises no immediate kill.
 
 Same-pair renewal for later authorized polling retains ownership eligibility; changed
@@ -629,6 +631,6 @@ to implement safe mixed-chain isolation on the chosen runtime blocks that arrang
 and dependent implementation sign-off; it does not authorize a weaker guarantee.
 
 This contract requires independent Step 5 security review before ticket completion.
-Full Phase 0 remains open for PR-8.0.2/.3 trust/deployment/runtime decisions and final
+Full Phase 0 remains open for PR-8.0.3 deployment/runtime decisions and final
 matrix consolidation. Future implementation tickets must not claim those dependencies
 settled by this document, or runtime support established by document verification.

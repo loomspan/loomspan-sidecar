@@ -60,6 +60,12 @@ authenticated invocation and authorized callbacks with minimal customer plumbing
 
 ## Scope
 
+The [trust/bootstrap/lifecycle reference](2026-10-15-sdk-v1-trust-bootstrap-lifecycle-reference.md)
+and [planned scenarios](2026-10-15-sdk-v1-trust-bootstrap-lifecycle-scenarios.md)
+define concrete initial source/admin/signing/export/bootstrap and withdrawal gates.
+Implement Phase 1 rows with their own focused and real integration evidence;
+Phase 3 ownership never defers initial protected mutation denial or durable state.
+
 - Implement the Phase 0 HTTP core, discovery/submission/handle/status/wait APIs,
   result fidelity and typed conversion, actionable errors and resource ownership.
 - Implement all four credential strategies and shared Spring/custom issuance;

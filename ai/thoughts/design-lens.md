@@ -1,191 +1,164 @@
 # Sidecar design lens
 
-Standing design constraints for Sidecar planning, implementation and review.
+Use these principles when planning, implementing and reviewing Sidecar changes.
+Keep this document self-contained. Detailed contracts, ticket and phase references,
+and implementation status belong in their own documents.
 
-**Development policy: destructively replace superseded contracts, code and
-schemas. No compatibility shims, legacy adapters or parallel legacy APIs.**
+**Development policy: replace obsolete contracts, code and schemas directly.
+Do not add compatibility shims, legacy adapters or parallel legacy APIs.**
 Every new roadmap and ticket must state this policy prominently and reference
-this lens. Document required development-data resets and their impact; this
-policy does not authorize deleting deployed data during planning.
+this lens. Document any required development-data reset and its impact.
+This policy does not authorize deleting deployed data.
 
 ## Simplicity and technical debt
 
-Standing guidance for our work together:
+Choose the simplest solution that fully meets the current requirements. Reuse
+existing capabilities where they fit. Add abstractions, dependencies, configuration
+or process only when there is a concrete need. Keep code, tests, documentation and
+process proportional to the work.
 
-> Remember that we are choosing the simplest solution that still covers the requirements.
-> We are working to avoid technical debt where possible. Also we are in development
-> so destructive changes are welcome. No compatibility shims.
-
-- **Decision:** Choose the simplest solution that fully satisfies the current
-  requirements. Prefer existing capabilities and direct implementations. Add
-  abstractions, configuration, dependencies or workflow artifacts only for a
-  concrete need; speculative future needs are insufficient justification.
-  Keep code, tests, documentation and process proportional to the work.
-  Replace obsolete development code, configuration and schemas directly rather
-  than preserving them with compatibility shims or migration machinery solely
-  to support obsolete development contracts.
-- **Why this matters:** Complexity consumes implementation, review and
-  maintenance effort. Minimize technical debt; accept it only when its concrete
-  benefit outweighs its expected maintenance and future change costs. For
-  deliberate debt, briefly record the tradeoff and any necessary follow-up in
-  the existing ticket or plan rather than creating another tracking artifact.
-- **Applies to:** Planning, implementation, testing, documentation and review.
-  Review should look for unnecessary work and opportunities to simplify as
-  well as correctness. Simplicity does not excuse unmet requirements or omitted
-  necessary verification.
-- **Exceptions:** More complex solutions are warranted when required for
-  correctness or another current requirement; explain the reason briefly.
+Accept technical debt only when its benefit outweighs the expected maintenance
+and future change costs. Record the tradeoff and any needed follow-up in the
+existing ticket or plan. Review for unnecessary work as well as correctness;
+simplicity does not excuse missing requirements or verification.
 
 ## Framework remains the skill execution authority
 
-- **Decision:** Use the public catalog, validation, invocation, observer and named
-  REST SPI. The framework owns skill validation, authorization, nesting and
-  execution lifetime; Sidecar owns transport, admission and retention.
-- **Why this is non-obvious:** Re-parsing manifests or replacing internal beans
-  can appear to simplify startup or HTTP error handling while creating a second
-  authority and an unsupported dependency.
-- **Applies to:** All integration, production and test code.
-- **Exceptions:** New framework contracts require deliberate developer planning.
+The Framework owns skill validation, authorization, nested execution and execution
+lifetime. Sidecar owns transport, admission and retained results. Use supported
+public APIs and the authorized REST handler extension. Do not duplicate Framework
+rules, replace internal beans or depend on internal types in application or test
+code. A missing public capability requires explicit Framework planning.
 
 ## One admission owner and one retained record
 
-- **Decision:** Coordinate worker/queue capacity and queued bytes with one owner;
-  publish terminal outcome and selected history together in the same record.
-  Count/TTL bounds and input byte limits are distinct; neither bounds total heap.
-- **Why this is non-obvious:** Separate semaphores, staging queues and history
-  stores can duplicate authority and publish partial outcomes.
-- **Applies to:** Execution admission, diagnostics and shutdown cleanup.
-- **Exceptions:** None in beta 4.
+Use one component to coordinate worker capacity, queue capacity and queued bytes.
+Store the final outcome and selected diagnostic history together so readers cannot
+see a partially completed result.
+
+Limit record count, retention time and input size separately. These limits do not
+guarantee a bound on total memory use.
 
 ## Trusted identity stays outside model inputs
 
-- **Decision:** Execution API identity remains JWT-only and is propagated through
-  queued execution via Spring Security. Execution ownership uses issuer and
-  subject. Passthrough forwards the captured execution credential; Sidecar never
-  mints, refreshes or exchanges execution JWTs. Management credentials do not
-  grant execution access, and execution JWTs do not grant management access.
-  Planned opaque personal access tokens belong to local management users; they
-  are not execution JWTs. Credentials, caller identity and permissions come from
-  trusted server authentication, never model inputs or a skill's instructions.
-- **Planned SDK refinement:** The
-  [identity/callback reference](phases/2026-10-15-sdk-v1-identity-callback-reference.md)
-  requires distinct access-token purpose and sender-constraint validation at
-  admission and callbacks, explicit per-issuer role maps and pair-preserving native
-  principals. Token snapshot is default; explicit live-account policy intersects
-  mapped token permissions with live account rights, never unions them. Callback
-  authentication ignores sessions and preserves browser security in both supported
-  chain arrangements. Future finite group issuer trust is a deliberate Sidecar
-  extension: current Sidecar remains single issuer, and workload membership grants
-  no issuer authority. Trust mechanisms remain PR-8.0.2 work. All SDK support and
-  the [scenario matrix](phases/2026-10-15-sdk-v1-identity-callback-scenarios.md) are
-  planned; unchanged captured credentials remain reusable by approved recipients
-  within actual admission/authorization, lifetime and peer policy.
-- **Why this is non-obvious:** Request-thread authentication is lost at ordinary
-  executor boundaries; input-carried identity is not a trusted substitute.
-- **Applies to:** Execution and management APIs, authorization, ownership,
-  authoring clients and REST callbacks.
-- **Exceptions:** Test issuers may mint local fixture tokens.
+Take credentials, caller identity and permissions from server authentication,
+never from model inputs or skill instructions. Preserve authenticated identity
+when work moves between threads or waits in a queue. Identify execution owners
+by both issuer and subject.
+
+Execution uses JWTs. Management credentials grant no execution access, and
+execution JWTs grant no management access. Passthrough forwards the captured
+execution credential; Sidecar does not mint, refresh or exchange it. Forwarding
+requires an approved recipient and remains subject to credential expiry and peer
+access rules.
+
+Configure trusted issuers and their permission mappings explicitly. Membership
+in a workload group does not make an issuer trusted. At each receiving API, check
+that the credential is intended for that use and, where required, bound to the
+presenting client. A browser session cannot substitute for callback authentication.
+Where current account permissions are checked, allow only permissions granted by
+both the token and the account.
 
 ## One management API for browser and remote authoring
 
-- **Decision:** Planned remote authoring and the console share management
-  endpoints, payloads, editing services, validation and publication rules.
-  Browser sessions retain CSRF protection; personal tokens add scoped bearer
-  authentication. Effective token authority is the intersection of the live
-  account's permissions and the token's allowed operations. Reject ambiguous
-  mixed credentials. Enforce these rules server-side on every operation.
-  Planned token presets are cumulative Read, Edit and Publish; Publish permits
-  remote publication without mandatory UI approval, subject to live user authority
-  and all validation/publication checks. Tokens grant no account administration.
-- **Why this matters:** A separate agent API or browser-session emulation would
-  duplicate behavior and security rules. REST is the initial interface; OAuth,
-  MCP and a built-in assistant are not prerequisites.
-- **Applies to:** Planned shared management contract, console and authoring client.
-- **Exceptions:** Authentication and credential-management operations may have
-  different access policies; that does not require duplicate authoring APIs.
+The console and remote clients share management endpoints, payloads, editing
+services, validation and publication rules. Browser sessions retain CSRF protection.
+Personal tokens grant limited access on behalf of an account. Reject requests
+that ambiguously combine session and token credentials.
+
+Check permissions on the server for every operation. A token can grant only actions
+allowed by both its scope and the account's current permissions. Read, Edit and
+Publish scopes are cumulative. Authorized Publish clients can publish without
+extra browser approval, including approval of passthrough recipients.
+
+Apply the same authorization rules to every way of changing configuration. Reject
+unauthorized changes in full. Imports, rollbacks and client choice must not bypass
+permission checks or file-mode restrictions.
 
 ## Editing ownership is explicit and credentials remain revocable
 
-- **Decision:** Each user has at most one saved draft containing the complete
-  skill, REST route, and execution configuration. It survives logout, credential expiry and restart.
-  The same user's authorized clients may read the saved draft. Editing
-  sessions bind to the user and originating login or personal token; one session
-  holds the single lease. UI/agent labels are descriptive only. Explicit same-user
-  handoff rotates the lease generation, invalidates the old holder and requires
-  the new holder to read the current revision. Identifiers alone confer no
-  authority. Retain explicit renewal and exact lease/candidate/base checks.
-  A changed runtime base makes retained drafts stale and requires explicit
-  reconciliation against current configuration and validation, without automatic
-  merging or silent content replacement. Successful publication clears the
-  published draft and releases its lease; other users' drafts remain saved but
-  stale. Failed publication preserves the draft. Credential expiry,
-  revocation, logout and account changes must prevent further unauthorized
-  operations, including after waiting on locks or model responses.
-- **Why this matters:** Sharing an API must not expose another client's draft,
-  allow stale writes, or turn background work into indefinite authenticated access.
-- **Applies to:** Planned remote authoring redesign and corresponding console updates.
-- **Exceptions:** No automatic merging or simultaneous writers. Same-user read
-  access and explicit handoff do not grant access to another user's private draft.
+Saved drafts belong to an account and survive logout, credential expiry and
+restart. Authorized clients of that account may read them, but only one editing
+session may hold the write lease. Bind the session to the account and the login
+or token that created it. Client labels and session identifiers grant no access
+by themselves.
+
+An explicit handoff invalidates the previous writer and requires the new writer
+to read the current revision. Before a write or publication, check the lease,
+draft revision and configuration version on which the draft was based. If the
+published configuration has changed, require explicit reconciliation and fresh
+validation. Do not merge or replace draft content silently.
+
+Successful publication clears the published draft and releases its lease. Failed
+publication preserves the draft. Recheck credentials and permissions after waiting
+for locks, validation or external responses; an earlier check cannot authorize
+work after expiry, revocation, logout or loss of account permissions.
+
+## Trust and connection changes have explicit owners and timing
+
+Assign clear ownership of signing keys, trusted verification keys and transport
+credentials. Public key endpoints and exports must use the signing owner's public
+keys without changing signing state or exposing private material.
+
+Initialization and recovery must preserve established identity and withdrawn trust.
+If established state is missing or corrupt, stop the affected operation and require
+explicit recovery. Do not silently generate a replacement identity or restore
+withdrawn trust.
+
+State when each receiver stops accepting a withdrawn key or peer, including queued
+work and independent callback validators. Refreshing public keys does not rotate
+private signing keys or revoke trust everywhere at once. Reloading TLS material
+does not close existing connections; specify how pooled and active connections
+are retired.
+
+Withdrawal does not cancel work already admitted by the Framework or undo its
+effects. Cancellation needs an explicit supported contract. Recovery and reconnects
+must not automatically replay submissions or callbacks.
 
 ## Users choose their clients and deployment workflows
 
-- **Decision:** Keep the authoring skill and API agent-neutral. Read/Edit/Publish
-  permissions govern actions regardless of client or environment labels. Do not
-  impose a production promotion convention, import-only activation, mandatory UI
-  approval or an agent allowlist. Export/import promotion is an example workflow.
-- **Why this matters:** Unnecessary usage restrictions add policy and maintenance
-  costs without satisfying an agreed requirement.
-- **Applies to:** Authoring guidance, management APIs, tokens and environment examples.
-- **Exceptions:** Add restrictions only for a concrete requirement through explicit
-  planning; ordinary authorization, validation and execution boundaries still apply.
+Apply permissions consistently regardless of client or environment labels. Do not
+require a particular agent, promotion workflow or extra browser approval without
+a concrete requirement. Export and import can support deployment workflows without
+becoming the only way to publish.
 
 ## Atomic configuration publication and one framework shutdown budget
 
-- **Decision:** Select complete file/database authority at startup. File mode uses
-  framework files and Sidecar REST files, applies changes by restart and prohibits
-  management mutations. Database mode restores the selected complete publication. Publish complete
-  validated skill, REST route, and execution snapshots through the public framework reload contract;
-  activation does not require restart. Recheck live authorization, ownership and
-  exact candidate/base under the publication gate. Preserve old generations for
-  already-admitted work. Sidecar immediately stops dispatch and discards queued
-  work on close; framework
-  shutdown owns already-admitted work. Keep clients/callers alive until its
-  completion/cutoff, then clean up without another drain period.
-- **Why this is non-obvious:** Queue draining, ordered listeners or early client
-  teardown can defeat the framework's existing deadline and nested work.
-- **Applies to:** Configuration, workers, HTTP clients, readiness and packaging.
-- **Exceptions:** Process settings and externally provisioned environment values
-  still require restart. Database publications retain complete execution settings
-  and encrypted credential versions with no environment/file provider fallback.
-  File startup records safe inspection metadata for execution correlation without
-  changing database selection. Optional ciphertext bundles preserve authenticated
-  identifiers/versions and can move between environments sharing the key; an
-  explicit configuration-only import permits destination credential replacement.
-  The encryption key remains outside database and bundles. Draft validation never
-  activates or executes skills.
+Select one complete configuration source at startup. File mode applies configuration
+changes by restart and blocks management changes. Database mode restores the selected
+publication without falling back to files or environment values for missing managed
+settings or credentials. Process settings still require restart.
 
+Validate and publish the complete skill, REST route and execution configuration
+through the public Framework reload API. Immediately before committing, recheck
+permissions, ownership and the exact validated candidate against the current
+configuration. Keep the previous configuration and its resources available to
+work already admitted under it. Draft validation must not activate or execute skills.
+
+On shutdown, Sidecar stops dispatching and discards queued work. The Framework
+owns the shutdown deadline for admitted work. Keep required clients alive until
+that work finishes or reaches the deadline, then clean up without another drain
+period. Closing clients early can break work the Framework is still completing.
+
+Keep encryption keys outside the database and exported bundles. Moving encrypted
+configuration must preserve credential identities and versions and require the
+correct decryption key. Replacing credentials must be explicit.
 
 ## Preserve the available diagnostic contract
 
-- **Decision:** Return text unchanged and retain all selected public observer
-  events without Sidecar size truncation. Preserve the facade's primary failure.
-  History is available completed diagnostics, not a guaranteed complete trace.
-- **V1 data responsibility:** Sidecar, its SDK and console do not classify,
-  mask, redact or sanitize caller-supplied business inputs, prompts or callback
-  responses. If a caller or callback puts credentials or other sensitive content
-  in that data, responsibility for its inclusion remains with that application;
-  the data can flow into model context, results and selected diagnostics under
-  their normal contracts. Do not promise detection or removal. Infrastructure
-  must not itself copy authentication credentials, private keys or internal
-  security context into business payloads, model inputs, logs or diagnostics.
-  Supported transport authentication and verified identity/authority integration
-  remain separate from business content. Protect access using authentication,
-  authorization and visibility boundaries, not content rewriting. Preserve the
-  framework's supported public diagnostic output, including any existing
-  framework-owned projection behavior; do not extend it into Sidecar sanitization.
-- **Why this is non-obvious:** An observer may never run after pre-session or
-  mapping/finalization failures. Waiting for it or parsing internal traces creates
-  unsupported behavior. Diagnostic events may contain business data.
-- **Applies to:** Failure envelopes, diagnostics, retention and client guidance.
-- **Exceptions:** NEVER/ONERROR selection and whole-record completion TTL remain
-  the agreed policies; no new sanitization or durable-history contract.
+Return result text unchanged and retain selected public observer events without
+Sidecar truncation. Preserve the original execution failure. Diagnostic history
+contains the events that were available; it is not a guaranteed complete trace.
+Do not wait indefinitely for missing observer events or inspect Framework internals
+to reconstruct them. Respect the selected history policy and completion-based
+retention limits.
+
+Sidecar, its SDK and console do not detect, mask or remove sensitive content from
+business inputs, prompts or callback responses. Applications are responsible for
+what they put in that data; it may reach model context, results and diagnostics.
+Infrastructure must not copy authentication credentials, private keys or internal
+security context into business payloads, model inputs, logs or diagnostics.
+
+Protect diagnostics through authentication, permissions and visibility rules.
+Preserve the Framework's supported public output without adding Sidecar content
+rewriting or promising durable history.

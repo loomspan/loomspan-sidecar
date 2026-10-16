@@ -167,8 +167,11 @@ PR-8.0.1 supplies the scoped
 [identity/callback reference](2026-10-15-sdk-v1-identity-callback-reference.md) and
 [named planned scenarios](2026-10-15-sdk-v1-identity-callback-scenarios.md).
 These settle credential/identity/callback policy, subject to independent review;
-they do not prove runtime support or complete this phase. PR-8.0.2 must specify
-trust/bootstrap/lifecycle mechanisms against those policy fields; PR-8.0.3 must
+they do not prove runtime support or complete this phase. PR-8.0.2 supplies the
+[trust/bootstrap/lifecycle reference](2026-10-15-sdk-v1-trust-bootstrap-lifecycle-reference.md)
+and [named planned scenarios](2026-10-15-sdk-v1-trust-bootstrap-lifecycle-scenarios.md)
+against those policy fields; these settle contracts without proving runtime support.
+PR-8.0.3 must
 reconcile the servlet/async baseline, deployment/evidence contracts and complete
 matrix, including all remaining roadmap families and exact local commands.
 

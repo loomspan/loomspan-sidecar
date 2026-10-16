@@ -87,29 +87,29 @@ mistaking JWKS refresh or TLS configuration for a complete lifecycle mechanism.
 
 ## Acceptance criteria
 
-- [ ] The design specifies both verification sources, protected trust data and
+- [x] The design specifies both verification sources, protected trust data and
   retrieval/cache/outage behavior, with concrete payload/state contracts and named
   source-validation and private-material rejection scenarios.
-- [ ] An operation/authorization table covers cumulative token scopes, successful
+- [x] An operation/authorization table covers cumulative token scopes, successful
   authoring/publication and passthrough destination changes, interactive-only actions,
   live checks after waits, token lifecycle, mixed credentials, browser CSRF, editing
   invariants and file mode. Direct and indirect protected mutations have atomic
   rejection and stale-draft acceptance scenarios for every token preset.
-- [ ] One signing/publication owner, persistence and replica/alternative-signer policy
+- [x] One signing/publication owner, persistence and replica/alternative-signer policy
   are specified. Endpoint precedence, disabled/no-server/outbound-only behavior and
   both export interfaces have named scenarios covering public-only snapshots,
   overlap/withdrawal, existing-file skip, explicit atomic replacement, errors and
   no signing-state mutation, plus local/Compose retrieval and upload guidance.
-- [ ] The automatic bootstrap contract covers unique independent deployments,
+- [x] The automatic bootstrap contract covers unique independent deployments,
   protected private storage, separate signing/TLS delivery, file/database authority,
   restart persistence, repeated bootstrap, missing/corrupt state and customer-managed
   inputs without manual certificate work, fallback or restoration of withdrawn trust.
-- [ ] Lifecycle tables state rollover and emergency-distrust timing separately for
+- [x] Lifecycle tables state rollover and emergency-distrust timing separately for
   uploads/URLs and independent validators, including caches, outages, restarts,
   queued/admitted work and explicit restoration. Both mTLS client paths have planned
   reload/renewal/invalid-update/expiry and member-removal connection scenarios with
   no submission/callback replay.
-- [ ] Contract dependencies, demonstrated Sidecar gaps, required public Framework
+- [x] Contract dependencies, demonstrated Sidecar gaps, required public Framework
   changes and implementation/evidence owners are explicit; affected plans/lens are
   consistent and unresolved material decisions prevent affected contract sign-off.
 
@@ -136,6 +136,29 @@ dependencies, new SPI, internal-bean replacement or Sidecar Java `@SkillMethod` 
 Consult local Framework tag `v1.0.0-beta.8` for the pinned starter `1.0.0-beta.8`.
 Use documented `loomspan.*`, Sidecar-owned `loomspan-sidecar.*` and standard Boot
 namespaces for their respective responsibilities; proposed SDK names remain design work.
+
+## Execution notes
+
+- Full 5-Step Pipeline approved by the developer. Initial tree was clean; the
+  research/implementation/testing plans and all edits in this run are ticket work.
+- Delivered the normative
+  [trust/bootstrap/lifecycle reference](../phases/2026-10-15-sdk-v1-trust-bootstrap-lifecycle-reference.md)
+  and [51 named planned scenario families](../phases/2026-10-15-sdk-v1-trust-bootstrap-lifecycle-scenarios.md).
+  The matrix maps AC1–AC6 to concrete clauses and phase/repository evidence owners.
+  Checked acceptance boxes mean contract delivery, not runtime support. Independent
+  Step 5 review remains the final pipeline completion gate.
+- Selected finite 60s refresh/300s last-success age with 5s fetch bound, persistent
+  revision/tombstone protection, one managed signer or explicit replacing source,
+  stop/install/ack replica barrier, guarded Smallstep TLS provisioning separate from
+  SDK JWT initialization, and explicit TLS generation/connection retirement.
+- Reconciled roadmap/Phases 0–3, identity reference and design lens; no new Framework
+  public contract is required for admission/queue/callback checks. Admitted work
+  remains Framework-owned and no cancellation or effect rollback is promised.
+- Proportional documentation checks and exact results are recorded in the
+  [implementation plan](../plans/PR-8.0.2-sdk-v1-trust-bootstrap-lifecycle-contracts.md#implementation-and-verification-evidence).
+  All runtime scenarios remain PLANNED; no Java/Maven/SDK/Compose suite was run or
+  claimed as evidence for these contracts. No data reset/deletion, product edits,
+  dependent implementation tickets, commits, pushes or releases occurred.
 
 ## Execution profile
 

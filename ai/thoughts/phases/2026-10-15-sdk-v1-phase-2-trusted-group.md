@@ -61,6 +61,12 @@ retaining independent user and record authorization.
 
 ## Scope
 
+The [trust/bootstrap/lifecycle reference](2026-10-15-sdk-v1-trust-bootstrap-lifecycle-reference.md)
+and [planned scenarios](2026-10-15-sdk-v1-trust-bootstrap-lifecycle-scenarios.md)
+extend Phase 1's same finite policy/schema to group issuers and distinct workload
+membership. Issuer trust and workload membership remain independent; Phase 3 adds
+renewal/removal-under-load mechanisms and evidence with the stated connection gates.
+
 - Implement Phase 0 group recipes with distinct workload credentials, explicit
   admission policy and approved callback routes. Broad CA trust alone is not group
   membership; prevent inbound bypass and borrowing outbound proxy identities.

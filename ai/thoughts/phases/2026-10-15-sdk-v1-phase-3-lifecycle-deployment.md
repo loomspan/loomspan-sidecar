@@ -60,6 +60,13 @@ restart, expiry, rotation, trust withdrawal and changing user/workload authority
 
 ## Scope
 
+The [trust/bootstrap/lifecycle reference](2026-10-15-sdk-v1-trust-bootstrap-lifecycle-reference.md)
+and [planned scenarios](2026-10-15-sdk-v1-trust-bootstrap-lifecycle-scenarios.md)
+are normative for signer publication barriers, durable withdrawal, independent
+validator clocks and TLS generation/connection retirement. Phase 1 supplies initial
+security enforcement and Phase 2 group extension; this phase implements the lifecycle
+mechanisms and stress/fault evidence, rather than treating configuration as proof.
+
 Implement any lifecycle mechanisms assigned here by Phase 0 or deferred explicitly
 by Phase 1/2 tickets, then verify them. This phase owns production changes needed
 for renewal/reload, signing rotation, emergency distrust and recovery; it is not a
