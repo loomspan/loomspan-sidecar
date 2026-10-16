@@ -12,8 +12,11 @@ The [named scenario matrix](2026-10-15-sdk-v1-trust-bootstrap-lifecycle-scenario
 is future evidence, not performed runtime verification. These decisions supersede
 corresponding illustrative names and open choices in the
 [roadmap](2026-10-11-java-spring-sdk-roadmap.md), preserving its acceptance obligations.
-PR-8.0.3 owns final runtime versions, deployment commands/topologies and consolidated
-evidence; it must implement these boundaries without weakening them.
+The final [API reference](2026-10-15-sdk-v1-api-reference.md),
+[deployment recipes](2026-10-15-sdk-v1-deployment-recipes.md) and
+[consolidated matrix](2026-10-15-sdk-v1-acceptance-matrix.md) select runtime versions,
+future commands/topologies and individual evidence owners without weakening these
+boundaries. Every runtime scenario remains planned.
 
 ## Verification sources and protected state
 

@@ -10,9 +10,10 @@ Companion acceptance matrix for the
 [PR-8.0.2](../tickets/PR-8.0.2-sdk-v1-trust-bootstrap-lifecycle-contracts.md).
 **Every row is PLANNED; none is executed runtime evidence.** Each row is a test
 family with explicit parameter variants, not permission to skip negative cases.
-PR-8.0.3 consolidates this with the identity matrix and remaining roadmap families,
-selects actual build/runtime baselines and commands. No imaginary SDK command is
-claimed runnable here.
+The [consolidated matrix](2026-10-15-sdk-v1-acceptance-matrix.md) maps every ID here
+with the identity matrix and remaining roadmap families to phase, repository,
+planned unit and intended location. Its API/deployment references select actual
+build/runtime baselines and future commands. No future SDK command is claimed runnable.
 
 Owners: **Root** = Sidecar focused tests in this repository; **SDK** = independent
 `sdks/java/` focused tests here; **Suite** = real local Compose/services in

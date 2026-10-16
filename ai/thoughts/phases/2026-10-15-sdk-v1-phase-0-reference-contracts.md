@@ -171,9 +171,14 @@ they do not prove runtime support or complete this phase. PR-8.0.2 supplies the
 [trust/bootstrap/lifecycle reference](2026-10-15-sdk-v1-trust-bootstrap-lifecycle-reference.md)
 and [named planned scenarios](2026-10-15-sdk-v1-trust-bootstrap-lifecycle-scenarios.md)
 against those policy fields; these settle contracts without proving runtime support.
-PR-8.0.3 must
-reconcile the servlet/async baseline, deployment/evidence contracts and complete
-matrix, including all remaining roadmap families and exact local commands.
+PR-8.0.3 supplies the [API/runtime contract](2026-10-15-sdk-v1-api-reference.md),
+[versioned deployment recipes](2026-10-15-sdk-v1-deployment-recipes.md) and
+[complete scenario ownership matrix](2026-10-15-sdk-v1-acceptance-matrix.md).
+They select Java 21/Boot 4.1.0, standalone blocking/async HTTP core and servlet-only
+callbacks, independent SDK packaging, concrete outcome/read policies and local tiers.
+All APIs, future commands, scenarios and descriptive owning units remain planned;
+documentation completion establishes no runtime support. Units become implementation
+tickets only after their material public-contract dependencies are resolved.
 
 Inputs are the roadmap and its security research. Output is a reference design
 with resolved material choices, concrete contracts, supported configurations and

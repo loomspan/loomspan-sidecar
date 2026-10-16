@@ -8,8 +8,10 @@ deployed-data deletion is required/authorized by this document.
 Normative contract: [identity and callback reference](2026-10-15-sdk-v1-identity-callback-reference.md).
 Every scenario below is **PLANNED, NOT RUN**. This is a scoped Phase 0 matrix,
 not evidence of working SDK/provider/Sidecar integration or complete Phase 0.
-PR-8.0.3 must consolidate it with PR-8.0.2's lifecycle/trust scenarios and final
-runtime/deployment versions, commands and concrete implementation ticket owners.
+The [consolidated matrix](2026-10-15-sdk-v1-acceptance-matrix.md) individually maps
+every ID here with PR-8.0.2's scenarios to final phase/repository/planned owning
+unit/evidence locations. It links selected runtime/deployment versions and exact
+future commands; no implementation tickets or completed runtime evidence are invented.
 
 ## Owners and evidence rules
 
@@ -24,8 +26,9 @@ runtime/deployment versions, commands and concrete implementation ticket owners.
 
 P1 = isolated/core implementation; P2 = group/issuer expansion; P3 = lifecycle/fault
 evidence. A row naming multiple owners requires component and composed evidence;
-one cannot substitute for the other. Exact executable files/commands are assigned
-by future implementation tickets, not invented as existing test runners here.
+one cannot substitute for the other. Exact future files/commands are selected by
+the consolidated matrix and deployment reference; implementation tickets must create
+and verify them. They are not existing test runners.
 Evidence records SDK/Sidecar/Framework versions or local revisions, provider/proxy
 version, configuration, command, actual result and each hop's guarantee. All rows
 start planned, including rows related to currently inspected tests.

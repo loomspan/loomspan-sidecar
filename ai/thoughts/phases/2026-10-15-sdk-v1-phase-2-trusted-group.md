@@ -61,6 +61,15 @@ retaining independent user and record authorization.
 
 ## Scope
 
+Use the final [API/runtime reference](2026-10-15-sdk-v1-api-reference.md),
+[versioned deployment recipes](2026-10-15-sdk-v1-deployment-recipes.md) and
+[consolidated acceptance matrix](2026-10-15-sdk-v1-acceptance-matrix.md).
+The matrix assigns each individual prior scenario and compulsory composition to
+phase, repository, named planned unit and intended evidence location. Every runtime
+row remains planned until its own implementation evidence exists. Preserve both
+callback arrangements, independent receiver trust and exact source negative variants;
+shared component proofs never substitute for required real composed integration.
+
 The [trust/bootstrap/lifecycle reference](2026-10-15-sdk-v1-trust-bootstrap-lifecycle-reference.md)
 and [planned scenarios](2026-10-15-sdk-v1-trust-bootstrap-lifecycle-scenarios.md)
 extend Phase 1's same finite policy/schema to group issuers and distinct workload

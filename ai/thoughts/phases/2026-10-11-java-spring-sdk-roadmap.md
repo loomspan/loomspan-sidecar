@@ -39,8 +39,13 @@ bootstrap and separate JWT/TLS lifecycle contracts. Its
 assign initial enforcement to Phase 1, group extension to Phase 2 and lifecycle
 mechanisms/stress to Phase 3. It supersedes the corresponding illustrative settings
 and open mechanism statements below, preserving acceptance requirements. These are
-contracts, not implemented support; PR-8.0.3 still owns pinned runtime/deployment
-versions, exact commands/topologies and the consolidated evidence matrix.
+contracts, not implemented support. PR-8.0.3's final
+[API/runtime reference](2026-10-15-sdk-v1-api-reference.md),
+[versioned deployment recipes](2026-10-15-sdk-v1-deployment-recipes.md) and
+[scenario ownership matrix](2026-10-15-sdk-v1-acceptance-matrix.md) now settle the
+remaining API, baseline, topology, commands and evidence design. Together the three
+Phase 0 references supersede illustrative names and pending design statements below;
+all detailed acceptance obligations remain normative and all runtime checks planned.
 
 Invocation (SDK to Sidecar) and callbacks (Sidecar to application) independently
 select HTTP, HTTPS or mTLS. Proxy placement is another independent choice, as is the
@@ -1051,8 +1056,9 @@ support only after its manual checks pass. Begin with standard
 material delivery and explicit renewal/reload behavior; add provider-specific code
 only for a proven requirement that deployment tooling cannot satisfy. Certificate
 issuance, application reload and peer authorization are separate responsibilities.
-Cloud workload identity is not the user's application identity. No certificate product
-or bundled CA has been selected.
+Cloud workload identity is not the user's application identity. The deployment
+reference selects Smallstep for default local TLS and names AWS/Azure/Google Cloud
+material and Auth0/Okta/Entra manual recipes, all externally unverified.
 
 ## SDK functionality
 
@@ -1099,8 +1105,8 @@ unusable acceptance response. Sidecar may already be executing even when the cal
 no execution ID. Classify a request as definitely not submitted only when transport
 evidence establishes that; treat an explicit API rejection according to its documented
 contract, not an arbitrary proxy error as proof of rejection. Preserve available error
-details and any reliably obtained execution ID. Exact API/exception names remain Phase 0
-design work. The error must state that work may be running and must not advise blind retry.
+details and any reliably obtained execution ID. The API reference selects exact
+outcome/exception names. The error must state that work may be running and must not advise blind retry.
 
 No automatic execution-submission retries in v1. Configure SDK HTTP clients and reference
 proxies accordingly and document that external proxies must not replay submissions.
@@ -1308,8 +1314,8 @@ solely from component tests or one mTLS recipe. Completion requires passing evid
 all required primary and focused scenarios, including their applicable negative/lifecycle
 checks, and documentation matching tested configurations. Unrun required checks remain
 outstanding. These release requirements use local evidence; cloud recipe verification is
-separate manual work and does not gate release. Exact runtime/provider versions and
-configuration contracts remain planning work.
+separate manual work and does not gate release. Exact selected versions, configurations,
+future commands and every scenario's ownership are in the final Phase 0 references.
 
 For each tested composition, record invocation and callback guarantees separately.
 Two-way mTLS reference evidence must demonstrate workload authentication and peer
@@ -1329,27 +1335,24 @@ evidence must cover key rollover, restart persistence, retrieval failures and ca
 behavior for the selected distribution workflow. This is planned support, not evidence
 that the console or SDK already implements these capabilities.
 
-## Remaining scope decisions
+## Resolved Phase 0 design and remaining evidence
 
-- PR-8.0.1's [reference](2026-10-15-sdk-v1-identity-callback-reference.md) settles the
-  local Keycloak 26.4.0 profile, credential contracts, issuer/authority policy,
-  callback composition and bounded servlet async behavior. Independent review
-  remains required. PR-8.0.3 still owns exact test prerequisites/tiers, final runtime
-  compatibility and hosted-provider/cloud claims with separately attributed evidence.
+The identity/callback, trust/bootstrap/lifecycle and API/deployment/matrix references
+settle material Phase 0 decisions. Java 21/Boot 4.1.0, standalone blocking and
+CompletableFuture core, servlet MVC callbacks, independent SDK modules and versions,
+bounded read policy, protected management ingress, both mTLS paths, automatic
+Smallstep setup and exact planned commands now have named owners. The consolidated
+matrix preserves 108 preceding scenario IDs and explicitly expands 72 compulsory
+primary/mixed/outbound compositions. None is completed runtime evidence.
 
-- PR-8.0.2's trust reference selects guarded SDK signing initialization, separate
-  Smallstep TLS provisioning, authority guards and membership/connection gates.
-  PR-8.0.3 must supply exact Compose services/networks/commands and pinned tooling
-  versions, including management ingress and callback routes, to realize that contract.
-- Management/browser ingress alongside workload mTLS without opening an execution bypass.
-- Trust storage/admin/lifecycle and signing-key provisioning/rotation follow
-  PR-8.0.1's finite issuer/audience/profile/role model without implying current
-  Sidecar multi-issuer support and PR-8.0.2's concrete protected state/mechanisms.
-  Both references require their named runtime evidence before support claims.
-- Final blocking/async client APIs and runtime baseline remain PR-8.0.3 work; its
-  servlet/reactive decision must reconcile the reference's servlet-first supported
-  callback/async boundaries. Management authoring, code generation, streaming and
-  server cancellation are not assumed initial SDK features.
+Implementation must prove callback isolation, public-only TypeSafe integration,
+atomic state/publication and connection cutoffs on those baselines. A demonstrated
+missing public contract blocks affected work in its owning repository; no hidden
+Framework SPI or internal import is authorized. Keep the suite's beta.9 embedded
+lane separate from the new beta.8 SDK v1 lane and update its agreement at implementation.
+External provider/cloud checks require separate authorization and remain unverified.
+Management-authoring SDK, other languages/new Python functionality, code generation,
+streaming and server cancellation are excluded v1 deliverables.
 
 Protected local HTTP, HTTPS and mTLS are v1 transport options, independently selected
 for invocation and callbacks. Both mTLS client paths and all four credential strategies

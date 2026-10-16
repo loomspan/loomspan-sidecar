@@ -395,8 +395,9 @@ trust administration. Its companion scenario matrix is planned evidence only.
 ## Callback composition
 
 Scope: servlet Spring Security/MVC integration first. Reactive/WebFlux callback
-security is unsupported by this reference. PR-8.0.3 must reconcile the final runtime
-baseline before compatibility claims; expansion requires equally concrete design
+security is unsupported by this reference. The final API reference selects the
+servlet Java 21/Boot 4.1.0 baseline; runtime evidence is required before compatibility
+claims. Expansion requires equally concrete design
 and evidence. Standalone HTTP clients and trusted custom identity/receiving adapters
 remain supported design scope without requiring Spring login.
 
@@ -614,8 +615,10 @@ were executed as new integration evidence in this ticket. Retain ArchUnit bans o
 contracts must be planned there; no missing new Framework SPI is identified here.
 
 Current Sidecar baseline remains Java 21, Boot 4.1.0, Framework 1.0.0-beta.8 and
-Sidecar 1.0.0-beta.4-SNAPSHOT. PR-8.0.3 must select/verify the final SDK baseline and
-supported servlet filter/repository APIs; no reactive compatibility inferred.
+Sidecar 1.0.0-beta.4-SNAPSHOT. The [API reference](2026-10-15-sdk-v1-api-reference.md)
+selects the same Java/Boot baseline, independent modules and blocking/async core,
+with servlet-only callbacks. Filter/repository composition still requires its own
+implementation evidence; no reactive compatibility is inferred.
 Framework behavior uses documented `loomspan.*`; Sidecar owns `loomspan-sidecar.*`;
 these future SDK settings use `loomspan-sdk.*`; Boot SSL bundles stay standard.
 
@@ -631,6 +634,7 @@ to implement safe mixed-chain isolation on the chosen runtime blocks that arrang
 and dependent implementation sign-off; it does not authorize a weaker guarantee.
 
 This contract requires independent Step 5 security review before ticket completion.
-Full Phase 0 remains open for PR-8.0.3 deployment/runtime decisions and final
-matrix consolidation. Future implementation tickets must not claim those dependencies
-settled by this document, or runtime support established by document verification.
+The [deployment reference](2026-10-15-sdk-v1-deployment-recipes.md) and
+[consolidated matrix](2026-10-15-sdk-v1-acceptance-matrix.md) complete the remaining
+Phase 0 design/ownership decisions. Future implementation tickets must read those
+contracts and must not claim runtime support established by document verification.
