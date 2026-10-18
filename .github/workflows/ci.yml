@@ -11,7 +11,6 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     env:
-      # Also inherited by Maven launched from the production browser verifier.
       MAVEN_ARGS: -Dloomspan.version=1.0.0-beta.8
     steps:
       - uses: actions/checkout@v4
@@ -36,7 +35,6 @@ jobs:
           ./mvnw -B -ntp verify
       - name: Build and verify image without publishing
         run: |
-          python scripts/test_verify_shutdown.py
+          python -m unittest discover -s scripts -p 'test_verify_deployment.py' -v
           docker build --tag loomspan-sidecar:ci .
-          python scripts/verify-image.py --image loomspan-sidecar:ci
-          python scripts/verify-production.py --image loomspan-sidecar:ci
+          python scripts/verify-deployment.py --image loomspan-sidecar:ci

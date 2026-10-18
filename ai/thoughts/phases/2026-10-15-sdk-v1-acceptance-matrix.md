@@ -70,6 +70,13 @@ may follow an effect. No automatic retry, rollback or exactly-once claim.
 
 ## Harness and evidence
 
+The [deployment verification ownership ticket](../tickets/2026-10-18-simplify-deployment-and-composed-test-ownership.md)
+assigns retained deployment transport/TERM baselines and restored plain-Java SDK
+checks to the same external lane. The [current maintainer inventory](../../../docs/verification.md)
+records their evidence and limits. These baselines do not complete the planned
+Spring reference-app/callback or full Standard/Hardened recipe rows above; reuse
+existing assertions when those tickets add the missing real application legs.
+
 The external suite owns composed fixtures and a small runner selecting three
 recipes. Keep focused SDK/Sidecar tests in their owning builds.
 Use deterministic model fixtures, form login, no provider access, and temporary

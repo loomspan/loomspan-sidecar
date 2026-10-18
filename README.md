@@ -115,6 +115,7 @@ configuration choices, and [operations](docs/operations.md) for recovery.
 | Find the authoritative reference | [Documentation map](docs/README.md) |
 
 Developing an application **with** Sidecar is different from developing Sidecar
-itself. Repository contributors should begin with [AGENTS.md](AGENTS.md);
+itself. Repository contributors should begin with [AGENTS.md](AGENTS.md) and
+[maintainer verification](docs/verification.md);
 maintainer audit material is parked in [ai/throughts](ai/throughts/readme-maintainer-material.md)
 for review, outside the application learning path.

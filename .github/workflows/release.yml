@@ -40,9 +40,9 @@ jobs:
       - name: Verify application and image
         run: |
           ./mvnw -B -ntp -Prelease verify
+          python -m unittest discover -s scripts -p 'test_verify_deployment.py' -v
           docker build --tag loomspan-sidecar:release-candidate .
-          python scripts/verify-image.py --image loomspan-sidecar:release-candidate
-          python scripts/verify-production.py --image loomspan-sidecar:release-candidate
+          python scripts/verify-deployment.py --image loomspan-sidecar:release-candidate
       - name: Prepare JAR archive and checksums
         run: |
           python scripts/prepare-release.py --project-version "${{ steps.version.outputs.version }}" --loomspan-version 1.0.0-beta.8 --tag "${GITHUB_REF_NAME}"

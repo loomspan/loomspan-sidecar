@@ -230,3 +230,7 @@ and [Cloudflare DNS module](https://github.com/caddy-dns/cloudflare).
 Spring's [forwarded header security guidance](https://docs.spring.io/spring/reference/web/webmvc/filters.html)
 explains why Caddy removes client-supplied forwarded headers before Sidecar
 uses its proxy-provided origin.
+
+For repository component, deployment-smoke and composed SDK verification, see
+[maintainer verification](../../docs/verification.md). Operator TLS and recovery
+procedures above remain independent of that disposable test tooling.

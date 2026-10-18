@@ -21,7 +21,8 @@ recipe:
 - exact roles and execution ownership;
 - trust recovery and queue expiry.
 
-The PR 8.1.2 scenarios are also restored on the new trust contract.
+The deployment simplification ticket takes the PR 8.1.2 plain-Java fixture
+repair; this ticket retains the actual Spring/colocated recipe obligations.
 
 ## Requirements
 
@@ -59,9 +60,10 @@ The PR 8.1.2 scenarios are also restored on the new trust contract.
     readiness, and correcting it recovers.
   - Queue expiry: queued work whose token expires before handoff fails with
     `execution credential expired before start` and is never dispatched.
-- Move the PR 8.1.2 plain-Java scenarios (completed, failed, lost response) to
-  the new contract. Their test tokens must be accepted through Sidecar trust
-  from a JWKS file. Remove the temporary old-configuration fixture completely.
+- Reuse the PR 8.1.2 plain-Java scenarios repaired by the deployment simplification
+  ticket (completed, failed, lost response), using public JWKS/current execution
+  JWT claims. Do not duplicate that fixture repair. It is not SDK Spring issuance
+  or colocated reference-app evidence.
 - Record evidence in the SDK lane format. Never log tokens, keys or payloads.
 - Make Sidecar-side documentation or sample corrections in `loomspan-sidecar`
   only when this integration exposes a real defect in the shipped Local
@@ -81,10 +83,20 @@ The PR 8.1.2 scenarios are also restored on the new trust contract.
       recovers both.
 - [ ] Queue-expired work fails with `execution credential expired before start`
       and is never dispatched.
-- [ ] The PR 8.1.2 completed, failed and lost-response scenarios pass on the new
-      trust contract, and the old-configuration fixture is gone.
+- [x] The PR 8.1.2 completed, failed and lost-response scenarios pass on the new
+      trust contract, and the old-configuration fixture is gone. Delivered by the
+      deployment simplification ticket; its current report is linked from the
+      maintainer inventory. The remaining Spring/colocated criteria stay pending.
 - [ ] The evidence records the recipe, revisions and builds, and results, with
       no secrets.
+
+## Verification ownership reconciliation
+
+The [deployment simplification ticket](2026-10-18-simplify-deployment-and-composed-test-ownership.md)
+uses the existing SDK lane for current plain-Java invocation and deployment
+transport/real-TERM baselines. See [current ownership](../../../docs/verification.md).
+Those baselines do not complete this ticket's future reference-app, callback,
+recipe or trust obligations. No TLS certificate-lifecycle testing is transferred.
 
 ## Context
 

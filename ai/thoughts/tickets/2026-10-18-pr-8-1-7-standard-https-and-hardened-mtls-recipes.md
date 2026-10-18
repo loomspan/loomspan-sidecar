@@ -125,6 +125,14 @@ do not restrict customer configuration.
 - [ ] The operator documentation for both recipes states DevOps TLS ownership
       and the boundaries listed above.
 
+## Verification ownership reconciliation
+
+The [deployment simplification ticket](2026-10-18-simplify-deployment-and-composed-test-ownership.md)
+uses the existing SDK lane for current plain-Java invocation and deployment
+transport/real-TERM baselines. See [current ownership](../../../docs/verification.md).
+Those baselines do not complete this ticket's future reference-app, callback,
+recipe or trust obligations. No TLS certificate-lifecycle testing is transferred.
+
 ## Context
 
 - Depends on PR 8.1.6, which provides the complete Local recipe, the reference

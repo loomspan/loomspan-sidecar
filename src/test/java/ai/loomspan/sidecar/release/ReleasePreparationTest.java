@@ -14,11 +14,10 @@ class ReleasePreparationTest {
         String ci = Files.readString(Path.of(".github/workflows/ci.yml"));
         String release = Files.readString(Path.of(".github/workflows/release.yml"));
         String script = Files.readString(Path.of("scripts/prepare-release.py"));
-        String imageVerifier = Files.readString(Path.of("scripts/verify-image.py"));
 
         assertThat(pom).contains("<id>release</id>", "requireReleaseVersion", "requireReleaseDeps",
                 "1\\.0\\.0-beta\\.8");
-        assertThat(ci).contains("docker build", "verify-image.py", "verify-production.py",
+        assertThat(ci).contains("docker build", "verify-deployment.py", "test_verify_deployment.py",
                 "com.microsoft.playwright.CLI").doesNotContain("push: true", "docker/login-action",
                 "--verify-kubernetes");
         assertThat(release).contains("tags: [\"v*\"]", "--tag \"${GITHUB_REF_NAME}\"", "if: startsWith(github.ref",
@@ -28,12 +27,11 @@ class ReleasePreparationTest {
                 "Could not establish whether release", "docker manifest inspect",
                 "manifest unknown|no such manifest", "Could not establish whether image tag", "refusing to overwrite",
                 "push: true", "docker/login-action", "prepare-release.py", "softprops/action-gh-release",
-                "verify-production.py", "com.microsoft.playwright.CLI");
+                "verify-deployment.py", "test_verify_deployment.py", "com.microsoft.playwright.CLI");
         assertThat(script).contains("SNAPSHOT", "1.0.0-beta.8", ".sha256", "zipfile.ZipFile");
-        assertThat(imageVerifier).contains("DEFAULT_COMMAND_TIMEOUT_SECONDS", "CLEANUP_TIMEOUT_SECONDS",
-                "timeout=DEFAULT_COMMAND_TIMEOUT_SECONDS", "except subprocess.TimeoutExpired",
-                "if result.returncode", "database-first Sidecar startup",
-                "require_cleanup(\"docker\", \"compose\"");
+        assertThat(ci.split("verify-deployment.py", -1)).hasSize(2);
+        assertThat(release.split("verify-deployment.py", -1)).hasSize(2);
+        assertThat(ci + release + pom).doesNotContain("run_sdk.py", "loomspan-sidecar-test-suite");
 
         assertThat(run("1.0.0-beta.2", "1.0.0-beta.8", "v1.0.0-beta.2")).isZero();
         assertThat(run("1.0.0-beta.2-SNAPSHOT", "1.0.0-beta.8", "v1.0.0-beta.2-SNAPSHOT")).isNotZero();
