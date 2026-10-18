@@ -17,6 +17,17 @@ existing capabilities where they fit. Add abstractions, dependencies, configurat
 or process only when there is a concrete need. Keep code, tests, documentation and
 process proportional to the work.
 
+When meeting a requirement would add substantial complexity, reconsider the
+requirement as well as the implementation. Include ongoing test-suite maintenance
+and configuration combinations in the cost of scope; do not expand them without
+a concrete benefit.
+
+Prefer a few representative integration recipes over an exhaustive deployment
+matrix. Untested network compositions are not automatically prohibited or
+unsupported; retain each hop's security requirements without imposing a runtime
+allowlist of tested recipes. Test tools must not dictate production contracts,
+names or configuration.
+
 Accept technical debt only when its benefit outweighs the expected maintenance
 and future change costs. Record the tradeoff and any needed follow-up in the
 existing ticket or plan. Review for unnecessary work as well as correctness;
@@ -41,6 +52,13 @@ guarantee a bound on total memory use.
 
 ## Trusted identity stays outside model inputs
 
+**If apps share a Sidecar, they trust each other in every way:** asserted identity
+and roles, reusable tokens, business data and network participation. Use separate
+Sidecars when applications require isolation. V1 uses one issuer per Sidecar;
+trusted groups share signing identity, user identity semantics and role vocabulary.
+User/record authorization remains enforced, but provides no isolation against
+another fully trusted group application.
+
 Take credentials, caller identity and permissions from server authentication,
 never from model inputs or skill instructions. Preserve authenticated identity
 when work moves between threads or waits in a queue. Identify execution owners
@@ -52,12 +70,19 @@ execution credential; Sidecar does not mint, refresh or exchange it. Forwarding
 requires an approved recipient and remains subject to credential expiry and peer
 access rules.
 
-Configure trusted issuers and their permission mappings explicitly. Membership
-in a workload group does not make an issuer trusted. At each receiving API, check
-that the credential is intended for that use and, where required, bound to the
-presenting client. A browser session cannot substitute for callback authentication.
-Where current account permissions are checked, allow only permissions granted by
-both the token and the account.
+Configure the trusted issuer and verification keys explicitly; network membership
+does not substitute for JWT validation. Each receiver validates the credential's
+signature, intended audience, execution purpose and validity. Execution credentials
+are bearer JWTs; transport mTLS does not bind them to a client certificate.
+A browser session cannot substitute for callback authentication.
+
+At issuance, include only allowlisted authorities the authenticated user actually
+has. Preserve their exact names across tokens, Sidecar skill roles and callbacks;
+do not add, strip or map role prefixes. Roles are snapshots until expiry, not live
+account lookups. The SDK authenticates callbacks and establishes verified identity
+and authorities; standard Spring method security and application business checks
+authorize operations and records. The SDK does not interpret method annotations
+or inherit URL rules from another security chain.
 
 ## One management API for browser and remote authoring
 
@@ -97,19 +122,33 @@ work after expiry, revocation, logout or loss of account permissions.
 ## Trust and connection changes have explicit owners and timing
 
 Assign clear ownership of signing keys, trusted verification keys and transport
-credentials. Public key endpoints and exports must use the signing owner's public
-keys without changing signing state or exposing private material.
+credentials. Public exports use the signing owner's public keys without exposing
+private material or independently changing signing state.
 
-Initialization and recovery must preserve established identity and withdrawn trust.
-If established state is missing or corrupt, stop the affected operation and require
-explicit recovery. Do not silently generate a replacement identity or restore
-withdrawn trust.
+Colocated signing keys are intentionally ephemeral: application restart generates
+a new key, and old tokens cease to validate as receivers adopt the replacement.
+Provided signing keys are operator-owned; missing or invalid material must not
+silently cause replacement key generation. Document the operational consequences
+of each mode rather than adding persistent signer or bootstrap machinery.
 
-State when each receiver stops accepting a withdrawn key or peer, including queued
-work and independent callback validators. Refreshing public keys does not rotate
-private signing keys or revoke trust everywhere at once. Reloading TLS material
-does not close existing connections; specify how pooled and active connections
-are retired.
+The current operator-supplied or colocated JWKS file governs verification trust.
+Publish complete validated key sets atomically. Missing, unreadable, malformed or
+empty trust stops affected credential acceptance once detected; corrected valid
+trust restores it through reload. Do not continue using last-valid keys after an
+unusable file is detected. No withdrawal ledger or historical trust barrier is
+maintained; restoring an old file restores its keys and is an operator responsibility.
+
+State when each receiver adopts changed JWT trust, including queued work and
+independent callback validators. Before Framework handoff, queued work must pass
+current trust and expiry checks. Refreshing verification keys does not rotate
+private signing keys or revoke trust everywhere at once.
+
+DevOps owns TLS certificate issuance, storage, delivery, renewal, replacement and
+revocation through standard Spring Boot or Caddy facilities. Reference deployments
+accept operator-provided material. Test secure transport integration and deployment
+boundaries, not a Loomspan certificate lifecycle system. Do not add renewal/reload
+controllers or promise seamless rotation, timed connection retirement or exact
+expiry cutoffs for established connections.
 
 Withdrawal does not cancel work already admitted by the Framework or undo its
 effects. Cancellation needs an explicit supported contract. Recovery and reconnects
