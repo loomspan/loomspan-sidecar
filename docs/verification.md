@@ -32,8 +32,8 @@ ruff check scripts/run_sdk.py scripts/sdk_lane tests/test_sdk_runner.py
 .venv/Scripts/python.exe scripts/run_sdk.py local --sidecar-checkout C:/opendev/code/loomspan-sidecar
 ```
 
-The SDK runner always builds root Sidecar components, the SDK reactor and its plain
-Java driver, then builds the image. Reports record artifact hashes, source revision
+The SDK runner always builds root Sidecar components, the SDK reactor, its plain
+Java driver and clean Boot servlet reference app, then builds the image. Reports record artifact hashes, source revision
 and dirty state, stage/total durations, explicit scenario outcomes and cleanup.
 No cached-artifact bypass or recursive deployment smoke is used.
 
@@ -57,6 +57,7 @@ scenarios live in the external suite's existing `scripts/run_sdk.py` runtime.
 | Direct localhost HTTP and direct standard Spring PEM HTTPS image reachability | Existing suite [foundation-smoke](../../loomspan-sidecar-test-suite/evidence/sdk/20261018T211932Z-43ccfbc20a42/report.json) plus [deployment-transport-baseline](../../loomspan-sidecar-test-suite/evidence/sdk/20261018T211932Z-43ccfbc20a42/report.json) direct HTTPS variant; no form-login SDK claim. |
 | Supplied Caddy TLS positive, untrusted CA rejection, redirect destination, fixed upstream, forwarded-header normalization | Suite [deployment-transport-baseline](../../loomspan-sidecar-test-suite/evidence/sdk/20261018T211932Z-43ccfbc20a42/report.json) supplied-Caddy variant using per-run certs; smoke also uses shipped supplied recipe for auth/health/no-bypass. Fresh evidence is linked below. |
 | Static production/supplied Compose topology | Smoke rendered configuration checks. |
+| SDK form-login issuance, exact authorities and execution ownership; colocated app restart, current-trust correction and strict queued expiry without dispatch | External Local group in `scripts/sdk_lane/local.py` and its clean Boot reference app, derived from the actual shipped quickstart Compose; detailed receiver rules remain in the component tests. Current evidence is recorded below. |
 | Static public/DNS Caddy adaptation | Explicitly remove external Caddy plugin/adaptation-only checks; no Sidecar runtime assertion is lost. Preserve shipped configs and operator guidance; no DNS/ACME execution. |
 | Root-key permissions, same leaf/CA across restarts, regeneration after deletion, forced supplied replacement/reload | Delete as certificate lifecycle; no replacement anywhere. |
 | Outbound TLS/mTLS selected bundle, wrong/missing client rejection | Retain `RestTransportTlsIntegrationTest`. Future full SDK peer/hostname/expiry and bidirectional no-bypass belong to 8.1.7, not claimed by stub/baseline evidence. |
@@ -75,7 +76,7 @@ Certificate lifecycle tests have no replacement: issuance, persistence, regenera
 forced replacement/reload and CA-state checks were test-tool responsibilities outside
 Loomspan. Operator support/guidance for all standard Spring/Caddy options remains.
 Temporary certificate rejection is transport validation and remains executable.
-Queue/callback expiry stays in `ExecutionCoordinatorTest` and
+Detailed queue/callback expiry stays in `ExecutionCoordinatorTest` and
 `GenericRestSkillHandlerTest`; `SupportedLoomspanApiArchitectureTest` continues to
 forbid Framework internals/autoconfigure and Java skill dependencies in app/tests.
 Framework tests are never substituted for Sidecar integration evidence.
@@ -93,10 +94,11 @@ detail/finish effects and a single 3s Framework budget. `deployment-transport-ba
 checks direct Spring HTTPS trust/hostname/expiry and supplied Caddy header/redirect/
 fixed-upstream/no-bypass boundaries. Independent fixture counters detect effects.
 
-These baselines do not complete the SDK Spring form-login/issuance reference app,
-callback authentication/method/business security, full Standard/Hardened bidirectional
-invocation/callbacks, provided-key deployment, trusted-group rotation or outbound-only
-coverage. PRs 8.1.5–8.1.8 retain those obligations. Standard/Hardened selectors remain
+The five retained baselines alone do not establish SDK Spring form-login issuance
+or colocated signing/trust/queue behavior; the additional Local group owns those checks.
+Neither group establishes callback authentication/method/business security, full
+Standard/Hardened bidirectional invocation/callbacks, provided-key deployment,
+trusted-group rotation or outbound-only coverage. Later tickets retain those obligations. Standard/Hardened selectors remain
 empty and fail explicitly with `no-scenarios-for-recipe` until implemented.
 
 ## Cost observations
@@ -156,3 +158,38 @@ active old-command/class and lifecycle-helper audits passed. Docker label checks
 found no leftover formal-run or smoke resources. Hosted CI/release was not executed;
 local equivalents above provide current evidence. No provider/live CA/DNS, reset,
 operational-data or maintained-reference changes occurred.
+
+
+## Local colocated recipe evidence
+
+The [fresh Local report 20261018T222714Z-48aad3a2b736](../../loomspan-sidecar-test-suite/evidence/sdk/20261018T222714Z-48aad3a2b736/report.json)
+passes all ten selected scenarios and every build/runtime/cleanup stage in
+518.105s. It retains the five baselines above and adds the clean Boot
+form-login/CSRF consumer, exact authority 403/no dispatch, owner 404/fresh polling,
+app-only restart with changed kid/old rejection before expiry/new acceptance,
+current-JWKS readiness/auth withdrawal and recovery, and QUEUED original-credential
+expiry with the exact failure and zero target effects. No Framework internal API,
+provider, business runtime or operational data is used. Detailed parser/mode variants
+remain component tests; no per-ConfigurationMode recipe is duplicated.
+
+Source revisions/dirty flags, Sidecar/SDK/plain-Java/Boot hashes and actual shipped
+quickstart Compose hash are recorded in that report. Root components passed 61
+classes / 261 tests with zero failures/errors/skips. SDK install, both consumer builds,
+66 focused harness tests, 176 safe Python tests, Ruff and both diff checks passed.
+Independent exact project-label container/network/volume listings and the external
+key-volume name were empty after cleanup. No development-data reset was required.
+
+The measured build stages were 309.601s root,
+30.38s SDK, 5.823s
+plain Java and 6.285s Boot.
+Additional Local startup/issuance/restart/trust/queue stages were
+11.231/2.907/7.707/3.168/4.696s; Local teardown plus external-volume removal was
+21.846s. These are stage durations, not production performance claims.
+
+The initial full attempt [20261018T221808Z-eef7285741cc](../../loomspan-sidecar-test-suite/evidence/sdk/20261018T221808Z-eef7285741cc/report.json)
+remains failed at Local readiness: its already-imported initial fixture had an
+unsupported connection key, corrected to beta.8 `request-timeout` before the fresh
+run. All five baselines and cleanup passed; new Local cases remained not-run.
+This is a fixture correction, not a shipped Local guidance defect. Callback
+security, full Standard/Hardened bidirectional TLS/mTLS, provided signing and
+trusted-group work remain outside this evidence.
