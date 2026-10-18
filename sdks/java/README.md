@@ -137,3 +137,140 @@ The neighboring `loomspan-sidecar-test-suite` documents its separate SDK lane in
 provider-free completion/failure and lost-response no-replay evidence. Independent
 request and synthetic effect counts describe those fixtures, without promising
 exactly-once business execution. Standard and hardened recipes remain separate.
+
+## Execution-token issuance
+
+The SDK issues execution credentials for users authenticated by your application.
+Capture identity at the beginning of the operation, before processing business
+inputs. Spring applications inject `SpringExecutionTokenIssuer` and call
+`issueCurrent()`, then pass the returned `CredentialSnapshot` explicitly to the
+client. Null, anonymous and unauthenticated Spring identities are rejected.
+The adapter reads the current authentication, subject and authorities once;
+there is no async context wrapper, principal reconstruction or account lookup.
+
+### Colocated quickstart
+
+Create a directory owned by the application account and set deployment-appropriate
+permissions before startup. The SDK neither creates it nor inspects or changes its
+permissions. Configure both required values explicitly:
+
+```yaml
+loomspan-sdk:
+  base-url: http://localhost:8080
+  signing:
+    mode: colocated
+    colocated:
+      key-directory: /run/loomspan-keys
+  issuance:
+    roles: [ROLE_ORDER_EDITOR]
+```
+
+No signing mode is packaged in the starter. Missing mode fails startup with this
+quickstart reference. Settings belonging to the other mode are rejected.
+Colocated signing creates a fresh 2048-bit RSA private key only in memory and
+atomically replaces `/run/loomspan-keys/jwks.json` with its public key. Each app
+restart changes the kid: old tokens stop validating as receivers adopt the new
+file. Use one app instance per key directory (the sole writer); replicas or
+multiple apps use provided signing. Directory ownership and permissions are
+deployment responsibilities. Unsupported atomic replacement fails startup.
+
+In plain Java, initialize the signer once at startup and construct identity only
+from trusted authentication code:
+
+```java
+var source = SigningKeys.initialize(SigningSettings.colocated(Path.of("/run/loomspan-keys")));
+var settings = new IssuanceSettings("loomspan-app", Duration.ofMinutes(15),
+        List.of(), List.of("ROLE_ORDER_EDITOR"));
+var issuer = new ExecutionTokenIssuer(source, settings);
+// authenticatedUser comes from your server's authentication, never request JSON.
+var credential = issuer.issue(new AuthenticatedIdentity(
+        authenticatedUser.stableSubject(), authenticatedUser.authorities()));
+client.submit("summarize", input, credential);
+```
+
+The core API uses `java.nio.file.Path`, `java.time.Duration`, `java.util.List`
+and classes in `ai.loomspan.sdk`. Treat `AuthenticatedIdentity` as a trusted
+authentication snapshot; never deserialize business input into it. Subject and
+authorities are nonblank and defensively copied.
+
+### Provided signing
+
+Operators provide RSA keys of at least 2048 bits in `PKCS12`, `JKS`, or unencrypted
+PKCS#8 PEM (`-----BEGIN PRIVATE KEY-----`). PKCS#1 and encrypted PEM are rejected;
+convert them or use an encrypted keystore. Optional PEM certificates may be PEM
+or DER X.509 and must match the private key. Keystores use their alias certificate
+chain. Public JWKS includes `x5c` when a certificate exists.
+
+Generate a keystore using a password already supplied in the environment:
+
+```sh
+keytool -genkeypair -alias signer -keyalg RSA -keysize 2048 -validity 365 -dname "CN=Loomspan signer" -storetype PKCS12 -keystore signing.p12 -storepass:env SIGNING_STORE_PASSWORD
+```
+
+```yaml
+loomspan-sdk:
+  signing:
+    mode: provided
+    provided:
+      format: PKCS12
+      key-location: /run/secrets/signing.p12
+      key-alias: signer
+      keystore-password-reference: env:SIGNING_STORE_PASSWORD
+      jwks-export: /run/loomspan-public/jwks.json
+```
+
+For JKS choose `format: JKS`; an optional `key-password-reference` can differ
+from the store password and otherwise defaults to the store reference. Passwords
+accept only `env:VARIABLE_NAME` or `file:/absolute/path` references. Secret files
+are UTF-8; one terminal LF or CRLF is removed, with other characters preserved.
+Missing or empty secret targets fail startup. Literal `keystore-password` and
+`key-password` settings are forbidden. Do not put passwords in reference values.
+
+For PEM configure `format`, `key-location`, `jwks-export` and optionally
+`certificate-location`; omit aliases and password references. For keystores,
+`format`, `key-location`, `key-alias`, `keystore-password-reference` and
+`jwks-export` are required, and `certificate-location` is forbidden. Export parents
+must exist; the SDK never creates directories. The export must be separate from
+the provided key, certificate and password files; overlapping paths fail startup
+without replacing those inputs. In core construct
+`new SigningSettings("provided", null, new SigningSettings.Provided(format,
+keyPath, alias, storeReference, keyReference, certificatePath, exportPath))`
+with `SecretReference` objects and null for absent options.
+
+Provided keys load at startup only: changing private material requires a restart.
+Missing/invalid, mismatched, weak or non-RSA material fails startup and never
+generates a fallback. The SDK warns when the signing certificate has expired or
+expires within 30 days; it continues signing. This warning does not affect TLS
+validation. Neither private material nor tokens are logged by SDK issuance.
+
+The export is a complete public-only JWKS written to a sibling temporary file
+and atomically replaced. Filesystem publication failure aborts startup; there is
+no ordinary-move fallback. The exported content is the trust file consumed by
+the Sidecar file-based JWT trust work in PR 8.1.4, in either application
+ConfigurationMode. That receiver and callback validation are separate work.
+
+### Token profile and exact authorities
+
+All issuance settings use the `loomspan-sdk.issuance` prefix:
+
+| Setting | Default / behavior |
+| --- | --- |
+| `issuer` | `loomspan-app`; independent of `spring.application.name` |
+| `lifetime` | `15m`; any positive duration, WARN above one hour, no policy maximum |
+| `additional-audiences` | Empty; added to `loomspan-sidecar` and the issuer, de-duplicated |
+| `roles` | Empty exact authority allowlist |
+
+Tokens use RS256, RFC 7638 RSA public-key thumbprint `kid`, JOSE
+`typ=loomspan-execution+jwt`, and `token_use=loomspan_execution`. Claims are
+`iss` (issuer), `sub` (stable authenticated subject), `aud` (the audiences above),
+`iat` and `exp` (including fractional seconds), unique `jti`, and a string-array
+`roles` that may be empty. Timestamp range overflow fails clearly. Core
+`IssuanceSettings.defaults()` uses these same defaults.
+
+Only allowlisted authorities the authenticated user actually holds are included.
+No prefix is added, stripped or mapped; application role-prefix settings remain
+unchanged. Under Spring's standard role prefix,
+`hasRole('ORDER_EDITOR')` checks `ROLE_ORDER_EDITOR`, as does
+`hasAuthority('ROLE_ORDER_EDITOR')`. Allowlist `ROLE_ORDER_EDITOR` to carry that
+exact authority. `ORDER_EDITOR` is a distinct name. Roles remain snapshots until
+expiry, and business input or model output cannot choose the subject or roles.
