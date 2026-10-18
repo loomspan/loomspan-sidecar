@@ -149,33 +149,33 @@ lost response.
 
 ## Acceptance criteria
 
-- [ ] Discovery, submit, status and `await` work against focused HTTP fixtures.
-- [ ] Each row of the outcomes table is shown by a focused test.
-- [ ] Results are returned byte-for-byte, including empty, non-JSON and
+- [x] Discovery, submit, status and `await` work against focused HTTP fixtures.
+- [x] Each row of the outcomes table is shown by a focused test.
+- [x] Results are returned byte-for-byte, including empty, non-JSON and
       malformed JSON-looking strings. Only server status decides
       COMPLETED/FAILED.
-- [ ] Invalid input shapes and path-unsafe names never send a request. Names
+- [x] Invalid input shapes and path-unsafe names never send a request. Names
       are encoded as one path segment. Redirects and `Location` URLs are never
       followed.
-- [ ] A mismatched execution ID or invalid envelope is a protocol error that
+- [x] A mismatched execution ID or invalid envelope is a protocol error that
       preserves the requested ID.
-- [ ] `await` respects the total deadline, including network calls, and stops
+- [x] `await` respects the total deadline, including network calls, and stops
       on the first failed read. Interruption restores the interrupt flag and
       preserves the ID and last snapshot.
-- [ ] Every request is attempted exactly once: no retries and no redirect or
+- [x] Every request is attempted exactly once: no retries and no redirect or
       re-authentication replay.
-- [ ] Oversized responses are protocol errors. Response resources are released.
+- [x] Oversized responses are protocol errors. Response resources are released.
       Close is idempotent and later operations are rejected.
-- [ ] Base-URL and timeout validation and the stated defaults are enforced.
+- [x] Base-URL and timeout validation and the stated defaults are enforced.
       TLS verifies certificates and hostnames and has no insecure option.
-- [ ] Credential token bytes never appear in `toString`, serialization, errors
+- [x] Credential token bytes never appear in `toString`, serialization, errors
       or default logs.
-- [ ] Starter property wiring produces the same client behavior as Java
+- [x] Starter property wiring produces the same client behavior as Java
       configuration.
-- [ ] The plain-Java suite driver shows a real COMPLETED flow, a real FAILED
+- [x] The plain-Java suite driver shows a real COMPLETED flow, a real FAILED
       flow and a lost-response flow. The lost-response flow reports acceptance
       unknown with one attempt, at most one effect and no resubmission.
-- [ ] SDK documentation covers the operations, outcomes, waiting, opaque
+- [x] SDK documentation covers the operations, outcomes, waiting, opaque
       results, no-replay and configuration.
 
 ## Context
@@ -209,3 +209,15 @@ lost response.
   production compatibility code to keep it working.
 - The work spans the SDK in `loomspan-sidecar` and the composed scenario in
   `loomspan-sidecar-test-suite`. This is intentional.
+
+## Execution notes (2026-10-18)
+
+Step 4 implementation and verification cover all acceptance criteria; the approved
+Full 5-Step Pipeline still requires fresh independent review. See the matching
+implementation/testing plans and `ai/thoughts/validation/2026-10-18-pr-8-1-2-blocking-sdk-client.md`
+for executable mapping and actual local composed evidence. The core API is one final
+blocking client with immutable values, five error categories and no replay/cancellation
+API. Visible-ASCII credential transport validation and duplicate-field JSON rejection
+keep invalid transport values and ambiguous acceptance IDs local/unknown as appropriate.
+No production or Framework behavior, release pin, compatibility path or persisted data
+was changed. The external lane retains current JWT fixture wiring intentionally.

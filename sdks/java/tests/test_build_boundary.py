@@ -33,16 +33,16 @@ def fixture(root, directory, group, artifact, dependencies=""):
 
 
 class BuildBoundaryTest(unittest.TestCase):
-    def build(self, module=None, artifact=None, transitive=False):
+    def build(self, module=None, artifact=None, transitive=False, group="ai.loomspan"):
         with tempfile.TemporaryDirectory(prefix="sdk-boundary-") as directory:
             root = Path(directory) / "sdk"
             shutil.copytree(
                 SDK, root, ignore=shutil.ignore_patterns("target", "__pycache__")
             )
             if artifact:
-                fixture(root, "forbidden", "ai.loomspan", artifact)
+                fixture(root, "forbidden", group, artifact)
                 modules = "<module>forbidden</module>"
-                injected = dependency("ai.loomspan", artifact)
+                injected = dependency(group, artifact)
                 if transitive:
                     fixture(root, "bridge", "test.sdk.boundary", "bridge", injected)
                     modules += "<module>bridge</module>"
@@ -63,8 +63,7 @@ class BuildBoundaryTest(unittest.TestCase):
                     )
                 else:
                     text = text.replace(
-                        "</project>",
-                        f"<dependencies>{injected}</dependencies></project>",
+                        "<dependencies>", "<dependencies>" + injected, 1
                     )
                 child.write_text(text)
             result = subprocess.run(
@@ -75,8 +74,13 @@ class BuildBoundaryTest(unittest.TestCase):
             )
             if artifact:
                 self.assertNotEqual(result.returncode, 0, result.stdout)
-                self.assertIn("sdk-dependency-boundary", result.stdout)
-                self.assertIn(f"ai.loomspan:{artifact}:jar:{VERSION}", result.stdout)
+                rule = (
+                    "core-without-boot-runtime"
+                    if group == "org.springframework.boot"
+                    else "sdk-dependency-boundary"
+                )
+                self.assertIn(rule, result.stdout)
+                self.assertIn(f"{group}:{artifact}:jar:{VERSION}", result.stdout)
                 self.assertIn("banned via the exclude/include list", result.stdout)
                 self.assertIn(
                     f"on project loomspan-sdk-{'core' if module == 'core' else 'spring-boot-starter'}",
@@ -87,6 +91,13 @@ class BuildBoundaryTest(unittest.TestCase):
 
     def test_clean_control(self):
         self.build()
+
+    def test_core_rejects_direct_and_transitive_boot_runtime(self):
+        for transitive in (False, True):
+            with self.subTest(transitive=transitive):
+                self.build(
+                    "core", "boundary-boot-runtime", transitive, "org.springframework.boot"
+                )
 
     def test_direct_and_transitive_dependencies_are_rejected_in_both_modules(self):
         for module in ("core", "spring-boot-starter"):
