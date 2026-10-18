@@ -1,7 +1,7 @@
 # Java/Spring SDK v1 roadmap
 
-Reconciled 2026-10-18 from the agreed direction change and scope discussion.
-This replaces the earlier roadmap; it does not preserve its accumulated obligations.
+Reconciled 2026-10-18. This replaces the earlier roadmap; it does not preserve its
+accumulated obligations.
 
 **Development policy: replace superseded contracts, code and schemas directly.
 No compatibility shims, legacy adapters or parallel obsolete APIs.** Apply the
@@ -10,9 +10,9 @@ requires no data reset and authorizes no deletion of deployed data.
 
 ## Goal and scope
 
-Provide a small Java HTTP SDK for discovery, submission, status and bounded waiting,
-with optional Spring integration for execution-token issuance and callback authentication.
-Reuse the application's existing login and business authorization.
+Provide a small Java HTTP SDK for discovery, submission, status and bounded
+waiting, with optional Spring integration for execution-token issuance and
+callback authentication. Reuse the application's existing login and business authorization.
 
 **If apps share a Sidecar, they trust each other in every way:** identities, roles,
 tokens, business data and network participation. Use either a 1:1 localhost pairing

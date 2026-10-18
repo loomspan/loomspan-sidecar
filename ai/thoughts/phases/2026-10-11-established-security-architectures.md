@@ -14,7 +14,7 @@ Use separate Sidecars for applications needing isolation.
 
 The alternatives are a 1:1 localhost pairing and this fully trusted group, on one
 host or multiple hosts. Neither removes user/record authorization or protection
-against outsiders. Execution ownership uses the verified issuer and subject.
+against outsiders. Execution ownership uses the signed issuer and subject.
 
 ## Security responsibilities
 
@@ -57,8 +57,10 @@ trust-file failure/recovery remain explicitly tested.
 
 ## Accepted tradeoffs
 
-- Colocated defaults make the localhost path simple; restarting the signer
-  invalidates old credentials as receivers load the new public key.
+- Signing and trust modes are always explicit; shipped samples select colocated
+  to keep the localhost path simple. A missing mode fails startup rather than
+  choosing one. Restarting a colocated signer invalidates old credentials as
+  receivers load the new public key.
 - Current-file authority fails closed when trust is unusable, then recovers
   automatically. Restoring an old file restores its keys; operators own that risk.
 - Roles are snapshots until token expiry. Shorter lifetimes reduce that window,

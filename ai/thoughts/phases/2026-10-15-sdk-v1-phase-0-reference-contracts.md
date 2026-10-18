@@ -6,9 +6,7 @@ Apply the [design lens](../design-lens.md#simplicity-and-technical-debt).
 No development-data reset is required by this documentation change.
 
 The [roadmap](2026-10-11-java-spring-sdk-roadmap.md) indexes the canonical contracts.
-The direction-change decisions supersede the former plan, including its testing
-obligations. The temporary direction document is removed after integration and
-consistency checks; it is not an additional permanent authority.
+They supersede the former plan, including its testing obligations.
 
 The reconciliation includes the subsequent 2026-10-18 decisions:
 - Blocking client only; no custom futures or thread-context wrappers.
@@ -23,8 +21,8 @@ duplicate identity and trust scenario catalogs. Fold trusted-group and surviving
 JWT lifecycle coverage into implementation. Remove the former separate trusted-group,
 lifecycle and release phases.
 
-Before tickets are requested, check internal links and search for obsolete feature
-names/configuration obligations. Relevant future tickets must carry the JWKS versus
+Internal links and the search for obsolete feature names were checked on
+2026-10-18. Relevant future tickets must carry the JWKS versus
 file/database application-configuration clarification from the
 [trust reference](2026-10-15-sdk-v1-signing-trust-reference.md#configuration-and-visibility).
 No tickets, implementation, commits or release work are part of this reconciliation.

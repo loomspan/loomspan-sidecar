@@ -17,14 +17,18 @@ Add a new composed scenario only when it proves behavior existing scenarios cann
 There is no one-ticket/one-integration-scenario requirement. Retain the three recipes
 and meaningful failure cases, including trust recovery and Caddy bypass prevention.
 
+The Local colocated fixture uses one application instance and one Sidecar with
+one app-owned key directory. This is an operator-owned deployment assumption,
+not a runtime enforcement feature; no multi-writer coordination tests are required.
+
 ## Feature coverage
 
 | Area / owner | Focused acceptance | Composed evidence |
 | --- | --- | --- |
 | SDK core | Blocking discovery/submit/status/wait; envelope validation; opaque results; HTTP/protocol/unknown-acceptance errors; timeout/interruption and ID retention; resource close | One real submit-to-terminal flow, failed execution and lost-response case |
 | SDK issuance | Spring and trusted custom identity; exact role allowlist; no body-derived identity; one profile; own-audience validation; default/configured lifetime and warning | Form-authenticated caller reaches skill and authorized callback |
-| SDK signing | Colocated RAM-only private key/public atomic export; restart new key; provided formats; RS256/kid; wrong/missing material and mode settings; password references | Local colocated start/restart; one provided-key deployment |
-| Sidecar trust | Complete atomic JWKS load; missing/malformed/unreadable/empty stop acceptance; recovery; rate-limited unknown-kid reload; loopback refusal | File correction and same-issuer add/switch/remove rotation with bounded eventual adoption |
+| SDK signing | Colocated RAM-only private key/public atomic export; restart new key; provided formats; RS256/kid; 2048-bit minimum; wrong/missing material and mode settings; missing mode or colocated key directory setting fails startup; missing/unwritable directory fails startup; password references | Local colocated start/restart; one provided-key deployment |
+| Sidecar trust | Complete atomic JWKS load; key rules (RSA, size, unique kid, no private members) reject the whole file; missing/malformed/unreadable/empty stop acceptance; recovery; rate-limited unknown-kid reload; loopback refusal; missing mode or colocated key directory fails startup | File correction and same-issuer add/switch/remove rotation with bounded eventual adoption |
 | Queue/callback token lifetime | No admission-age limit; queue current-trust recheck; expiry before handoff and callback prevents send; already admitted work not cancelled | Queue-expiry/no-dispatch plus representative callback-expiry failure |
 | Sidecar ownership/roles | Exact roles through supported Framework configuration; issuer/subject ownership; fresh owner token can poll without changing captured execution token | Different user denied; exact role positive/negative across Sidecar and app |
 | SDK callback chain | Independent signature/issuer/audience/purpose/expiry checks; invalid/missing/multiple bearer and query tokens; no sessions, redirect or error forwarding; context cleanup | Reference app route/order configuration; method denial before invocation; business record denial; ordinary app login still works |
@@ -32,11 +36,13 @@ and meaningful failure cases, including trust recovery and Caddy bypass preventi
 | Management/regression | Existing management accounts/tokens unchanged; management/execution separation; protected health details | Reuse relevant existing regression coverage; no management feature matrix |
 | Framework/build boundary | SDK has no Framework/Sidecar Java dependency; Sidecar application/test code respects public API ArchUnit rule | Clean plain Java and Boot consumers; actual Sidecar build and SDK lane |
 
-Use a small table of JWT-invalid variants at component level (signature, issuer,
-audience, purpose, expiry, claim shape), not a separate deployed environment per
-variant. Provided key formats can be component tests. Exercise trust-file sourcing
-with both file/database application configuration using focused wiring tests;
-do not duplicate all three recipes for both modes.
+Use a small table of JWT-invalid variants at component level (signature, issuer
+for callback receivers only, audience, purpose, expiry, claim shape), not a separate
+deployed environment per variant. Sidecar does not check issuer; a token signed by
+an untrusted key is its origin negative. Provided key formats can be component
+tests. Exercise trust-file sourcing with both file/database application
+configuration using focused wiring tests; do not duplicate all three recipes for
+both modes.
 
 Provided signing-key rotation uses application restart to load the replacement
 private key. Cover this in the existing rotation scenario; do not add private-key
@@ -46,7 +52,7 @@ hot-reload or uninterrupted-rotation tests. Public JWKS trust reload remains tes
 
 | Recipe | Required integration |
 | --- | --- |
-| Local HTTP | Default colocated app/Sidecar, real invocation and callback, JWT/user authorization |
+| Local HTTP | Colocated app/Sidecar from the shipped sample configuration, real invocation and callback, JWT/user authorization |
 | Standard direct HTTPS | provided/file, invocation and callback, server verification and invalid-server rejection |
 | Hardened Caddy mTLS | provided/file, invocation and callback, peer rejection in both directions, no backend/outbound-listener bypass, separate browser ingress |
 
@@ -67,7 +73,8 @@ may follow an effect. No automatic retry, rollback or exactly-once claim.
 The external suite owns composed fixtures and a small runner selecting three
 recipes. Keep focused SDK/Sidecar tests in their owning builds.
 Use deterministic model fixtures, form login, no provider access, and temporary
-test state. Keep functions small, validation readable and formatting consistent.
+test state. Keep functions small and validation readable (no one-line validation
+chains), and apply a formatter.
 
 Record the selected recipe, tested revisions/builds and concise pass/fail evidence
 with safe diagnostics. No credential/private-key/business-payload logging.

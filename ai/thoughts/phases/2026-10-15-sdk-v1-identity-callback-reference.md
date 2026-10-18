@@ -31,6 +31,13 @@ There is one issuer per Sidecar. A trusted group shares a keystore, issuer, call
 audience, user directory and role vocabulary. Multi-key trust permits rotation
 within that issuer, not separate app identity domains.
 
+`loomspan-sdk.issuance.issuer` (indicative name) defaults to the fixed value
+`loomspan-app`, so the colocated path needs no issuer configuration and every
+group member shares it automatically. A group may override it with one agreed
+value. A shared default name grants nothing: acceptance depends on each receiver's
+trusted keys. Do not derive the issuer from per-application names such as
+`spring.application.name`.
+
 ## Execution-token profile
 
 | Field | Contract |
@@ -44,18 +51,26 @@ within that issuer, not separate app identity domains.
 | `jti` | Unique issuance identifier |
 | `roles` | String array, empty allowed; exact allowlisted user authorities |
 
-Validators require valid signatures, claim types, issuer, own audience, execution
-purpose and expiry, using a 60-second validation skew. Use maintained JWT libraries;
-do not infer a key source from token-provided URLs. Management/login credentials
-cannot substitute for execution credentials.
+Validators require valid signatures, claim types, own audience, execution purpose
+and expiry, using a 60-second validation skew. Callback receivers also require the
+application's own `loomspan-sdk.issuance.issuer`; there is no separate callback
+issuer setting. Sidecar does not compare `iss` with a configured value: with one
+fully trusted issuer per Sidecar, its trusted JWKS file alone defines which tokens
+it accepts, so Sidecar has no issuer setting. Ownership still uses the signed `iss`
+and `sub` claims. Use maintained JWT libraries; do not infer a key source from
+token-provided URLs. Management/login credentials cannot substitute for execution
+credentials.
 
 The SDK defaults Sidecar's audience to `loomspan-sidecar` and the callback audience
-to the application's issuer; tokens include both. `loomspan-sdk.issuance.additional-audiences`
-adds recipients. Each receiver checks only its own audience; extra audiences are
-not rejected by a global audience allowlist.
+to the application's issuer; tokens include both. Sidecar's expected audience also
+defaults to `loomspan-sidecar`, so neither side needs audience configuration.
+`loomspan-sdk.issuance.additional-audiences` adds recipients. Each receiver checks
+only its own audience; extra audiences are not rejected by a global audience
+allowlist.
 
-Lifetime defaults to 15 minutes, accepts any positive configured duration and logs
-a startup WARN above one hour. There is no maximum accepted lifetime or admission
+Lifetime (`loomspan-sdk.issuance.lifetime`, indicative name) defaults to 15
+minutes, accepts any positive configured duration and logs a startup WARN above
+one hour. There is no maximum accepted lifetime or admission
 freshness rule. Any otherwise valid unexpired token may submit, discover or poll.
 See [signing/trust](2026-10-15-sdk-v1-signing-trust-reference.md) for queue/callback
 expiry and key-withdrawal boundaries.

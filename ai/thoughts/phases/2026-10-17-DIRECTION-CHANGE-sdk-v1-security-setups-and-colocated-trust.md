@@ -73,7 +73,7 @@ phase, reference, scenario, matrix and recipe document.
 
 | Setup | Invocation | Callback | Sidecar trust | SDK signing |
 |---|---|---|---|---|
-| Local | HTTP | HTTP / none | `colocated` (default) or `file` | `colocated` (default) or `provided` |
+| Local | HTTP | HTTP / none | `colocated` (shipped samples) or `file` | `colocated` (shipped samples) or `provided` |
 | Standard | Direct HTTPS | Direct HTTPS / none | `file` | `provided` |
 | Hardened | Caddy-managed mTLS | Caddy-managed mTLS / none | `file` | `provided` |
 
@@ -123,6 +123,15 @@ phase, reference, scenario, matrix and recipe document.
 **SDK signing:**
 - **`colocated`:**
   - RSA key generated in memory at startup; the private key never touches disk.
+  - **Single-instance deployment clarification — agreed 2026-10-18:** one running
+    application instance paired with one Sidecar; the app is the sole writer of
+    its key directory. Independent pairs use separate directories. Multiple apps
+    or replicas sharing a Sidecar use provided signing and file trust. Operators
+    own this arrangement; Loomspan does not enforce instance counts or add writer
+    locks, registration, key merging, replica coordination or associated tests.
+    Atomic replacement does not prevent competing writers from replacing each
+    other's public keys, and overlapping colocated instances do not provide
+    signing continuity during restart.
   - Atomically writes only the public `<key-directory>/jwks.json` (canonical,
     public-only JWKS).
   - A restart creates a new key. Tokens issued before the restart stop validating,
@@ -187,8 +196,10 @@ phase, reference, scenario, matrix and recipe document.
   - Without trust history, restoring an old JWKS restores its keys' authority.
     Preventing such restoration is an operator responsibility, not a v1 ledger
     or revocation service.
-  - Token checks: RS256, issuer, audience, `typ`, `token_use`, and expiry with 60 s
-    skew. There is no admission freshness requirement or fixed 300 s maximum.
+  - Token checks: RS256, audience, `typ`, `token_use`, and expiry with 60 s
+    skew. **Agreed 2026-10-18:** Sidecar does not check `iss` against a configured
+    value and has no issuer setting; its trusted key file alone defines accepted
+    origin. Callback receivers still check their configured issuer. There is no admission freshness requirement or fixed 300 s maximum.
   - No trust document, ledger, tombstones, kid-history, bootstrap marker or
     `trust initialize`.
   - `trust.mode` is independent of the configuration `ConfigurationMode`
@@ -304,8 +315,9 @@ phase, reference, scenario, matrix and recipe document.
   ordinary application chain and enables standard Spring method security for
   callback authorization. There are no manifests.
 - **One prefix**, configurable, default `/loomspan/callbacks/**`, GET and POST only.
-  Sidecar REST route paths point under it. A mismatch fails safe: the request is
-  rejected by the app's normal security.
+  Sidecar REST route paths point under it. **Agreed 2026-10-18:** routes outside
+  the prefix are governed by the application's own security; the SDK cannot
+  promise their protection.
 - **Under the prefix: a valid token or reject.**
   - Missing, multiple or invalid `Authorization: Bearer` → 401 with
     `WWW-Authenticate: Bearer`.
@@ -328,8 +340,9 @@ phase, reference, scenario, matrix and recipe document.
   - Callback identity provides the verified issuer/subject and token authorities;
     it does not recreate an application-specific native principal. Business checks
     use that documented identity.
-- **Startup fails** if another chain ordered at or above the SDK chain matches the
-  prefix.
+- **Chain ordering — agreed 2026-10-18:** document the prefix and ordering
+  requirements and test them in the reference app. No startup check or analysis
+  of arbitrary application request matchers.
 - **Ticket detail:** the response for malformed URLs that Spring's firewall rejects
   before the chain runs.
 
@@ -338,16 +351,20 @@ phase, reference, scenario, matrix and recipe document.
 ```yaml
 loomspan-sdk.signing:
   mode: colocated | provided
-  colocated.key-directory: /var/run/loomspan/keys
+  colocated.key-directory: /srv/loomspan/keys # required; example path
   provided: { keystore, keystore-password-env, jwks-export }
 loomspan-sidecar.trust:
   mode: colocated | file
-  colocated.key-directory: /var/run/loomspan/keys
+  colocated.key-directory: /srv/loomspan/keys # required; example path
   file.jwks: /etc/sidecar/trust/jwks.json
 ```
 
-- **Defaults:** `colocated` on both sides, with the same default path. This departs
-  from the old "every strategy is explicit" rule; record the tradeoff.
+- **Explicit modes — agreed 2026-10-18:** every credential strategy is explicit;
+  both modes are required and a missing mode fails startup. Shipped
+  operator-facing samples select `colocated` on both sides; configuration packaged
+  in the Sidecar jar or SDK starter sets no mode. The colocated key directory is
+  also required on both sides with no built-in value; operators choose a
+  directory writable only by the application's account.
 - **Mixing modes:** a setting that belongs to another mode fails startup.
 
 **Colocated recipes:**

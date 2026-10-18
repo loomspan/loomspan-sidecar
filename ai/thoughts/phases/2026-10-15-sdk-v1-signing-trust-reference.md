@@ -8,13 +8,25 @@ Replace superseded trust/configuration contracts without compatibility modes.
 
 | Mode | Private material | Public export | Restart consequence |
 | --- | --- | --- | --- |
-| `colocated` (default) | Fresh RSA key in memory, never written to disk | Atomically write public `<key-directory>/jwks.json` | New key; previous tokens fail as receivers adopt new trust |
+| `colocated` | Fresh RSA key in memory, never written to disk | Atomically write public `<key-directory>/jwks.json` | New key; previous tokens fail as receivers adopt new trust |
 | `provided` | Operator RSA key in PKCS12, JKS or PEM; optional certificate | Startup `jwks.json` export, optional x5c | Same provided key; no replacement on missing/invalid material |
 
-Use RSA/RS256 only; reject other key types at startup.
+Colocated signing is intended for one running application instance paired with
+one Sidecar. That application instance is the sole writer of its key directory;
+independent app/Sidecar pairs use separate directories. Multiple applications or
+replicas sharing a Sidecar use provided signing with shared signing material and
+file trust. Two colocated instances writing the same JWKS file would replace each
+other's public keys; atomic file replacement does not coordinate writers.
+Operators own this deployment constraint. Loomspan does not enforce instance
+counts or add writer locks, registration, key merging or replica coordination.
+Overlapping colocated instances do not provide signing continuity during restart.
+
+Use RSA/RS256 only; reject other key types at startup. Colocated mode generates
+2048-bit keys; reject provided keys smaller than 2048 bits at startup.
 The kid is the RFC 7638 thumbprint. Passwords come from secrets/environment
-references, never literal configuration properties. Warn on expired or near-expiry
-JWT signing certificates; this does not relax TLS certificate validation.
+references, never literal configuration properties. Reject settings belonging to
+the other signing mode at startup. Warn on expired or near-expiry JWT signing
+certificates; this does not relax TLS certificate validation.
 Key reuse, including use of an operator's TLS key, is the user's choice.
 
 Provide one documented keytool/openssl key-generation command for users who need
@@ -40,11 +52,24 @@ No public key-hosting endpoint is needed.
 `colocated` reads `<key-directory>/jwks.json` and refuses startup unless Sidecar
 binds to loopback. `file` reads an operator-supplied JWKS path.
 Both use one loader/validator and permit multiple keys for one issuer's rotation.
-Both default to colocated with the same default directory.
+The trusted key file is Sidecar's only token-origin check; Sidecar has no expected
+issuer setting and does not validate `iss` against configuration.
 Reject settings belonging to another selected mode at startup.
 
 The current file is authoritative. Validate the entire candidate and publish one
 complete in-memory key set atomically; no request sees a partially loaded set.
+
+A valid file is a JSON object with a `keys` array. Each key must satisfy:
+- `kty` is `RSA` with `n` and `e`, and the modulus is at least 2048 bits.
+- `kid` is present and unique within the file. It need not equal the key's
+  thumbprint; signatures are still verified against the key itself.
+- `use` and `alg`, if present, are `sig` and `RS256`.
+- No private-key members (`d`, `p`, `q`, `dp`, `dq`, `qi`).
+- `x5c` is permitted and ignored for trust; no chain or expiry validation.
+- Other unknown members are ignored.
+
+Any invalid key makes the whole file malformed; valid keys are not loaded from a
+partly invalid file.
 
 | Detected file state | Authentication / readiness |
 | --- | --- |
@@ -56,12 +81,13 @@ complete in-memory key set atomically; no request sees a partially loaded set.
 Reload on file changes and on unknown kid, rate-limiting the latter.
 Writers use a temporary file and atomic replacement. Implementation planning selects
 one bounded documented reload interval; do not promise instantaneous cross-process
-withdrawal. Startup waits not-ready for usable trust instead of generating a signing
-key. Fail startup for invalid configuration such as colocated non-loopback binding.
+withdrawal. Until usable trust exists, Sidecar stays not ready and logs that it is
+waiting. Fail startup for invalid configuration such as colocated non-loopback binding.
 
-The same failure/recovery rule applies to a configured callback overlap file.
-An unconfigured optional file is not an error. If a configured overlap file becomes
-unusable, affected callback authentication stops; own-key fallback must not conceal it.
+The same file rules and failure/recovery rule apply to a configured callback
+overlap file. An unconfigured optional file is not an error. If a configured
+overlap file becomes unusable, affected callback authentication stops; own-key
+fallback must not conceal it.
 
 No trust history, initialization ceremony, database, management write API or Console
 trust page is introduced. Restoring an old file restores its keys' authority.
@@ -99,15 +125,45 @@ Indicative names, to finalize in implementation planning:
 ```yaml
 loomspan-sdk.signing:
   mode: colocated # or provided
-  colocated.key-directory: /var/run/loomspan/keys
+  colocated.key-directory: /srv/loomspan/keys # required in colocated mode; example path
+  provided:                                   # provided mode only
+    keystore: /etc/app/signing.p12            # PKCS12, JKS or PEM
+    keystore-password-env: APP_SIGNING_PASSWORD
+    jwks-export: /etc/app/export/jwks.json    # copied to Sidecar's file trust
 loomspan-sidecar.trust:
   mode: colocated # or file
-  colocated.key-directory: /var/run/loomspan/keys
-  # file.jwks is used only in file mode
+  colocated.key-directory: /srv/loomspan/keys # required in colocated mode; same path
+  file.jwks: /etc/sidecar/trust/jwks.json     # file mode only
 ```
 
+Every credential strategy is explicit: `loomspan-sdk.signing.mode` and
+`loomspan-sidecar.trust.mode` are required and have no built-in value. A missing
+mode fails startup with a message naming the property, both options and the
+colocated quickstart. Shipped operator-facing samples (quickstart, sample external
+configuration, Compose example) select `colocated` on both sides. Configuration
+packaged inside the Sidecar jar or the SDK starter must not set a mode, because
+operators would not see it.
+
+The colocated key directory is also required on both sides, with no built-in
+value; a missing directory fails startup. Whoever can write to that directory can
+make Sidecar trust their key and so mint accepted tokens. The file is public, but
+its integrity is security-critical. The directory must already exist; creating it
+and setting its permissions is deployment configuration. Make it writable only by
+the application's account and readable by Sidecar's account; never use a shared
+temporary directory. The SDK neither creates the directory nor changes
+permissions: a missing or unwritable directory fails SDK startup with a message
+naming the path. Loomspan adds no permission checks. If Sidecar cannot find
+`jwks.json`, including when the two sides name different directories, it stays
+not ready and logs the path it is waiting on.
+
+Other values within a strategy, such as issuer, audiences and lifetime, may have
+built-in defaults.
+
 Replace old execution JWT key-source/prefix configuration with these contracts,
-without aliases. Keep existing management configuration unchanged.
+without aliases. This removes the old `issuer-uri`, `jwk-set-uri`,
+`public-key-location`, `roles-claim`, `role-prefix` and `clock-skew` settings;
+the token profile fixes the roles claim and skew. Keep existing management
+configuration unchanged.
 
 Health and one log line per load/reload report mode, path, loaded kids, last load
 time and ready/waiting. Anonymous health exposes status only; details use existing

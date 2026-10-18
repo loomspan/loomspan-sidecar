@@ -11,27 +11,44 @@ Existing per-hop authentication, approved destinations and transport checks rema
 
 | Recipe | Invocation and callback | Signing / Sidecar trust |
 | --- | --- | --- |
-| Local | Direct protected localhost HTTP | Default colocated/colocated; provided/file also valid |
+| Local | Direct protected localhost HTTP | colocated/colocated in shipped samples; provided/file also valid |
 | Standard | Direct HTTPS, receiving Spring servers terminate TLS | provided/file |
 | Hardened | Caddy-managed mTLS in both directions | provided/file |
 
 Each recipe may omit callbacks. Use focused no-callback coverage, not a second full
 matrix. Shared apps always trust each other completely; use one issuer and shared
-identity semantics. Remote plaintext is not a supported boundary for these recipes.
+identity semantics. Plaintext HTTP is not permitted across hosts; it stays within
+a protected local boundary.
 
 ## Local
 
-On a developer machine, app and Sidecar bind to 127.0.0.1 and share a public-key
-directory. Colocated signing writes only public JWKS; Sidecar refuses non-loopback
-binding. A Compose example puts the app in Sidecar's network namespace with
-`network_mode: "service:sidecar"` and mounts a shared key volume.
-A Kubernetes pod can use a shared emptyDir and localhost; this is documentation,
-not an additional required integration deployment.
+The colocated arrangement is one running app instance and one Sidecar, with the
+app as the sole writer of their key directory. Give independent pairs separate
+directories. Operators ensure this arrangement; Loomspan does not count instances
+or coordinate writers. Multiple apps or replicas sharing a Sidecar use provided
+signing and file trust, even when running on the same host.
+
+Both sides configure the same operator-chosen key directory. The deployment
+creates it, writable only by the app's account and readable by Sidecar's account;
+the SDK and Sidecar do not create it or set permissions. Colocated signing writes
+only public JWKS; Sidecar refuses non-loopback binding.
+
+- Developer machine: create the directory once (for example `mkdir`), run app and
+  Sidecar as the same user and bind both to 127.0.0.1.
+- Compose: put the app in Sidecar's network namespace with
+  `network_mode: "service:sidecar"`, mount a shared named volume, give it the
+  required ownership (matching user IDs or volume ownership) and set both
+  `key-directory` values to its mount path.
+- Kubernetes: one pod with a shared `emptyDir`, a shared `fsGroup` for read access
+  and localhost. This is documentation, not an additional required integration
+  deployment.
+
+The test-suite Local fixture sets up its directory the same way.
 
 Ordinary separate Compose networking does not meet colocated loopback trust.
 Use provided/file there with an appropriately protected transport.
-Default colocated restart intentionally invalidates previous credentials as
-receivers adopt new keys.
+Colocated restart intentionally invalidates previous credentials as receivers
+adopt new keys.
 
 ## Standard
 

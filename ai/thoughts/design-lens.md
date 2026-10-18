@@ -66,12 +66,12 @@ by both issuer and subject.
 
 Execution uses JWTs. Management credentials grant no execution access, and
 execution JWTs grant no management access. Passthrough forwards the captured
-execution credential; Sidecar does not mint, refresh or exchange it. Forwarding
+execution credential; Sidecar does not mint, refresh or replace it. Forwarding
 requires an approved recipient and remains subject to credential expiry and peer
 access rules.
 
-Configure the trusted issuer and verification keys explicitly; network membership
-does not substitute for JWT validation. Each receiver validates the credential's
+Configure verification keys deliberately; network membership does not substitute
+for JWT validation. Each receiver validates the credential's
 signature, intended audience, execution purpose and validity. Execution credentials
 are bearer JWTs; transport mTLS does not bind them to a client certificate.
 A browser session cannot substitute for callback authentication.
