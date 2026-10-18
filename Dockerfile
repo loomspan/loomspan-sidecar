@@ -10,8 +10,8 @@ WORKDIR /app
 COPY target/loomspan-sidecar-*.jar /app/loomspan-sidecar.jar
 
 ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0 -XX:InitialRAMPercentage=25.0 -XX:+ExitOnOutOfMemoryError"
-EXPOSE 8080 9091
+EXPOSE 8080
 USER 10001:10001
 ENTRYPOINT ["java", "-jar", "/app/loomspan-sidecar.jar"]
 HEALTHCHECK --interval=10s --timeout=2s --start-period=20s --retries=3 \
-  CMD curl --fail --silent http://localhost:9091/actuator/health/readiness || exit 1
+  CMD curl --fail --silent http://localhost:8080/actuator/health/readiness || exit 1

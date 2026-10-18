@@ -95,9 +95,9 @@ class RestGenerationIntegrationTest {
                         "--loomspan-sidecar.url-variables=TARGET_URL",
                         "--test.target-url=http://127.0.0.1:" + port,
                         "--loomspan.observability.enabled=false",
-                        "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+                        "--loomspan-sidecar.trust.mode=file",
                         "--loomspan-sidecar.auth.jwt.audience=sidecar",
-                        "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem");
+                        "--loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json");
     }
 
     private String invoke(org.springframework.context.ApplicationContext context) {
@@ -151,9 +151,9 @@ class RestGenerationIntegrationTest {
                     .web(WebApplicationType.NONE).run(
                             "--loomspan-sidecar.storage.database-path=" + database,
                             "--loomspan.observability.enabled=false",
-                            "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+                            "--loomspan-sidecar.trust.mode=file",
                             "--loomspan-sidecar.auth.jwt.audience=sidecar",
-                            "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem")) {
+                            "--loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json")) {
                 var store = context.getBean(ConfigurationSnapshotStore.class);
                 var service = context.getBean(RuntimeConfigurationService.class);
                 var registry = context.getBean(GenerationRestResources.class);

@@ -491,6 +491,64 @@ class ExecutionCoordinatorTest {
         }
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void queuedCredentialMustStillBeUnexpiredAndTrustedAtHandoff(boolean withdraw) throws Exception {
+        var clock = new MutableClock(Instant.now());
+        var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
+        var calls = new AtomicInteger(); var valid = new java.util.concurrent.atomic.AtomicBoolean(true);
+        var seen = new java.util.concurrent.CopyOnWriteArrayList<ExecutionCoordinator.ExecutionTask>();
+        var admitted = mock(ai.loomspan.api.AdmittedSkillInvocation.class);
+        when(admitted.generationId()).thenReturn("generation");
+        when(admitted.invoke(any())).thenAnswer(invocation -> { entered.countDown(); release.await(5, TimeUnit.SECONDS); return "done"; });
+        var handoff = mock(SkillInvocationHandoff.class);
+        when(handoff.handoff(anyString(), anyMap())).thenAnswer(invocation -> { calls.incrementAndGet(); return admitted; });
+        var limits = properties(); limits.setMaxRetained(3);
+        var coordinator = new ExecutionCoordinator(handoff, limits, mock(ApplicationContext.class), clock,
+                seen::add, generation -> java.util.UUID.randomUUID(), token -> {
+                    if (!valid.get()) throw new org.springframework.security.oauth2.jwt.BadJwtException("withdrawn"); return null;
+                });
+        coordinator.openAfterActivation();
+        var original = authentication("captured", "owner"); var owner = ExecutionOwner.from(original);
+        try {
+            var first = coordinator.admit("skill", Map.of(), 1, owner, original);
+            assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
+            var queued = coordinator.admit("skill", Map.of(), 10, owner, original);
+            assertThat(coordinator.queuedBytes()).isEqualTo(10);
+            if (withdraw) valid.set(false);
+            else clock.advance(Duration.between(clock.instant(), original.getToken().getExpiresAt()));
+            release.countDown();
+            assertThat(awaitTerminal(coordinator, first, owner).status()).isEqualTo(ExecutionStatus.COMPLETED);
+            var terminal = awaitTerminal(coordinator, queued, owner);
+            assertThat(terminal.status()).isEqualTo(ExecutionStatus.FAILED);
+            assertThat(terminal.failure().message()).isEqualTo(withdraw ? "execution credential invalid before start" : "execution credential expired before start");
+            assertThat(calls.get()).isEqualTo(1); assertThat(coordinator.queuedCount()).isZero(); assertThat(coordinator.queuedBytes()).isZero();
+            for (int i=0;i<100 && seen.stream().anyMatch(task -> !task.referencesCleared());i++) Thread.sleep(5);
+            assertThat(seen).allSatisfy(task -> assertThat(task.referencesCleared()).isTrue());
+            valid.set(true);
+            var next = new JwtAuthenticationToken(Jwt.withTokenValue("fresh").header("alg", "none")
+                    .issuer("https://issuer.test").subject("owner").expiresAt(clock.instant().plusSeconds(300)).build());
+            var nextId = coordinator.admit("skill", Map.of(), 1, owner, next);
+            assertThat(awaitTerminal(coordinator, nextId, owner).status()).isEqualTo(ExecutionStatus.COMPLETED);
+            assertThat(calls.get()).isEqualTo(2);
+        } finally { release.countDown(); coordinator.destroy(); }
+    }
+
+    @Test void expiryDuringRevalidationStillPreventsFrameworkHandoff() throws Exception {
+        var authentication = authentication("original", "owner");
+        var clock = new MutableClock(authentication.getToken().getExpiresAt().minusSeconds(1));
+        var handoff = mock(SkillInvocationHandoff.class);
+        var coordinator = new ExecutionCoordinator(handoff, properties(), mock(ApplicationContext.class), clock,
+                task -> { }, generation -> java.util.UUID.randomUUID(), token -> { clock.advance(Duration.ofSeconds(1)); return null; });
+        coordinator.openAfterActivation();
+        var owner = ExecutionOwner.from(authentication);
+        try {
+            var id = coordinator.admit("skill", Map.of(), 1, owner, authentication);
+            assertThat(awaitTerminal(coordinator, id, owner).failure().message()).isEqualTo("execution credential expired before start");
+            verify(handoff, never()).handoff(anyString(), anyMap());
+        } finally { coordinator.destroy(); }
+    }
+
     private ExecutionSnapshot awaitTerminal(ExecutionCoordinator coordinator, java.util.UUID id,
             ExecutionOwner owner) throws InterruptedException {
         for (int count = 0; count < 200; count++) {

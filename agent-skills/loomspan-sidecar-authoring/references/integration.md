@@ -128,35 +128,56 @@ spring:
 
 ## JWT authentication
 
-Every `/v1/**` request requires a bearer access token. Sidecar validates its
-signature, issuer, audience, expiration and lifetime and requires nonblank `iss`
-and `sub` claims. It supports issuer discovery (the default), an explicit JWKS
-URL, or an RSA public key; configure at most one explicit key source:
+Every `/v1/**` request requires a profile bearer JWT. Trust always comes from
+one current JWKS file in both application ConfigurationModes; it is never
+managed database content. The shipped external configuration selects colocated:
 
 ```yaml
+server:
+  address: 127.0.0.1
 loomspan-sidecar:
+  trust:
+    mode: colocated
+    colocated:
+      key-directory: /sidecar/keys
   auth:
     jwt:
-      issuer-uri: https://identity.example.com
-      audience: loomspan-sidecar
-      # jwk-set-uri: https://identity.example.com/.well-known/jwks.json
-      # public-key-location: file:/sidecar/keys/access-token.pem
-      clock-skew: 60s
-      roles-claim: roles
-      role-prefix: ROLE_
+      audience: loomspan-sidecar # default
 ```
 
-Roles are read from the configured trusted claim. The prefix is also applied to
-Loomspan's `rbac_roles` checks. Execution authentication has no local user/role table and Sidecar does not mint,
-refresh or exchange tokens. A backend using browser sessions must supply a
-backend-issued access token suitable for both Sidecar's and any callback target's
-audience checks; cookies and OIDC ID tokens are not assumed to be API credentials.
-Queue time consumes token lifetime. Once admitted, local work keeps the identity
-and roles already verified even if the token expires. A `caller-passthrough` target
-receives that original token unchanged and must independently verify its signature,
-issuer, suitable audience, lifetime, subject, and roles. Sidecar does not recheck at
-worker handoff and does not refresh, mint, or exchange the token, so size its lifetime
-for queueing and callback time or expect the callback to reject it as a skill failure.
+The deployment creates that directory with app-write and Sidecar-read
+permissions. Colocated reads `jwks.json` and requires Sidecar to bind loopback. For an operator-managed file instead select
+`trust.mode: file` and `trust.file.jwks: /path/to/jwks.json`, omitting colocated
+settings. Missing mode/path or other-mode settings fail startup; a missing or
+unusable file starts waiting. See [execution trust](execution-trust.md)
+for all file rules, one-second polling, globally bounded unknown-kid reload,
+readiness, developer/Compose/Kubernetes permissions and failure/recovery guidance.
+
+Require RS256, `typ: loomspan-execution+jwt`, nonblank `kid`,
+`token_use: loomspan_execution`, nonblank string `iss`/`sub`, string-array `roles`,
+numeric `exp` and the receiving audience. Extra audiences and fractional dates
+are allowed; optional `iat`/`nbf` are numeric and `jti` is a string. Fixed receive
+skew is 60 seconds. There is no configured issuer comparison: the trusted file
+is the token-origin authority. Never derive trust from token URLs.
+
+Role names match skill `rbac_roles` exactly, including any literal `ROLE_`.
+Management accounts, sessions and personal tokens remain independent. The
+removed `issuer-uri`, `jwk-set-uri`, `public-key-location`, `roles-claim`,
+`role-prefix` and `clock-skew` properties have no aliases; replace process
+configuration without resetting valid database publications or accounts.
+
+Queue time consumes captured lifetime. Immediately before Framework handoff,
+Sidecar revalidates current trust and strict expiry; expired work fails with
+`execution credential expired before start`. A fresh owner token can poll by
+exact signed issuer/subject but cannot replace captured bytes. Work already
+admitted by Framework is not cancelled by trust changes. Each approved
+passthrough send strictly checks `exp` and fails with `execution credential
+expired` without sending at or after expiry, even within receive skew. Receivers
+independently verify their own current trust, audience, purpose and lifetime.
+Sidecar forwards the original token, never signs, refreshes or exchanges it,
+and never follows redirects or automatically retries. Applications sharing a
+Sidecar trust each other's asserted identities and roles; use separate Sidecars
+for isolation. Browser sessions cannot authenticate execution or callbacks.
 
 Standard Boot TLS configuration can require inbound mTLS, for example
 `server.ssl.client-auth=need`. This protects the transport; Sidecar does not map

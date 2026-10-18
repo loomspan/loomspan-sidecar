@@ -42,12 +42,10 @@ import tools.jackson.databind.ObjectMapper;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-        "management.server.port=0",
         "loomspan.observability.enabled=false",
-        "loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+        "loomspan-sidecar.trust.mode=file",
         "loomspan-sidecar.auth.jwt.audience=sidecar",
-        "loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem",
-        "loomspan-sidecar.auth.jwt.clock-skew=0s",
+        "loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json",
         "loomspan-sidecar.executions.max-concurrent=1",
         "loomspan-sidecar.executions.max-queued=2",
         "loomspan-sidecar.executions.max-input-size=64B",
@@ -56,6 +54,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @org.springframework.context.annotation.Import(SidecarApplicationFixture.Credentials.class)
 class AuthenticatedExecutionApiIntegrationTest {
     @TempDir static Path storageDirectory;
+    private static final Path TRUST_FILE = trustFile();
     private static final SidecarApplicationFixture FIXTURE = new SidecarApplicationFixture();
     private static final ConcurrentLinkedQueue<String> MODEL_RESPONSES = FIXTURE.modelResponses();
     private static final SidecarApplicationFixture.CallbackFixture CALLBACK = FIXTURE.callback();
@@ -64,6 +63,7 @@ class AuthenticatedExecutionApiIntegrationTest {
     private final HttpClient client = HttpClient.newHttpClient();
     private final ObjectMapper mapper = new ObjectMapper();
     @Autowired ExecutionCoordinator coordinator;
+    @Autowired ai.loomspan.sidecar.security.CurrentFileJwtTrust trust;
     @Autowired ai.loomspan.sidecar.storage.ConfigurationSnapshotStore snapshots;
     @Autowired ai.loomspan.sidecar.configuration.RuntimeConfigurationService runtimeConfiguration;
     @Autowired ai.loomspan.sidecar.rest.GenerationRestResources restGenerations;
@@ -72,6 +72,7 @@ class AuthenticatedExecutionApiIntegrationTest {
 
     @DynamicPropertySource
     static void modelProperties(DynamicPropertyRegistry properties) {
+        properties.add("loomspan-sidecar.trust.file.jwks", () -> TRUST_FILE.toString());
         properties.add("loomspan-sidecar.storage.database-path", () -> SidecarApplicationFixture.seedDatabase(
                 storageDirectory.resolve("sidecar.db"), List.of(
                         SidecarApplicationFixture.resourceFile("fixtures/execution-skills/echo-rest.yml"),
@@ -95,6 +96,14 @@ class AuthenticatedExecutionApiIntegrationTest {
         properties.add("loomspan.connections.fixture.api-key", () -> "${fixture.model.key}");
         properties.add("loomspan.models.fixture-model.connection", () -> "fixture");
         properties.add("loomspan.models.fixture-model.provider-model", () -> "fixture-provider-model");
+    }
+
+    private static Path trustFile() {
+        try {
+            Path path = Files.createTempFile("execution-current-trust-", ".json");
+            Files.writeString(path, Files.readString(Path.of("src/test/resources/fixtures/jwks.json")));
+            path.toFile().deleteOnExit(); return path;
+        } catch (java.io.IOException failure) { throw new IllegalStateException(failure); }
     }
 
     private static String readRoutes() {
@@ -267,8 +276,11 @@ class AuthenticatedExecutionApiIntegrationTest {
                 JwtTestTokens.token("someone-else", List.of("REST_USER")), null);
         assertThat(foreign.statusCode()).isEqualTo(404);
         var renewed = send("GET", "/v1/executions/" + id,
-                JwtTestTokens.token("owner", List.of("REST_USER")), null);
+                JwtTestTokens.token("https://issuer.test", "sidecar", "owner", List.of("REST_USER"), 600), null);
         assertThat(renewed.statusCode()).isEqualTo(200);
+        assertThat(CALLBACK.lastToken.get()).isEqualTo(token);
+        assertThat(send("GET", "/v1/executions/" + id,
+                JwtTestTokens.token("loomspan-app", "sidecar", "owner", List.of("REST_USER")), null).statusCode()).isEqualTo(404);
     }
 
     @Test
@@ -306,14 +318,46 @@ class AuthenticatedExecutionApiIntegrationTest {
                 .path("status").asText()).isEqualTo("QUEUED");
         assertThat(mapper.readTree(send("GET", "/v1/executions/" + queuedId, queuedToken, null).body())
                 .path("configurationSnapshotId").isNull()).isTrue();
-        awaitUnauthorized(queuedId, queuedToken);
+        awaitStrictExpiry(queuedToken);
         CALLBACK.blockRelease.countDown();
         String renewedToken = JwtTestTokens.token("queued-owner", List.of("REST_USER"));
         JsonNode expiredAtCallback = poll(queuedId, renewedToken);
         assertThat(expiredAtCallback.path("status").asText()).isEqualTo("FAILED");
-        assertThat(expiredAtCallback.path("failure").path("kind").asText()).isEqualTo("SKILL_FAILURE");
-        assertThat(expiredAtCallback.path("failure").path("message").asText()).contains("HTTP status 401");
-        assertThat(CALLBACK.seenTokens).containsSubsequence(firstToken, queuedToken);
+        assertThat(expiredAtCallback.path("failure").path("kind").asText()).isEqualTo("ACCESS_DENIED");
+        assertThat(expiredAtCallback.path("failure").path("message").asText()).isEqualTo("execution credential expired before start");
+        assertThat(CALLBACK.seenTokens).contains(firstToken).doesNotContain(queuedToken);
+    }
+
+    @Test
+    void currentFileWithdrawalRejectsQueuedWorkWithoutCancellingAdmittedInvocation() throws Exception {
+        String valid = Files.readString(TRUST_FILE);
+        CALLBACK.blockEntered = new CountDownLatch(1); CALLBACK.blockRelease = new CountDownLatch(1);
+        CALLBACK.seenTokens.clear();
+        String original = JwtTestTokens.token("withdraw-owner", List.of("REST_USER"));
+        String renewed = JwtTestTokens.token("https://issuer.test", "sidecar", "withdraw-owner", List.of("REST_USER"), 600);
+        assertThat(renewed).isNotEqualTo(original);
+        try {
+            var active = send("POST", "/v1/skills/echoRest/executions", original, "{\"message\":\"block\"}");
+            assertThat(CALLBACK.blockEntered.await(2, TimeUnit.SECONDS)).isTrue();
+            var waiting = send("POST", "/v1/skills/echoRest/executions", original, "{\"message\":\"queued\"}");
+            String id = mapper.readTree(waiting.body()).path("id").asText();
+            assertThat(send("GET", "/v1/executions/" + id, renewed, null).statusCode()).isEqualTo(200);
+            Files.writeString(TRUST_FILE, "{\"keys\":[]}"); trust.reload();
+            assertThat(send("GET", "/v1/executions/" + id, renewed, null).statusCode()).isEqualTo(401);
+            CALLBACK.blockRelease.countDown();
+            var jwt = new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(
+                    org.springframework.security.oauth2.jwt.Jwt.withTokenValue("lookup").header("alg", "none")
+                            .issuer("https://issuer.test").subject("withdraw-owner").build());
+            var owner = ai.loomspan.sidecar.security.ExecutionOwner.from(jwt);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+            while (System.nanoTime() < deadline && coordinator.find(java.util.UUID.fromString(id), owner).orElseThrow().completedAt() == null) Thread.sleep(10);
+            assertThat(coordinator.find(java.util.UUID.fromString(id), owner).orElseThrow().failure().message())
+                    .isEqualTo("execution credential invalid before start");
+            Files.writeString(TRUST_FILE, valid); trust.reload();
+            assertThat(poll(mapper.readTree(active.body()).path("id").asText(), renewed).path("status").asText()).isEqualTo("COMPLETED");
+            assertThat(poll(id, renewed).path("status").asText()).isEqualTo("FAILED");
+            assertThat(CALLBACK.seenTokens).containsExactly(original);
+        } finally { CALLBACK.blockRelease.countDown(); Files.writeString(TRUST_FILE, valid); trust.reload(); }
     }
 
     @Test
@@ -538,12 +582,11 @@ class AuthenticatedExecutionApiIntegrationTest {
         throw new AssertionError("Execution did not finish");
     }
 
-    private void awaitUnauthorized(String id, String token) throws Exception {
-        for (int attempt = 0; attempt < 60; attempt++) {
-            if (send("GET", "/v1/executions/" + id, token, null).statusCode() == 401) return;
-            Thread.sleep(50);
-        }
-        throw new AssertionError("Queued token did not expire at the HTTP boundary");
+    private void awaitStrictExpiry(String token) throws Exception {
+        var expiry = SignedJWT.parse(token).getJWTClaimsSet().getExpirationTime().toInstant();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+        while (Instant.now().isBefore(expiry) && System.nanoTime() < deadline) Thread.sleep(10);
+        assertThat(Instant.now()).isAfterOrEqualTo(expiry);
     }
 
     private HttpResponse<String> send(String method, String path, String token, String body) throws Exception {

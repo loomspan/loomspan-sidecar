@@ -51,15 +51,28 @@ public final class JwtTestTokens {
             Instant now = Instant.now();
             Instant issuedAt = lifetimeSeconds < 0 ? now.minusSeconds(300) : now;
             var builder = new JWTClaimsSet.Builder().issuer(issuer).subject(subject)
-                    .audience(audience).issueTime(Date.from(issuedAt)).claim(claimName, authorities);
+                    .audience(audience).issueTime(Date.from(issuedAt)).claim(claimName, authorities).claim("token_use", "loomspan_execution");
             if (includeExpiration) builder.expirationTime(Date.from(now.plusSeconds(lifetimeSeconds)));
             var claims = builder.build();
-            var jwt = new SignedJWT(new JWSHeader(JWSAlgorithm.RS256), claims);
+            var jwt = new SignedJWT(new JWSHeader.Builder(JWSAlgorithm.RS256).keyID("fixture")
+                    .type(new com.nimbusds.jose.JOSEObjectType("loomspan-execution+jwt")).build(), claims);
             jwt.sign(new RSASSASigner(privateKey()));
             return jwt.serialize();
         } catch (Exception failure) {
             throw new IllegalStateException(failure);
         }
+    }
+
+    public static String rawToken(java.util.Map<String, Object> headers, java.util.Map<String, Object> claims) {
+        try {
+            var encoder = Base64.getUrlEncoder().withoutPadding();
+            String header = encoder.encodeToString(com.nimbusds.jose.util.JSONObjectUtils.toJSONString(headers).getBytes(StandardCharsets.UTF_8));
+            String payload = encoder.encodeToString(com.nimbusds.jose.util.JSONObjectUtils.toJSONString(claims).getBytes(StandardCharsets.UTF_8));
+            String input = header + "." + payload;
+            var signer = java.security.Signature.getInstance("SHA256withRSA"); signer.initSign(privateKey());
+            signer.update(input.getBytes(StandardCharsets.US_ASCII));
+            return input + "." + encoder.encodeToString(signer.sign());
+        } catch (Exception failure) { throw new IllegalStateException(failure); }
     }
 
     private static RSAPrivateKey privateKey() throws Exception {

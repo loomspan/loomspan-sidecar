@@ -11,7 +11,7 @@ Use synthetic data while evaluating it.
 You need Java 21, Docker with Compose, Python 3.9+, and an OpenAI API key with
 access to a model of your choice. Follow [source build setup](setup.md#obtain-a-runtime)
 to build `loomspan-sidecar:sc5-local`. Run commands below from the repository root.
-The default loopback ports 8080, 8081 and 9091 must be free.
+The default loopback ports 8080 and 8081 must be free. Prepare the shared key volume using the [fixture instructions](../examples/quickstart/README.md) before starting Compose.
 
 Use a new evaluation database, or inspect existing content before editing it.
 The Compose volume persists across `down` and `up`; these instructions do not
@@ -48,7 +48,7 @@ Check readiness before continuing:
 docker compose -f examples/quickstart/compose.yaml ps
 ```
 
-Both services should become healthy. The browser management UI is at
+Sidecar and the fixture host should become healthy; ingress forwards browser and API traffic. The browser management UI is at
 [localhost:8080/management/login](http://localhost:8080/management/login).
 The host on 8081 issues local fixture JWTs. Although it also implements a
 deterministic model stub for repository tests, this walkthrough does not use that

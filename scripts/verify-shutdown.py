@@ -16,10 +16,10 @@ image = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(image)
 
 
-def wait_state(url, predicate, seconds=15):
+def wait_state(url, predicate, seconds=15, state_reader=None):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
-        state = json.loads(image.request(url + "/verification/status")[1])
+        state = state_reader() if state_reader else json.loads(image.request(url + "/verification/status")[1])
         if predicate(state):
             return state
         time.sleep(.05)
@@ -30,12 +30,12 @@ def verify(args, cutoff):
     mode = "cutoff" if cutoff else "completion"
     project = f"loomspan-shutdown-{os.getpid()}-{mode}"
     environment = dict(os.environ, SIDECAR_IMAGE=args.image,
+                       SIDECAR_KEYS_VOLUME=project + "-keys",
                        SIDECAR_API_PORT=str(args.api_port),
-                       QUICKSTART_HOST_PORT=str(args.host_port),
-                       SIDECAR_MANAGEMENT_PORT=str(args.management_port))
+                       QUICKSTART_HOST_PORT=str(args.host_port))
     host_url = f"http://127.0.0.1:{args.host_port}"
     api_url = f"http://127.0.0.1:{args.api_port}"
-    management_url = f"http://127.0.0.1:{args.management_port}"
+    management_url = api_url
     with tempfile.TemporaryDirectory(prefix="loomspan-shutdown-") as directory:
         root = pathlib.Path(directory)
         if not args.validate_only:
@@ -50,14 +50,23 @@ def verify(args, cutoff):
                                     "LOOMSPAN_MODELS_PRIMARY_CONNECTION": "local",
                                     "LOOMSPAN_MODELS_PRIMARY_PROVIDER_MODEL": "deterministic-planner",
                                     "LOOMSPAN_SIDECAR_URL_VARIABLES": "TARGET_URL",
-                                    "TARGET_URL": "http://host:8081"}}
+                                    "TARGET_URL": "http://127.0.0.1:8081"}}
         }}))
         compose = ["docker", "compose", "-p", project, "-f", str(ROOT / "examples/quickstart/compose.yaml"),
                    "-f", str(override)]
         if args.validate_only:
             image.run(*compose, "config", "--quiet", env=environment, timeout=15)
             return
+
+        def namespace_state():
+            # The namespace survives in host even after owner ingress ports disappear.
+            return json.loads(image.run(*compose, "exec", "-T", "host", "python", "-c",
+                "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8081/verification/status').read().decode())",
+                env=environment, capture=True, timeout=10).stdout)
         try:
+            image.run("docker", "volume", "create", environment["SIDECAR_KEYS_VOLUME"], env=environment)
+            image.run("docker", "run", "--rm", "--user", "0:0", "-v", environment["SIDECAR_KEYS_VOLUME"] + ":/keys",
+                      "--entrypoint", "sh", args.image, "-c", "chown 10001:10001 /keys && chmod 700 /keys", env=environment)
             # Keep the source read-only; initialize the Compose volume for the image's UID.
             image.run(*compose, "run", "--rm", "--no-deps", "--user", "0:0",
                       "--volume", f"{source}:/backup:ro", "--entrypoint", "sh", "sidecar", "-c",
@@ -83,14 +92,14 @@ def verify(args, cutoff):
             assert state["Running"], "Sidecar exited before admitted work could finish or reach cutoff"
             if not cutoff:
                 assert image.request(host_url + "/verification/release", "POST", body={})[0] == 200
-                wait_state(host_url, lambda state: state["detail"] and state["finished"], seconds=5)
+                wait_state(host_url, lambda state: state["detail"] and state["finished"], seconds=5, state_reader=namespace_state)
             image.run("docker", "wait", container, capture=True, timeout=15)
             elapsed = time.monotonic() - started
             state = json.loads(image.run("docker", "inspect", container, capture=True).stdout)[0]["State"]
             assert state["Status"] == "exited" and not state["OOMKilled"], state
             assert state["ExitCode"] in (0, 143), state
             assert elapsed < 12, f"Shutdown took {elapsed:.2f}s for a 3s framework budget"
-            progress = json.loads(image.request(host_url + "/verification/status")[1])
+            progress = namespace_state()
             if cutoff:
                 assert elapsed >= 2.5, f"Work was torn down before the 3s cutoff: {elapsed:.2f}s"
                 assert not progress["detail"] and not progress["finished"], progress
@@ -104,6 +113,7 @@ def verify(args, cutoff):
                 print(f"Could not collect shutdown fixture logs: {failure}", flush=True)
             finally:
                 image.require_cleanup(*compose, "down", "--volumes", "--remove-orphans", env=environment)
+                image.require_cleanup("docker", "volume", "rm", environment["SIDECAR_KEYS_VOLUME"], env=environment)
 
 
 def main():
@@ -114,10 +124,9 @@ def main():
     parser.add_argument("--database-dir", help="Directory containing a stopped test database with quickstartPlanner")
     parser.add_argument("--api-port", type=int, default=28080)
     parser.add_argument("--host-port", type=int, default=28081)
-    parser.add_argument("--management-port", type=int, default=29091)
     args = parser.parse_args()
-    ports = (args.api_port, args.host_port, args.management_port)
-    if any(port < 1 or port > 65535 for port in ports) or len(set(ports)) != 3:
+    ports = (args.api_port, args.host_port)
+    if any(port < 1 or port > 65535 for port in ports) or len(set(ports)) != 2:
         parser.error("host ports must be distinct values from 1 through 65535")
     if not args.validate_only and not args.database_dir:
         parser.error("--database-dir is required for active shutdown verification")

@@ -1,23 +1,34 @@
 # Local evaluation and verifier fixtures
 
 Follow the [application quickstart](../../docs/quickstart.md) to publish and invoke
-[triageSupportRequest](triage-support-request.yaml). That walkthrough uses a real
-model provider and the fixture host only for local JWT issuance.
+[triageSupportRequest](triage-support-request.yaml). The fixture host provides a
+demo ephemeral signer, deterministic planner and approved callbacks. It exports
+only public JWKS atomically; private keys live in temporary container storage.
+Restarting the host generates a new signing key and invalidates old tokens once
+receivers reload. These fixtures are not a deployed signing product.
 
-The Compose stack starts a persistent, initially empty Sidecar database. It does
-not mount or publish the skill and route files under `sidecar/`. The host also
-contains a deterministic planner and identity/detail callbacks used by repository
-verification; these are protocol fixtures, not realistic application reasoning.
+The deployment must prepare the named public-key volume before starting:
 
-The legacy `sidecar/rest-routes.yaml` fixture contains a defaulted
-`${QUICKSTART_HOST_URL:http://host:8081}` expression. Do not paste that expression
-into a Sidecar draft: current base URLs allow literals or exact allowlisted
-`${NAME}` references. The production verifier substitutes `${TARGET_URL}` before
-validation. This audit leaves that test input unchanged to avoid changing verifier
-behavior. For your own routes, follow the
-[REST contract](../../agent-skills/loomspan-sidecar-authoring/references/integration.md#rest-skill-routes).
+```sh
+docker volume create loomspan-quickstart-keys
+docker run --rm --user 0:0 -v loomspan-quickstart-keys:/keys --entrypoint sh loomspan-sidecar:sc5-local -c 'chown 10001:10001 /keys && chmod 700 /keys'
+```
 
-The checked-in signing key, token endpoint and callbacks are local test assets.
-Use your application's identity provider and independently authorized endpoints
-for deployment. Maintainer verification procedures are parked for review in
-[ai/throughts](../../ai/throughts/readme-maintainer-material.md).
+These commands also work from PowerShell. Set `SIDECAR_KEYS_VOLUME` consistently
+if using a different volume name. App and Sidecar run as `10001:10001`; the app
+mounts `/keys` writable and Sidecar mounts `/sidecar/keys` read-only. Sidecar, including health, binds loopback. Host and Caddy share its namespace via
+`network_mode: "service:sidecar"`; the Sidecar service publishes host-loopback
+ports to ingress 18080 (API, management and health) and 18081 (fixture host),
+which proxy to loopback 8080 and 8081. No proxy rewrites execution credentials.
+
+Host and ingress depend on Sidecar being started, never healthy: readiness is
+waiting until the first valid export. Recreate all three together when replacing
+Sidecar so namespace references remain current. SQLite persists independently.
+The initially empty database does not automatically publish the deterministic
+skills/routes under `sidecar/`; the verifier publishes them through management.
+Their routes use literal `http://127.0.0.1:8081`.
+
+See [trust operations](../../docs/operations.md#execution-jwt-trust) for file
+validation, withdrawal/recovery and lifetime behavior. No database reset is
+required by this configuration replacement. Use an application-owned signer
+and independently authorized callbacks for deployment.

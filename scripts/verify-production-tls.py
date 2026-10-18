@@ -86,7 +86,8 @@ def main():
                          str(CONFIG / "compose.yaml"), "config", "--format", "json", capture=True)
             import json
             services = json.loads(config)["services"]
-            assert not services["sidecar"].get("ports")
+            assert len(services["sidecar"]["ports"]) == 2
+            assert services["caddy"]["network_mode"] == "service:sidecar"
             assert {v["target"] for v in services["caddy"]["volumes"]} >= {"/data", "/config"}
             assert services["sidecar"]["environment"]["SERVER_SSL_ENABLED"] == "false"
             supplied_config = run("docker", "compose", "--env-file", str(env), "-f",
@@ -105,14 +106,13 @@ class H(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
         self.wfile.write(body)
-HTTPServer(('0.0.0.0', 8080), H).serve_forever()
+HTTPServer(('127.0.0.1', 8080), H).serve_forever()
 """
             run("docker", "run", "-d", "--name", backend, "--network", network,
-                "--network-alias", "sidecar", "python:3.13-slim", "python", "-c", echo)
+                "-p", f"127.0.0.1:{port}:{port}", "-p", f"127.0.0.1:{http_port}:80", "python:3.13-slim", "python", "-c", echo)
 
             def start(caddyfile, image, cert_dir=None):
-                command = ["docker", "run", "-d", "--name", caddy, "--network", network,
-                           "-p", f"127.0.0.1:{port}:{port}", "-p", f"127.0.0.1:{http_port}:80",
+                command = ["docker", "run", "-d", "--name", caddy, "--network", "container:" + backend,
                            "-e", "SITE_HOST=localhost",
                            "-e", f"HTTPS_PORT={port}", "-v", f"{volume}:/data",
                            "-v", f"{caddyfile}:/etc/caddy/Caddyfile:ro"]
@@ -206,14 +206,17 @@ HTTPServer(('0.0.0.0', 8080), H).serve_forever()
                 f"{direct_volume}:/sidecar/data", "--entrypoint", "sh", args.image,
                 "-c", "chown 10001:10001 /sidecar/data && chmod 700 /sidecar/data")
             direct_port = free_port()
+            key_directory = temp / "execution-keys"
+            key_directory.mkdir()
+            # Public test material is independent of the retired checked-in demo signer.
+            (key_directory / "jwks.json").write_bytes((ROOT / "src/test/resources/fixtures/jwks.json").read_bytes())
             direct_args = ["docker", "run", "-d", "--name", direct, "--user", "10001:10001",
                            "-p", f"127.0.0.1:{direct_port}:8080", "-v", f"{direct_volume}:/sidecar/data",
                            "-v", f"{cert_dir}:/sidecar/tls:ro",
-                           "-v", f"{ROOT / 'examples/quickstart/host/public.pem'}:/sidecar/keys/public.pem:ro",
-                           "-e", "MANAGEMENT_SERVER_SSL_ENABLED=false",
-                           "-e", "LOOMSPAN_SIDECAR_AUTH_JWT_ISSUER_URI=https://issuer.example.test",
+                           "-v", f"{key_directory}:/sidecar/keys:ro",
+                           "-e", "LOOMSPAN_SIDECAR_TRUST_MODE=file",
                            "-e", "LOOMSPAN_SIDECAR_AUTH_JWT_AUDIENCE=loomspan-sidecar",
-                           "-e", "LOOMSPAN_SIDECAR_AUTH_JWT_PUBLIC_KEY_LOCATION=file:/sidecar/keys/public.pem",
+                           "-e", "LOOMSPAN_SIDECAR_TRUST_FILE_JWKS=/sidecar/keys/jwks.json",
                            "-e", "LOOMSPAN_CONNECTIONS_PRIMARY_DRIVER=openai",
                            "-e", "LOOMSPAN_CONNECTIONS_PRIMARY_BASE_URL=https://model.example.test/v1",
                            "-e", "LOOMSPAN_CONNECTIONS_PRIMARY_API_KEY=fixture-only",

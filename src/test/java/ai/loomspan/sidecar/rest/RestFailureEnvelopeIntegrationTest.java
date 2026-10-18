@@ -76,11 +76,11 @@ class RestFailureEnvelopeIntegrationTest {
                     List.of(directory.resolve("timeout.yml"), directory.resolve("oversize.yml"),
                             directory.resolve("media.yml")), routes.toString());
             try (var context = new SpringApplicationBuilder(LoomspanSidecarApplication.class).run(
-                    "--server.port=0", "--management.server.port=0", "--loomspan.observability.enabled=false",
+                    "--server.port=0", "--loomspan.observability.enabled=false",
                     "--loomspan-sidecar.storage.database-path=" + directory.resolve("sidecar.db"),
-                    "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+                    "--loomspan-sidecar.trust.mode=file",
                     "--loomspan-sidecar.auth.jwt.audience=sidecar",
-                    "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem");
+                    "--loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json");
                     var client = HttpClient.newHttpClient()) {
                 int port = ((WebServerApplicationContext) context).getWebServer().getPort();
                 String base = "http://127.0.0.1:" + port;

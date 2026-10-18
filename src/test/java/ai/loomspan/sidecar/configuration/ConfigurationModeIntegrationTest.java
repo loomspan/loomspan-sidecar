@@ -22,9 +22,9 @@ class ConfigurationModeIntegrationTest {
                     "--loomspan.connections.poison.driver=definitely-invalid",
                     "--loomspan.connections.poison.api-key=${MISSING_POISON_SECRET}",
                     "--loomspan.observability.enabled=false",
-                    "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+                    "--loomspan-sidecar.trust.mode=file",
                     "--loomspan-sidecar.auth.jwt.audience=sidecar",
-                    "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem")) {
+                    "--loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json")) {
             assertThat(context.getBean(SkillReloader.class).snapshot().skills()).isEmpty();
             assertThat(context.getBean(ConfigurationSnapshotStore.class).current()
                     .configuration().skillDocuments()).isEmpty();
@@ -156,9 +156,8 @@ class ConfigurationModeIntegrationTest {
     }
     private void runSkill(org.springframework.context.ConfigurableApplicationContext context, String skill, String expected) throws Exception {
         var coordinator = context.getBean(ai.loomspan.sidecar.execution.ExecutionCoordinator.class);
-        var jwt = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("fixture").header("alg", "none")
-                .issuer("https://issuer.test").subject("owner").issuedAt(java.time.Instant.now())
-                .expiresAt(java.time.Instant.now().plusSeconds(60)).build();
+        var jwt = context.getBean(org.springframework.security.oauth2.jwt.JwtDecoder.class).decode(
+                ai.loomspan.sidecar.support.JwtTestTokens.token("owner", java.util.List.of()));
         var auth = new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(jwt);
         var owner = ai.loomspan.sidecar.security.ExecutionOwner.from(auth);
         var id = coordinator.admit(skill, java.util.Map.of(), 2, owner, auth);
@@ -175,6 +174,25 @@ class ConfigurationModeIntegrationTest {
         throw new AssertionError("File model execution did not complete");
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"file", "database"})
+    void processJwksIsTheOnlyTrustInBothConfigurationModes(String mode) throws Exception {
+        var file = directory.resolve("jwks.json");
+        String valid = java.nio.file.Files.readString(Path.of("src/test/resources/fixtures/jwks.json"));
+        java.nio.file.Files.writeString(file, valid);
+        try (var context = start("trust-"+mode+".db", "--loomspan-sidecar.configuration.mode="+mode,
+                "--loomspan-sidecar.trust.file.jwks="+file)) {
+            var decoder = context.getBean(org.springframework.security.oauth2.jwt.JwtDecoder.class);
+            var trust = context.getBean(ai.loomspan.sidecar.security.CurrentFileJwtTrust.class);
+            String token = ai.loomspan.sidecar.support.JwtTestTokens.token("owner", java.util.List.of());
+            assertThat(decoder.decode(token)).isNotNull();
+            java.nio.file.Files.writeString(file, "{\"keys\":[]}"); trust.reload();
+            assertThatThrownBy(() -> decoder.decode(token)).isInstanceOf(org.springframework.security.oauth2.jwt.JwtException.class);
+            java.nio.file.Files.writeString(file, valid); trust.reload(); assertThat(decoder.decode(token)).isNotNull();
+            assertThat(trust.snapshot().path()).isEqualTo(file.toAbsolutePath());
+        }
+    }
+
     private SpringApplicationBuilder builder() {
         return new SpringApplicationBuilder(LoomspanSidecarApplication.class).web(WebApplicationType.NONE);
     }
@@ -185,9 +203,13 @@ class ConfigurationModeIntegrationTest {
         var args = new java.util.ArrayList<>(java.util.List.of(
                 "--loomspan-sidecar.storage.database-path=" + directory.resolve(database),
                 "--loomspan.observability.enabled=false",
-                "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+                "--loomspan-sidecar.trust.mode=file",
                 "--loomspan-sidecar.auth.jwt.audience=sidecar",
-                "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem"));
-        args.addAll(java.util.List.of(extra)); return args.toArray(String[]::new);
+                "--loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json"));
+        for (String option : extra) {
+            String name = option.substring(0, option.indexOf('=') + 1);
+            args.removeIf(existing -> existing.startsWith(name)); args.add(option);
+        }
+        return args.toArray(String[]::new);
     }
 }

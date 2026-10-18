@@ -22,9 +22,9 @@ class LoomspanSidecarApplicationTest
                 .web(WebApplicationType.NONE)
                 .run("--loomspan-sidecar.storage.database-path=" + temporaryDirectory.resolve("sidecar.db"),
                         "--loomspan.observability.enabled=false",
-                        "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+                        "--loomspan-sidecar.trust.mode=file",
                         "--loomspan-sidecar.auth.jwt.audience=sidecar",
-                        "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem"))
+                        "--loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json"))
         {
             assertThat(context.getBean(SkillCatalog.class).skills()).isEmpty();
         }

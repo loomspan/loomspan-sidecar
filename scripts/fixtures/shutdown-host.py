@@ -44,4 +44,5 @@ class Handler(host.Handler):
 
 
 if __name__ == "__main__":
-    ThreadingHTTPServer(("0.0.0.0", 8081), Handler).serve_forever()
+    host.export_fresh_key()
+    ThreadingHTTPServer(("127.0.0.1", 8081), Handler).serve_forever()

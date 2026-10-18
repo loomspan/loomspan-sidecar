@@ -28,7 +28,7 @@ class ProductionHandoffTest(unittest.TestCase):
         key = "LOOMSPAN_SIDECAR_CREDENTIAL_KEY"
         environment = {key: "fixture-only-key", "PATH": "fixture-path"}
         with patch.dict(os.environ, {key: "different-parent-key"}), \
-                patch.object(production, "port", side_effect=[28080, 28081, 29091]), \
+                patch.object(production, "port", side_effect=[28080, 28081]), \
                 patch.object(production.image, "run") as run:
             production.verify_shutdown("fixture", pathlib.Path("stopped-backup"), environment)
         command = run.call_args.args
@@ -44,8 +44,7 @@ class StartupFailureTest(unittest.TestCase):
             with self.subTest(cutoff=cutoff, logs_timeout=logs_timeout), tempfile.TemporaryDirectory() as directory:
                 pathlib.Path(directory, "sidecar.db").write_bytes(b"fixture")
                 args = argparse.Namespace(image="fixture", database_dir=directory,
-                                          api_port=28080, host_port=28081,
-                                          management_port=29091, validate_only=False)
+                                          api_port=28080, host_port=28081, validate_only=False)
                 calls = []
                 key = "LOOMSPAN_SIDECAR_CREDENTIAL_KEY"
 
@@ -68,8 +67,9 @@ class StartupFailureTest(unittest.TestCase):
                     with self.assertRaises(AssertionError) as raised:
                         shutdown.verify(args, cutoff=cutoff)
                 self.assertIs(raised.exception, failure)
-                self.assertIn("logs", calls[-2])
-                self.assertEqual(calls[-1][-3:], ("down", "--volumes", "--remove-orphans"))
+                self.assertIn("logs", calls[-3])
+                self.assertEqual(calls[-2][-3:], ("down", "--volumes", "--remove-orphans"))
+                self.assertIn("rm", calls[-1])
                 self.assertEqual(pathlib.Path(directory, "sidecar.db").read_bytes(), b"fixture")
 
 

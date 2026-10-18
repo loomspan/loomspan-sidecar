@@ -15,9 +15,7 @@ loomspan-sidecar:
   url-variables: []
   auth:
     jwt:
-      roles-claim: roles
-      role-prefix: ROLE_
-      clock-skew: 60s
+      audience: loomspan-sidecar
   executions:
     max-input-size: 1MB
     max-retained: 1000
@@ -61,10 +59,14 @@ management:
   health:
     mail:
       enabled: false
-  server:
-    port: 9091
   endpoint:
     health:
+      show-details: when_authorized
+      show-components: when_authorized
+      roles: MGT_VIEWER
+      group:
+        readiness:
+          include: readinessState,executionTrust
       probes:
         enabled: true
   endpoints:

@@ -132,9 +132,8 @@ class CredentialPortabilityIntegrationTest {
     }
     private void execute(ConfigurableApplicationContext context, SidecarApplicationFixture provider, String expectedKey) throws Exception {
         provider.modelResponses().add(SidecarApplicationFixture.completion("portable-result"));
-        var jwt = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("fixture").header("alg", "none")
-                .issuer("https://issuer.test").subject("owner").issuedAt(java.time.Instant.now())
-                .expiresAt(java.time.Instant.now().plusSeconds(60)).build();
+        var jwt = context.getBean(org.springframework.security.oauth2.jwt.JwtDecoder.class).decode(
+                ai.loomspan.sidecar.support.JwtTestTokens.token("owner", java.util.List.of()));
         var auth = new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(jwt);
         var owner = ai.loomspan.sidecar.security.ExecutionOwner.from(auth);
         var coordinator = context.getBean(ai.loomspan.sidecar.execution.ExecutionCoordinator.class);
@@ -179,8 +178,8 @@ class CredentialPortabilityIntegrationTest {
     private ConfigurableApplicationContext start(String name, String key) {
         return new SpringApplicationBuilder(LoomspanSidecarApplication.class, Keys.class).web(WebApplicationType.NONE).run(
                 "--loomspan-sidecar.storage.database-path=" + directory.resolve(name + ".db"), "--fixture.key=" + key,
-                "--loomspan.observability.enabled=false", "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+                "--loomspan.observability.enabled=false", "--loomspan-sidecar.trust.mode=file",
                 "--loomspan-sidecar.auth.jwt.audience=sidecar",
-                "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem");
+                "--loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json");
     }
 }

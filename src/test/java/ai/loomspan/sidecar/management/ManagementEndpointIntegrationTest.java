@@ -6,7 +6,6 @@ import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.actuate.endpoint.web.WebEndpointsSupplier;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.server.LocalManagementPort;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.event.ContextClosedEvent;
@@ -22,11 +21,10 @@ import java.nio.file.Path;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-        "management.server.port=0",
         "loomspan.observability.enabled=false",
-        "loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+        "loomspan-sidecar.trust.mode=file",
         "loomspan-sidecar.auth.jwt.audience=sidecar",
-        "loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem"
+        "loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json"
 })
 class ManagementEndpointIntegrationTest
 {
@@ -41,9 +39,6 @@ class ManagementEndpointIntegrationTest
     @LocalServerPort
     int applicationPort;
 
-    @LocalManagementPort
-    int managementPort;
-
     private final HttpClient client = HttpClient.newHttpClient();
 
     @Autowired
@@ -56,15 +51,14 @@ class ManagementEndpointIntegrationTest
     ConfigurableApplicationContext applicationContext;
 
     @Test
-    void healthAndReadinessAreExposedOnlyOnSeparateManagementPort() throws Exception
+    void healthAndReadinessShareTheApplicationListener() throws Exception
     {
-        assertThat(managementPort).isPositive().isNotEqualTo(applicationPort);
+        assertThat(applicationContext.getEnvironment().getProperty("management.server.port")).isNull();
 
-        HttpResponse<String> health = get(managementPort, "/actuator/health");
-        HttpResponse<String> readiness = get(managementPort, "/actuator/health/readiness");
-        HttpResponse<String> liveness = get(managementPort, "/actuator/health/liveness");
-        HttpResponse<String> info = get(managementPort, "/actuator/info");
-        HttpResponse<String> applicationHealth = get(applicationPort, "/actuator/health");
+        HttpResponse<String> health = get(applicationPort, "/actuator/health");
+        HttpResponse<String> readiness = get(applicationPort, "/actuator/health/readiness");
+        HttpResponse<String> liveness = get(applicationPort, "/actuator/health/liveness");
+        HttpResponse<String> info = get(applicationPort, "/actuator/info");
 
         assertThat(health.statusCode()).isEqualTo(200);
         assertThat(health.body()).contains("\"status\":\"UP\"");
@@ -73,14 +67,14 @@ class ManagementEndpointIntegrationTest
         assertThat(liveness.statusCode()).isEqualTo(200);
         assertThat(liveness.body()).contains("\"status\":\"UP\"");
         assertThat(info.statusCode()).isNotEqualTo(200);
-        assertThat(applicationHealth.statusCode()).isNotEqualTo(200);
+        assertThat(health.body()).doesNotContain("components", "details", "kids", "path");
         assertThat(webEndpointsSupplier.getEndpoints())
                 .extracting(endpoint -> endpoint.getEndpointId().toString())
                 .containsExactly("health");
 
         coordinator.onApplicationEvent(new ContextClosedEvent(applicationContext));
-        HttpResponse<String> refusing = get(managementPort, "/actuator/health/readiness");
-        HttpResponse<String> liveDuringRefusal = get(managementPort, "/actuator/health/liveness");
+        HttpResponse<String> refusing = get(applicationPort, "/actuator/health/readiness");
+        HttpResponse<String> liveDuringRefusal = get(applicationPort, "/actuator/health/liveness");
         assertThat(refusing.statusCode()).isEqualTo(503);
         assertThat(refusing.body()).contains("OUT_OF_SERVICE");
         assertThat(liveDuringRefusal.statusCode()).isEqualTo(200);

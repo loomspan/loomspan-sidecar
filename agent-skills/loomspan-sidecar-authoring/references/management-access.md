@@ -1,7 +1,7 @@
 # Management accounts and credentials
 
 The browser management surface is on the application port (`/management/**` and
-`/api/management/**`); port 9091 remains the health-only Actuator port. Local
+`/api/management/**`); health shares the application listener. Local
 accounts use server-side form-login sessions and CSRF protection. Their roles
 are `viewer`, `editor`, and `admin`, with each higher role including lower-role
 permissions. This release exposes account, session, private draft/lease and

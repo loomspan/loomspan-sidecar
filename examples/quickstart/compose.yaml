@@ -1,27 +1,38 @@
 services:
   host:
     build: ./host
+    network_mode: "service:sidecar"
+    depends_on:
+      sidecar:
+        condition: service_started
     environment:
-      QUICKSTART_ISSUER: http://host:8081
+      QUICKSTART_ISSUER: loomspan-app
       QUICKSTART_AUDIENCE: loomspan-sidecar
+      QUICKSTART_KEY_DIRECTORY: /keys
+    volumes:
+      - sidecar-keys:/keys
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health')"]
       interval: 2s
       timeout: 1s
       retries: 15
-    ports:
-      - "127.0.0.1:${QUICKSTART_HOST_PORT:-8081}:8081"
+
+  ingress:
+    image: caddy:2.10.2
+    network_mode: "service:sidecar"
+    depends_on:
+      sidecar:
+        condition: service_started
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
 
   sidecar:
     image: ${SIDECAR_IMAGE:-loomspan-sidecar:sc5-local}
-    depends_on:
-      host:
-        condition: service_healthy
+    user: "10001:10001"
     environment:
-      LOOMSPAN_SIDECAR_AUTH_JWT_ISSUER_URI: http://host:8081
-      LOOMSPAN_SIDECAR_AUTH_JWT_AUDIENCE: loomspan-sidecar
-      LOOMSPAN_SIDECAR_AUTH_JWT_PUBLIC_KEY_LOCATION: file:/sidecar/keys/public.pem
-      LOOMSPAN_SIDECAR_AUTH_JWT_CLOCK_SKEW: 0s
+      SERVER_ADDRESS: 127.0.0.1
+      LOOMSPAN_SIDECAR_TRUST_MODE: colocated
+      LOOMSPAN_SIDECAR_TRUST_COLOCATED_KEY_DIRECTORY: /sidecar/keys
       LOOMSPAN_SIDECAR_EXECUTIONS_DIAGNOSTICS: ALWAYS
       LOOMSPAN_SIDECAR_CREDENTIAL_KEY: ${LOOMSPAN_SIDECAR_CREDENTIAL_KEY:-}
       LOOMSPAN_SIDECAR_SETUP_TOKEN: ${LOOMSPAN_SIDECAR_SETUP_TOKEN:-}
@@ -36,13 +47,13 @@ services:
       LOOMSPAN_SIDECAR_SECURE_COOKIE: ${LOOMSPAN_SIDECAR_SECURE_COOKIE:-false}
       LOOMSPAN_SHUTDOWN_TIMEOUT: 10s
     volumes:
-      - ./sidecar/keys:/sidecar/keys:ro
+      - sidecar-keys:/sidecar/keys:ro
       - sidecar-data:/sidecar/data
     ports:
-      - "127.0.0.1:${SIDECAR_API_PORT:-8080}:8080"
-      - "127.0.0.1:${SIDECAR_MANAGEMENT_PORT:-9091}:9091"
+      - "127.0.0.1:${SIDECAR_API_PORT:-8080}:18080"
+      - "127.0.0.1:${QUICKSTART_HOST_PORT:-8081}:18081"
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:9091/actuator/health/readiness"]
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/actuator/health/readiness"]
       interval: 2s
       timeout: 1s
       retries: 30
@@ -50,3 +61,6 @@ services:
 
 volumes:
   sidecar-data:
+  sidecar-keys:
+    external: true
+    name: ${SIDECAR_KEYS_VOLUME:-loomspan-quickstart-keys}

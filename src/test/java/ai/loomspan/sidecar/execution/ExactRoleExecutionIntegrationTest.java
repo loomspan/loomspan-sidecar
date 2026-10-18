@@ -21,15 +21,12 @@ import tools.jackson.databind.ObjectMapper;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-        "management.server.port=0",
         "loomspan.observability.enabled=false",
-        "loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+        "loomspan-sidecar.trust.mode=file",
         "loomspan-sidecar.auth.jwt.audience=sidecar",
-        "loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem",
-        "loomspan-sidecar.auth.jwt.roles-claim=groups",
-        "loomspan-sidecar.auth.jwt.role-prefix=APP_"
+        "loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json"
 })
-class CustomRoleExecutionIntegrationTest {
+class ExactRoleExecutionIntegrationTest {
     @TempDir static Path storageDirectory;
     private static final com.sun.net.httpserver.HttpServer CALLBACK = callbackServer();
     private static final java.nio.file.Path ROUTES = routeFile();
@@ -41,10 +38,19 @@ class CustomRoleExecutionIntegrationTest {
     static void restProperties(DynamicPropertyRegistry properties) {
         properties.add("loomspan-sidecar.storage.database-path", () -> ai.loomspan.sidecar.support.SidecarApplicationFixture.seedDatabase(
                 storageDirectory.resolve("sidecar.db"), java.util.List.of(
-                        ai.loomspan.sidecar.support.SidecarApplicationFixture.resourceFile("fixtures/execution-skills/echo-rest.yml")),
+                        roleSkill()),
                 readRoutes()).toString());
     }
 
+    private static java.nio.file.Path roleSkill() {
+        try {
+            var path = java.nio.file.Files.createTempFile("exact-role-", ".yaml");
+            java.nio.file.Files.writeString(path, java.nio.file.Files.readString(
+                    ai.loomspan.sidecar.support.SidecarApplicationFixture.resourceFile("fixtures/execution-skills/echo-rest.yml"))
+                    .replace("REST_USER", "ROLE_ORDER_EDITOR"));
+            path.toFile().deleteOnExit(); return path;
+        } catch (Exception failure) { throw new IllegalStateException(failure); }
+    }
     private static String readRoutes() {
         try { return java.nio.file.Files.readString(ROUTES); }
         catch (java.io.IOException failure) { throw new IllegalStateException(failure); }
@@ -54,17 +60,17 @@ class CustomRoleExecutionIntegrationTest {
     static void stopCallback() { CALLBACK.stop(0); }
 
     @Test
-    void usesCustomRoleClaimAndPrefixForValidationAndInvocation() throws Exception {
-        String allowed = JwtTestTokens.tokenWithAuthoritiesClaim("custom-owner", "groups", List.of("REST_USER"));
+    void matchesLiteralRolesThroughPublicFrameworkAuthorization() throws Exception {
+        String allowed = JwtTestTokens.token("loomspan-app", "sidecar", "custom-owner", List.of("ROLE_ORDER_EDITOR"));
         var accepted = post(allowed);
         assertThat(accepted.statusCode()).isEqualTo(202);
         String id = mapper.readTree(accepted.body()).path("id").asText();
         assertThat(poll(id, allowed).path("result").asText()).isEqualTo("REST: custom-role");
 
         for (String denied : List.of(
-                JwtTestTokens.tokenWithAuthoritiesClaim("wrong", "groups", List.of("OTHER")),
-                JwtTestTokens.tokenWithAuthoritiesClaim("empty", "groups", List.of()),
-                JwtTestTokens.token("legacy-claim", List.of("REST_USER")))) {
+                JwtTestTokens.token("wrong", List.of("ORDER_EDITOR")),
+                JwtTestTokens.token("wrong-prefix", List.of("ROLE_ROLE_ORDER_EDITOR")),
+                JwtTestTokens.token("empty", List.of()))) {
             assertThat(post(denied).statusCode()).isEqualTo(403);
         }
     }

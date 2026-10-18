@@ -6,13 +6,14 @@ import ai.loomspan.sidecar.config.SidecarStorageProperties;
 import ai.loomspan.sidecar.config.SidecarSnapshotProperties;
 import ai.loomspan.sidecar.config.SidecarManagementProperties;
 import ai.loomspan.sidecar.security.SidecarJwtProperties;
+import ai.loomspan.sidecar.security.SidecarTrustProperties;
 import ai.loomspan.sidecar.management.ManagementAdminCommand;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 
 @SpringBootApplication
-@EnableConfigurationProperties({ SidecarExecutionProperties.class, SidecarJwtProperties.class,
+@EnableConfigurationProperties({ SidecarExecutionProperties.class, SidecarJwtProperties.class, SidecarTrustProperties.class,
         RestRoutesProperties.class, SidecarStorageProperties.class, SidecarSnapshotProperties.class,
         SidecarManagementProperties.class })
 public class LoomspanSidecarApplication

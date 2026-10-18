@@ -67,6 +67,8 @@ public final class ManagementBearerFilter extends OncePerRequestFilter {
     }
     static String required(String method, String path) {
         if ("GET".equals(method)) {
+            if (path.equals("/actuator/health") || path.equals("/actuator/health/readiness")
+                    || path.equals("/actuator/health/liveness")) return "read";
             if (path.equals("/api/management/configuration/current") || path.equals("/api/management/configuration/export")
                     || path.equals("/api/management/configuration/history")
                     || path.equals("/api/management/configuration/file-startups")

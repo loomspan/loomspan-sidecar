@@ -25,9 +25,11 @@ class SidecarDefaultsTest {
                                         .isNull();
                         assertThat(environment.getProperty("loomspan.observability.enabled", Boolean.class)).isFalse();
                         assertThat(environment.getProperty("loomspan-sidecar.url-variables[0]")).isNull();
-                        assertThat(environment.getProperty("loomspan-sidecar.auth.jwt.roles-claim")).isEqualTo("roles");
-                        assertThat(environment.getProperty("loomspan-sidecar.auth.jwt.role-prefix")).isEqualTo("ROLE_");
-                        assertThat(environment.getProperty("loomspan-sidecar.auth.jwt.clock-skew")).isEqualTo("60s");
+                        assertThat(environment.getProperty("loomspan-sidecar.auth.jwt.audience")).isEqualTo("loomspan-sidecar");
+                        assertThat(environment.getProperty("loomspan-sidecar.trust.mode")).isNull();
+                        for (String removed : java.util.List.of("issuer-uri", "jwk-set-uri", "public-key-location", "clock-skew", "roles-claim", "role-prefix")) {
+                            assertThat(environment.getProperty("loomspan-sidecar.auth.jwt." + removed)).isNull();
+                        }
                         assertThat(environment.getProperty("loomspan-sidecar.executions.max-input-size")).isEqualTo("1MB");
                         assertThat(environment.getProperty("loomspan-sidecar.snapshots.max-retained", Integer.class)).isEqualTo(10);
                         assertThat(environment.getProperty("loomspan-sidecar.management.edit-lease-timeout")).isEqualTo("15m");
@@ -37,7 +39,7 @@ class SidecarDefaultsTest {
                         assertThat(environment.getProperty("loomspan-sidecar.executions.max-queued", Integer.class)).isEqualTo(128);
                         assertThat(environment.getProperty("loomspan-sidecar.executions.max-queued-input-size")).isEqualTo("64MB");
                         assertThat(environment.getProperty("loomspan-sidecar.executions.diagnostics")).isEqualTo("NEVER");
-                        assertThat(environment.getProperty("management.server.port", Integer.class)).isEqualTo(9091);
+                        assertThat(environment.getProperty("management.server.port", Integer.class)).isNull();
                         assertThat(environment.getProperty("management.endpoint.health.probes.enabled", Boolean.class))
                                         .isTrue();
                         assertThat(environment.getProperty("management.endpoints.web.exposure.include"))

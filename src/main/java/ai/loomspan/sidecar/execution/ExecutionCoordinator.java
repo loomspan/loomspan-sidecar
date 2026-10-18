@@ -33,6 +33,9 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationListener;
 import org.springframework.context.event.ContextClosedEvent;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.stereotype.Component;
 
@@ -43,6 +46,7 @@ public class ExecutionCoordinator implements ApplicationListener<ContextClosedEv
     private final SidecarExecutionProperties properties;
     private final ApplicationContext owningContext;
     private final Clock clock;
+    private final JwtDecoder credentialDecoder;
     private final Map<UUID, ExecutionRecord> records = new java.util.concurrent.ConcurrentHashMap<>();
     private final ReentrantLock gate = new ReentrantLock();
     private final ThreadPoolExecutor executor;
@@ -56,8 +60,9 @@ public class ExecutionCoordinator implements ApplicationListener<ContextClosedEv
 
     @Autowired
     public ExecutionCoordinator(SkillInvocationHandoff skillInvocationHandoff, SidecarExecutionProperties properties,
-            ApplicationContext owningContext, GenerationRestResources resources) {
-        this(skillInvocationHandoff, properties, owningContext, Clock.systemUTC(), task -> { }, resources::snapshotId);
+            ApplicationContext owningContext, GenerationRestResources resources, Clock clock,
+            JwtDecoder credentialDecoder) {
+        this(skillInvocationHandoff, properties, owningContext, clock, task -> { }, resources::snapshotId, credentialDecoder);
     }
 
     ExecutionCoordinator(SkillInvocationHandoff handoff, SidecarExecutionProperties properties, ApplicationContext context) {
@@ -79,7 +84,16 @@ public class ExecutionCoordinator implements ApplicationListener<ContextClosedEv
     ExecutionCoordinator(SkillInvocationHandoff skillInvocationHandoff, SidecarExecutionProperties properties,
             ApplicationContext owningContext, Clock clock, Consumer<ExecutionTask> beforeDispatchHandoff,
             java.util.function.Function<String, UUID> snapshotForGeneration) {
+        this(skillInvocationHandoff, properties, owningContext, clock, beforeDispatchHandoff, snapshotForGeneration,
+                token -> null); // Unit constructors isolate the supported Framework handoff.
+    }
+
+    ExecutionCoordinator(SkillInvocationHandoff skillInvocationHandoff, SidecarExecutionProperties properties,
+            ApplicationContext owningContext, Clock clock, Consumer<ExecutionTask> beforeDispatchHandoff,
+            java.util.function.Function<String, UUID> snapshotForGeneration,
+            JwtDecoder credentialDecoder) {
         properties.validate();
+        this.credentialDecoder = credentialDecoder;
         this.skillInvocationHandoff = skillInvocationHandoff;
         this.properties = properties;
         this.owningContext = owningContext;
@@ -168,12 +182,23 @@ public class ExecutionCoordinator implements ApplicationListener<ContextClosedEv
                 records.remove(task.record.id, task.record);
                 return null;
             }
+            var expiration = task.authentication.getToken().getExpiresAt();
+            if (expiration == null || !clock.instant().isBefore(expiration)) {
+                throw new AccessDeniedException("execution credential expired before start");
+            }
+            try { credentialDecoder.decode(task.authentication.getToken().getTokenValue()); }
+            catch (JwtException invalid) {
+                throw new AccessDeniedException("execution credential invalid before start");
+            }
             var previousContext = SecurityContextHolder.getContext();
             var handoffContext = SecurityContextHolder.createEmptyContext();
             handoffContext.setAuthentication(task.authentication);
             SecurityContextHolder.setContext(handoffContext);
             AdmittedSkillInvocation admitted;
             try {
+                if (!clock.instant().isBefore(expiration)) {
+                    throw new AccessDeniedException("execution credential expired before start");
+                }
                 admitted = Objects.requireNonNull(
                         skillInvocationHandoff.handoff(task.record.skillName, task.input),
                         "skill invocation handoff must not return null");

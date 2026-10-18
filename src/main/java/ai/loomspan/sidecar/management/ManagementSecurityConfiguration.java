@@ -47,10 +47,11 @@ public class ManagementSecurityConfiguration {
                 return identity.matches(rawPassword.toString(), encodedPassword);
             }
         });
-        http.securityMatcher("/management/**", "/api/management/**")
+        http.securityMatcher("/management/**", "/api/management/**", "/actuator/health", "/actuator/health/**")
                 .authenticationProvider(provider)
                 .csrf(csrf -> csrf.ignoringRequestMatchers(ManagementCredential::bearerOnly))
                 .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                         .requestMatchers("/management/login", "/management/setup", "/management/forgot",
                                 "/management/password/set", "/management/password/reset", "/management/assets/console.css",
                                 "/management/assets/console.js",

@@ -44,10 +44,10 @@ import org.springframework.test.annotation.DirtiesContext;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-        "management.server.port=0", "server.servlet.session.cookie.secure=false",
-        "loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+        "server.servlet.session.cookie.secure=false",
+        "loomspan-sidecar.trust.mode=file",
         "loomspan-sidecar.auth.jwt.audience=sidecar",
-        "loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem"
+        "loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json"
 })
 class ManagementConfigurationHttpIntegrationTest {
     @TempDir static Path storageDirectory;

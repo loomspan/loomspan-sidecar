@@ -25,8 +25,7 @@ after changing these process settings. They do not belong in database-mode
 `/_loomspan/observability/v1/**` namespace to reach Framework's independent key
 filter. No Java security configuration changes are needed.
 
-Point Console at the application listener (8080 locally), not the health port
-9091. Use HTTPS beyond a trusted local boundary. The observability key cannot
+Point Console at the application listener (8080 locally), which also serves health. Use HTTPS beyond a trusted local boundary. The observability key cannot
 authenticate execution or management APIs. For the exact beta.8 adapter settings
 and diagnostic behavior, consult the matching
 [Framework observability setup](https://github.com/loomspan/loomspan-framework/blob/v1.0.0-beta.8/agent-skills/loomspan-docs/references/skill-authoring/observability-http.md).

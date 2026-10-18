@@ -37,9 +37,9 @@ class CredentialEnvironmentIntegrationTest {
                 "ai.loomspan.sidecar.support.ConfigurationStartupProbe",
                 "--loomspan-sidecar.storage.database-path=" + database,
                 "--loomspan.skills.locations=classpath:/sidecar-empty-skills/*.yaml",
-                "--loomspan.observability.enabled=false", "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+                "--loomspan.observability.enabled=false", "--loomspan-sidecar.trust.mode=file",
                 "--loomspan-sidecar.auth.jwt.audience=sidecar",
-                "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem"));
+                "--loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json"));
         var builder = new ProcessBuilder(command).redirectErrorStream(true).redirectOutput(output.toFile());
         builder.environment().put("LOOMSPAN_SIDECAR_CONFIGURATION_MODE", mode);
         if (key == null) builder.environment().remove("LOOMSPAN_SIDECAR_CREDENTIAL_KEY");

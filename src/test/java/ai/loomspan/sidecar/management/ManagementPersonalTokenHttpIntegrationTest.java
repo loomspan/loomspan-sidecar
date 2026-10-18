@@ -33,9 +33,9 @@ import org.springframework.test.context.DynamicPropertySource;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-    "management.server.port=0", "server.servlet.session.cookie.secure=false",
-    "loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test", "loomspan-sidecar.auth.jwt.audience=sidecar",
-    "loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem"
+    "server.servlet.session.cookie.secure=false",
+    "loomspan-sidecar.trust.mode=file", "loomspan-sidecar.auth.jwt.audience=sidecar",
+    "loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json"
 })
 @Import({ManagementPersonalTokenHttpIntegrationTest.TimeConfiguration.class,
         ai.loomspan.sidecar.support.SidecarApplicationFixture.Credentials.class})
@@ -63,6 +63,38 @@ class ManagementPersonalTokenHttpIntegrationTest {
     private final ObjectMapper mapper = new ObjectMapper();
     private static final String PASSWORD = "Long Password 123!";
     @BeforeEach void reset() { synchronized (state) { state.clearLease(); } clock.reset(); }
+
+    @Test void trustHealthDetailsRequireCurrentManagementCredentials() throws Exception {
+        String email = seed("editor"); Browser browser = login(email);
+        var issued = issue(browser, "read"); String token = issued.path("secret").asText();
+        String id = issued.path("token").path("id").asText();
+        long owner = jdbc.queryForObject("SELECT id FROM management_account WHERE email=?", Long.class, email);
+        String path = "http://127.0.0.1:" + port + "/actuator/health";
+        try (var anonymous = HttpClient.newHttpClient()) {
+            var get = HttpRequest.newBuilder(URI.create(path)).GET();
+            assertThat(anonymous.send(get.build(), HttpResponse.BodyHandlers.ofString()).body()).doesNotContain("components", "jwks", "kids");
+            String patBody = anonymous.send(get.header("Authorization", "Bearer " + token).build(), HttpResponse.BodyHandlers.ofString()).body();
+            assertThat(patBody).contains("executionTrust", "mode", "path", "kids", "lastLoadTime", "ready");
+            String sessionBody = browser.client.send(HttpRequest.newBuilder(URI.create(path)).GET().build(), HttpResponse.BodyHandlers.ofString()).body();
+            assertThat(sessionBody).contains("executionTrust", "kids");
+            var execution = HttpRequest.newBuilder(URI.create(path)).header("Authorization", "Bearer " +
+                    ai.loomspan.sidecar.support.JwtTestTokens.token("owner", java.util.List.of("MGT_VIEWER"))).GET().build();
+            assertThat(anonymous.send(execution, HttpResponse.BodyHandlers.ofString()).body()).doesNotContain("executionTrust", "kids");
+            assertThat(bearer(token, "GET", "/v1/skills", null).statusCode()).isEqualTo(401);
+            tokens.revoke(owner, id);
+            assertThat(anonymous.send(get.build(), HttpResponse.BodyHandlers.ofString()).body()).doesNotContain("executionTrust", "kids");
+            var expiring = tokens.issue(owner, identity.account(owner).version(), "read", clock.instant().plusSeconds(1));
+            clock.advance(Duration.ofSeconds(2));
+            var expiredRequest = HttpRequest.newBuilder(URI.create(path)).header("Authorization", "Bearer " + expiring.secret()).GET().build();
+            var expired = anonymous.send(expiredRequest, HttpResponse.BodyHandlers.ofString());
+            assertThat(expired.statusCode()).isEqualTo(401); assertThat(expired.body()).doesNotContain("executionTrust", "kids");
+            identity.alter(owner, "editor", false);
+            assertThat(browser.client.send(HttpRequest.newBuilder(URI.create(path)).GET().build(), HttpResponse.BodyHandlers.ofString()).body()).doesNotContain("executionTrust", "kids");
+            Browser idle = login(seed("viewer"));
+            clock.advance(Duration.ofMinutes(31));
+            assertThat(idle.client.send(HttpRequest.newBuilder(URI.create(path)).GET().build(), HttpResponse.BodyHandlers.ofString()).body()).doesNotContain("executionTrust", "kids");
+        }
+    }
 
     @Test void readTokenUsesSharedManagementApiAndCannotAcquireLease() throws Exception {
         String email = seed("editor"); Browser browser = login(email);

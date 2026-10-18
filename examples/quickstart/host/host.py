@@ -12,9 +12,27 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-ISSUER = os.environ.get("QUICKSTART_ISSUER", "http://localhost:8081")
+ISSUER = os.environ.get("QUICKSTART_ISSUER", "loomspan-app")
 AUDIENCE = os.environ.get("QUICKSTART_AUDIENCE", "loomspan-sidecar")
-HERE = os.path.dirname(__file__)
+KEY_DIRECTORY = os.environ.get("QUICKSTART_KEY_DIRECTORY", "/keys")
+SIGNING_DIRECTORY = tempfile.TemporaryDirectory(prefix="quickstart-signing-")
+PRIVATE_KEY = os.path.join(SIGNING_DIRECTORY.name, "private.pem")
+PUBLIC_KEY = os.path.join(SIGNING_DIRECTORY.name, "public.pem")
+
+
+def export_fresh_key():
+    # Demo-only ephemeral signer; the deployment creates KEY_DIRECTORY and its permissions.
+    subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048",
+                    "-out", PRIVATE_KEY], check=True, capture_output=True)
+    subprocess.run(["openssl", "pkey", "-in", PRIVATE_KEY, "-pubout", "-out", PUBLIC_KEY], check=True, capture_output=True)
+    modulus = subprocess.run(["openssl", "rsa", "-in", PRIVATE_KEY, "-noout", "-modulus"],
+                             check=True, capture_output=True, text=True).stdout.strip().split("=", 1)[1]
+    public = {"kty": "RSA", "kid": "quickstart", "alg": "RS256", "use": "sig",
+              "n": b64url(bytes.fromhex(modulus)), "e": "AQAB"}
+    with tempfile.NamedTemporaryFile(mode="w", dir=KEY_DIRECTORY, delete=False) as output:
+        json.dump({"keys": [public]}, output); output.flush(); os.fsync(output.fileno())
+        os.chmod(output.name, 0o644)
+    os.replace(output.name, os.path.join(KEY_DIRECTORY, "jwks.json"))
 RESPONSES = []
 VERIFIED = []
 LOCK = threading.Lock()
@@ -30,13 +48,13 @@ def decode(part):
 
 def issue(subject="quickstart-user"):
     now = int(time.time())
-    header = b64url(json.dumps({"alg": "RS256", "typ": "JWT"}, separators=(",", ":")).encode())
+    header = b64url(json.dumps({"alg": "RS256", "typ": "loomspan-execution+jwt", "kid": "quickstart"}, separators=(",", ":")).encode())
     claims = b64url(json.dumps({"iss": ISSUER, "sub": subject, "aud": AUDIENCE,
-                                "iat": now, "exp": now + 600,
+                                "iat": now, "exp": now + 600, "token_use": "loomspan_execution",
                                 "roles": ["QUICKSTART_USER"]}, separators=(",", ":")).encode())
     signing_input = f"{header}.{claims}".encode()
     signature = subprocess.run(
-        ["openssl", "dgst", "-sha256", "-sign", os.path.join(HERE, "private.pem")],
+        ["openssl", "dgst", "-sha256", "-sign", PRIVATE_KEY],
         input=signing_input, check=True, capture_output=True).stdout
     return f"{header}.{claims}.{b64url(signature)}"
 
@@ -49,12 +67,15 @@ def verify(token):
     with tempfile.NamedTemporaryFile() as signature:
         signature.write(decode(parts[2])); signature.flush()
         checked = subprocess.run(
-            ["openssl", "dgst", "-sha256", "-verify", os.path.join(HERE, "public.pem"),
+            ["openssl", "dgst", "-sha256", "-verify", PUBLIC_KEY,
              "-signature", signature.name], input=signing_input, capture_output=True)
     if checked.returncode:
         raise ValueError("invalid signature")
+    header = json.loads(decode(parts[0]))
+    if header.get("alg") != "RS256" or header.get("typ") != "loomspan-execution+jwt" or header.get("kid") != "quickstart":
+        raise ValueError("invalid header")
     claims = json.loads(decode(parts[1]))
-    if (claims.get("iss") != ISSUER or AUDIENCE not in ([claims.get("aud")] if isinstance(claims.get("aud"), str)
+    if (claims.get("token_use") != "loomspan_execution" or claims.get("iss") != ISSUER or AUDIENCE not in ([claims.get("aud")] if isinstance(claims.get("aud"), str)
                                                          else claims.get("aud", []))
             or not claims.get("sub") or int(claims.get("exp", 0)) <= int(time.time())
             or "QUICKSTART_USER" not in claims.get("roles", [])):
@@ -137,4 +158,5 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    ThreadingHTTPServer(("0.0.0.0", 8081), Handler).serve_forever()
+    export_fresh_key()
+    ThreadingHTTPServer(("127.0.0.1", 8081), Handler).serve_forever()

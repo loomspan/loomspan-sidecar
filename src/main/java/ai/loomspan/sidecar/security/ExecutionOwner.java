@@ -13,7 +13,7 @@ public record ExecutionOwner(String issuer, String subject) {
 
     public static ExecutionOwner from(JwtAuthenticationToken authentication) {
         Objects.requireNonNull(authentication, "authentication");
-        var issuer = authentication.getToken().getIssuer();
-        return new ExecutionOwner(issuer == null ? null : issuer.toString(), authentication.getToken().getSubject());
+        var issuer = authentication.getToken().<String>getClaim("iss");
+        return new ExecutionOwner(issuer, authentication.getToken().getSubject());
     }
 }

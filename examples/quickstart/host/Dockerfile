@@ -1,6 +1,7 @@
 FROM python:3.13-slim@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285
+RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
 WORKDIR /host
-COPY host.py private.pem public.pem ./
+COPY host.py ./
 EXPOSE 8081
-USER 65534:65534
+USER 10001:10001
 ENTRYPOINT ["python", "/host/host.py"]

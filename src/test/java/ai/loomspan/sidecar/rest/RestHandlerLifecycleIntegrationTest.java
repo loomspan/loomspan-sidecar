@@ -33,7 +33,7 @@ class RestHandlerLifecycleIntegrationTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void sidecarWorkersClientsAndObserversSurviveNormalClose(boolean managementAndAsync) throws Exception {
+    void sidecarWorkersClientsAndObserversSurviveNormalClose(boolean webAndAsync) throws Exception {
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -67,37 +67,31 @@ class RestHandlerLifecycleIntegrationTest {
                 """.formatted(server.getAddress().getPort()));
         ai.loomspan.sidecar.support.SidecarApplicationFixture.seedDatabase(temporaryDirectory.resolve("sidecar.db"),
                 List.of(skill), Files.readString(routes));
-        var management = new java.util.concurrent.atomic.AtomicReference<org.springframework.context.ConfigurableApplicationContext>();
-        var context = application(managementAndAsync).listeners(event -> {
-            if (event instanceof org.springframework.boot.web.server.context.WebServerInitializedEvent initialized
-                    && initialized.getApplicationContext().getParent() != null) {
-                management.set((org.springframework.context.ConfigurableApplicationContext) initialized.getApplicationContext());
-            }
-        }).run(
-                        "--server.port=0", "--management.server.port=0",
+        var context = application(webAndAsync).run(
+                        "--server.port=0",
                         "--loomspan-sidecar.storage.database-path=" + temporaryDirectory.resolve("sidecar.db"),
                         "--loomspan.observability.enabled=false",
                         "--loomspan.shutdown.timeout=3s",
                         "--loomspan-sidecar.executions.max-concurrent=1",
                         "--loomspan-sidecar.executions.diagnostics=ALWAYS",
-                        "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+                        "--loomspan-sidecar.trust.mode=file",
                         "--loomspan-sidecar.auth.jwt.audience=sidecar",
-                        "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem");
+                        "--loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json");
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             RestTargetClients clients = context.getBean(GenerationRestResources.class)
                     .require(context.getBean(ai.loomspan.api.SkillReloader.class).snapshot().generationId()).clients();
             ExecutionCoordinator coordinator = context.getBean(ExecutionCoordinator.class);
-            JwtAuthenticationToken authentication = authentication();
+            JwtAuthenticationToken authentication = authentication(context);
             ExecutionOwner owner = ExecutionOwner.from(authentication);
             var id = coordinator.admit("echoRest", Map.of("message", "x"), 10, owner, authentication);
             assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
             java.util.UUID queued = null;
-            if (managementAndAsync) {
-                assertThat(management.get()).isNotNull();
-                management.get().close();
+            if (webAndAsync) {
+                try (var child = new org.springframework.context.support.GenericApplicationContext(context)) {
+                    child.refresh();
+                }
                 assertThat(clients.isClosed()).isFalse();
-                // Boot can propagate the child's readiness change; Sidecar admission
-                // and its outbound clients must remain owned by the parent context.
+                // A child context close must not close parent-owned admission or clients.
                 queued = coordinator.admit("echoRest", Map.of("message", "queued"), 10, owner, authentication);
                 assertThat(coordinator.find(queued, owner)).isPresent();
             }
@@ -122,7 +116,7 @@ class RestHandlerLifecycleIntegrationTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void frameworkCutoffBoundsBlockedWorkWithoutEarlyOrSecondSidecarTeardown(boolean managementAndAsync) throws Exception {
+    void frameworkCutoffBoundsBlockedWorkWithoutEarlyOrSecondSidecarTeardown(boolean webAndAsync) throws Exception {
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch neverRelease = new CountDownLatch(1);
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -151,20 +145,20 @@ class RestHandlerLifecycleIntegrationTest {
                 """.formatted(server.getAddress().getPort()));
         ai.loomspan.sidecar.support.SidecarApplicationFixture.seedDatabase(temporaryDirectory.resolve("sidecar.db"),
                 List.of(skill), Files.readString(routes));
-        var context = application(managementAndAsync).run(
-                        "--server.port=0", "--management.server.port=0",
+        var context = application(webAndAsync).run(
+                        "--server.port=0",
                         "--loomspan-sidecar.storage.database-path=" + temporaryDirectory.resolve("sidecar.db"),
                         "--loomspan.observability.enabled=false",
                         "--loomspan.shutdown.timeout=200ms",
                         "--spring.lifecycle.timeout-per-shutdown-phase=50ms",
-                        "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+                        "--loomspan-sidecar.trust.mode=file",
                         "--loomspan-sidecar.auth.jwt.audience=sidecar",
-                        "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem");
+                        "--loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json");
         RestTargetClients clients = context.getBean(GenerationRestResources.class)
                 .require(context.getBean(ai.loomspan.api.SkillReloader.class).snapshot().generationId()).clients();
         try {
             ExecutionCoordinator coordinator = context.getBean(ExecutionCoordinator.class);
-            JwtAuthenticationToken authentication = authentication();
+            JwtAuthenticationToken authentication = authentication(context);
             coordinator.admit("cutoffRest", Map.of(), 2, ExecutionOwner.from(authentication), authentication);
             assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
             long started = System.nanoTime();
@@ -179,17 +173,16 @@ class RestHandlerLifecycleIntegrationTest {
         }
     }
 
-    private JwtAuthenticationToken authentication() {
-        var jwt = Jwt.withTokenValue("lifecycle-token").header("alg", "none")
-                .issuer("https://issuer.test").subject("lifecycle-owner")
-                .issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(300)).build();
+    private JwtAuthenticationToken authentication(org.springframework.context.ConfigurableApplicationContext context) {
+        var jwt = context.getBean(org.springframework.security.oauth2.jwt.JwtDecoder.class).decode(
+                ai.loomspan.sidecar.support.JwtTestTokens.token("lifecycle-owner", List.of("ROLE_USER")));
         return new JwtAuthenticationToken(jwt, List.of(new SimpleGrantedAuthority("ROLE_USER")));
     }
 
-    private SpringApplicationBuilder application(boolean managementAndAsync) {
+    private SpringApplicationBuilder application(boolean webAndAsync) {
         var builder = new SpringApplicationBuilder(LoomspanSidecarApplication.class)
-                .web(managementAndAsync ? WebApplicationType.SERVLET : WebApplicationType.NONE);
-        if (managementAndAsync) builder.sources(AsyncEvents.class);
+                .web(webAndAsync ? WebApplicationType.SERVLET : WebApplicationType.NONE);
+        if (webAndAsync) builder.sources(AsyncEvents.class);
         return builder;
     }
 

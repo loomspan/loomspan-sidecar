@@ -153,12 +153,12 @@ def publish_fixture(opener, origin, csrf):
         yaml = (fixture / "skills" / filename).read_text().replace("model: localplanner", "model: primary")
         skill_documents.append({"sourceName": filename, "yaml": yaml})
     routes = (fixture / "rest-routes.yaml").read_text().replace(
-        "${QUICKSTART_HOST_URL:http://host:8081}", "${TARGET_URL}")
+        "http://127.0.0.1:8081", "${TARGET_URL}")
     execution = """loomspan:
   connections:
     primary:
       driver: openai
-      base-url: http://host:8081/v1
+      base-url: http://127.0.0.1:8081/v1
       api-key-ref: provider.primary.key
   models:
     primary:
@@ -202,7 +202,7 @@ def browser(origin, email, password, setup_link=None, recovery_link=None, editor
 def verify_shutdown(image_name, database_dir, environment):
     image.run(sys.executable, str(ROOT / "scripts/verify-shutdown.py"), "--image", image_name,
               "--database-dir", str(database_dir), "--api-port", str(port()),
-              "--host-port", str(port()), "--management-port", str(port()),
+              "--host-port", str(port()),
               env=environment, timeout=240)
 
 
@@ -229,13 +229,12 @@ def main():
             "SIDECAR_IMAGE": args.image, "HTTPS_BIND_ADDRESS": "127.0.0.1", "HTTPS_PORT": str(https_port),
             "HTTP_BIND_ADDRESS": "127.0.0.1", "HTTP_PORT": str(port()), "SITE_HOST": "localhost",
             "CADDY_CONFIG_FILE": str(ROOT / "examples/production/Caddyfile.internal"),
-            "JWT_PUBLIC_KEY_FILE": str(ROOT / "examples/quickstart/host/public.pem"),
-            "JWT_ISSUER_URI": "http://host:8081", "JWT_AUDIENCE": "loomspan-sidecar",
+            "JWT_KEY_DIRECTORY": str(root / "keys"), "JWT_AUDIENCE": "loomspan-sidecar",
             "LOOMSPAN_SIDECAR_CREDENTIAL_KEY": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
             "SETUP_TOKEN": "", "SMTP_FROM": "", "EXTERNAL_BASE_URL": origin,
             "SMTP_HOST": "", "SMTP_PORT": "2525", "SMTP_USERNAME": "", "SMTP_PASSWORD": "",
             "SMTP_AUTH": "false", "SMTP_STARTTLS": "false", "URL_VARIABLES": "TARGET_URL",
-            "TARGET_URL": "http://host:8081"}
+            "TARGET_URL": "http://127.0.0.1:8081"}
         compose_environment = dict(os.environ)
 
         def write_env():
@@ -243,14 +242,22 @@ def main():
             # Compose gives process variables precedence over --env-file.
             compose_environment.update(values)
 
+        (root / "keys").mkdir(mode=0o777)
+        (root / "keys").chmod(0o777)  # Disposable public export only; app UID 10001 must write.
         write_env()
         override = root / "fixture.json"
         override.write_text(json.dumps({"services": {
             "host": {"build": {"context": str(ROOT / "examples/quickstart/host")},
-                     "environment": {"QUICKSTART_ISSUER": "http://host:8081",
+                     "environment": {"QUICKSTART_ISSUER": "http://127.0.0.1:8081",
                                      "QUICKSTART_AUDIENCE": "loomspan-sidecar"},
-                     "networks": ["backend"],
-                     "ports": [f"127.0.0.1:{host_port}:8081"]},
+                     "network_mode": "service:sidecar",
+                     "depends_on": {"sidecar": {"condition": "service_started"}},
+                     "volumes": [{"type": "bind", "source": str(root / "keys"), "target": "/keys"}]},
+            "sidecar": {"ports": [f"127.0.0.1:{host_port}:18081"]},
+            "fixture-ingress": {"image": "caddy:2.10.2", "network_mode": "service:sidecar",
+                     "depends_on": {"sidecar": {"condition": "service_started"}},
+                     "volumes": [{"type": "bind", "source": str(ROOT / "examples/quickstart/Caddyfile"),
+                                  "target": "/etc/caddy/Caddyfile", "read_only": True}]},
             "smtp": {"image": "python:3.13-slim", "entrypoint": ["python", "/fixture/smtp-capture.py"],
                      "networks": ["backend"],
                      "volumes": [{"type": "bind", "source": str(ROOT / "scripts/fixtures/smtp-capture.py"),
@@ -271,12 +278,15 @@ def main():
             assert "LOOMSPAN_CONNECTIONS_PRIMARY_API_KEY" not in service["environment"]
             assert len([key for key in config["services"] if key == "sidecar"]) == 1
             assert service["user"] == "10001:10001"
-            assert not service.get("ports"), service.get("ports")
-            assert len(config["services"]["caddy"]["ports"]) == 2
+            assert len(service["ports"]) == 3
+            assert not config["services"]["caddy"].get("ports")
+            assert config["services"]["caddy"]["network_mode"] == "service:sidecar"
+            assert service["environment"]["SERVER_ADDRESS"] == "127.0.0.1"
+            assert "MANAGEMENT_SERVER_ADDRESS" not in service["environment"]
             assert service["stop_grace_period"] in ("45s", 45000000000), service["stop_grace_period"]
             assert service["environment"]["LOOMSPAN_SIDECAR_SECURE_COOKIE"] == "true"
             mounts = {mount["target"]: mount for mount in service["volumes"]}
-            assert mounts["/sidecar/keys/public.pem"]["read_only"]
+            assert mounts["/sidecar/keys"]["read_only"]
             assert mounts["/sidecar/data"]["type"] == "volume"
             assert service["environment"]["SERVER_SSL_ENABLED"] == "false"
             image.run("docker", "volume", "create", volume, capture=True, timeout=20)
@@ -288,17 +298,16 @@ def main():
                                 capture=True).stdout.strip()
             assert sidecar
             wait(lambda: "UP" in image.run("docker", "exec", sidecar, "curl", "--fail", "--silent",
-                                            "http://localhost:9091/actuator/health/readiness", capture=True,
+                                            "http://localhost:8080/actuator/health/readiness", capture=True,
                                             timeout=10).stdout, "readiness")
             assert "UP" in image.run("docker", "exec", sidecar, "curl", "--fail", "--silent",
-                                      "http://localhost:9091/actuator/health/liveness", capture=True).stdout
+                                      "http://localhost:8080/actuator/health/liveness", capture=True).stdout
             assert image.run("docker", "exec", sidecar, "id", "-u", capture=True).stdout.strip() == "10001"
             image.run("docker", "exec", sidecar, "sh", "-c",
                       "test ! -e /fixture/smtp-capture.py && test ! -e /host/host.py")
             assert image.run("docker", "exec", sidecar, "stat", "-c", "%u:%g", "/sidecar/data/sidecar.db",
                              capture=True).stdout.strip() == "10001:10001"
             ports = json.loads(image.run("docker", "inspect", sidecar, capture=True).stdout)[0]["NetworkSettings"]["Ports"]
-            assert ports.get("9091/tcp") is None, ports
             assert ports.get("8080/tcp") is None, ports
             with socket.create_connection(("127.0.0.1", https_port), timeout=5) as raw:
                 with ssl._create_unverified_context().wrap_socket(raw, server_hostname="localhost") as secure:
@@ -322,8 +331,9 @@ def main():
 
             values["SETUP_TOKEN"] = setup
             write_env()
-            image.run(*command, "up", "-d", "--force-recreate", "sidecar",
+            image.run(*command, "up", "-d", "--force-recreate", "sidecar", "host", "caddy", "fixture-ingress",
                       env=compose_environment, timeout=120)
+            token = json.loads(image.wait_for(f"http://127.0.0.1:{host_port}/token"))["access_token"]
             wait(lambda: send(opener, origin + "/management/setup")[0] == 200, "setup page")
             page = need(*send(opener, origin + "/management/setup"), 200)
             need(*send(opener, origin + "/api/management/setup", "POST",
@@ -337,8 +347,9 @@ def main():
             values["SMTP_FROM"] = "sidecar@example.test"
             values["SMTP_HOST"] = "smtp"
             write_env()
-            image.run(*command, "up", "-d", "--force-recreate", "sidecar",
+            image.run(*command, "up", "-d", "--force-recreate", "sidecar", "host", "caddy", "fixture-ingress",
                       env=compose_environment, timeout=120)
+            token = json.loads(image.wait_for(f"http://127.0.0.1:{host_port}/token"))["access_token"]
             wait(lambda: send(opener, origin + "/management/login")[0] == 200, "mail-enabled login")
 
             print("CHECK management API login", flush=True)
@@ -415,8 +426,9 @@ def main():
 
             values["SETUP_TOKEN"] = ""
             write_env()
-            image.run(*command, "up", "-d", "--force-recreate", "sidecar",
+            image.run(*command, "up", "-d", "--force-recreate", "sidecar", "host", "caddy", "fixture-ingress",
                       env=compose_environment, timeout=120)
+            token = json.loads(image.wait_for(f"http://127.0.0.1:{host_port}/token"))["access_token"]
             wait(lambda: send(opener, origin + "/management/login")[0] == 200, "recreated login")
             browser(origin, email, password, recovery_link=recovery.group(0))
             assert any("identityLeaf" in str(item) for item in json.loads(
@@ -445,15 +457,18 @@ def main():
             assert re.fullmatch(r"[A-Za-z0-9_-]{43}", second_setup) and second_setup != setup
             second_values = dict(values, HTTPS_PORT=str(second_port), HTTP_PORT=str(port()),
                                  EXTERNAL_BASE_URL=second_origin,
-                                 TARGET_URL="http://fixture-destination:8081", URL_VARIABLES="",
+                                 TARGET_URL="http://localhost:8081", URL_VARIABLES="",
+                                 JWT_KEY_DIRECTORY=str(root / "destination-keys"),
                                  SETUP_TOKEN=second_setup)
             second_env = root / "destination.env"
             second_env.write_text("".join(f"{key}={value}\n" for key, value in second_values.items()))
             second_environment = dict(os.environ, **second_values)
+            (root / "destination-keys").mkdir(mode=0o777)
+            (root / "destination-keys").chmod(0o777)  # Independent disposable export.
             second_override = root / "destination.json"
             destination_services = json.loads(override.read_text())["services"]
-            destination_services["host"]["ports"] = [f"127.0.0.1:{second_host_port}:8081"]
-            destination_services["host"]["networks"] = {"backend": {"aliases": ["fixture-destination"]}}
+            destination_services["sidecar"]["ports"] = [f"127.0.0.1:{second_host_port}:18081"]
+            destination_services["host"]["volumes"][0]["source"] = str(root / "destination-keys")
             destination_services["smtp"]["ports"] = [f"127.0.0.1:{second_smtp_port}:8025"]
             second_override.write_text(json.dumps({"services": destination_services}))
             second_command = ["docker", "compose", "--project-name", second_project,
@@ -499,8 +514,9 @@ def main():
                 second_values["URL_VARIABLES"] = "TARGET_URL"
                 second_env.write_text("".join(f"{key}={value}\n" for key, value in second_values.items()))
                 second_environment.update(second_values)
-                image.run(*second_command, "up", "-d", "--force-recreate", "sidecar",
+                image.run(*second_command, "up", "-d", "--force-recreate", "sidecar", "host", "caddy", "fixture-ingress",
                           env=second_environment, timeout=120)
+                second_token = json.loads(image.wait_for(f"http://127.0.0.1:{second_host_port}/token"))["access_token"]
                 wait(lambda: send(second_client, second_origin + "/management/login")[0] == 200,
                      "destination with corrected binding")
                 second_client = client()
@@ -543,7 +559,7 @@ def main():
                 verified = json.loads(need(*send(plain, f"http://127.0.0.1:{second_host_port}/status"), 200))[
                     "verified"]
                 assert verified and verified[-1]["path"] == "/callbacks/identity"
-                assert verified[-1]["host"] == "fixture-destination:8081"
+                assert verified[-1]["host"] == "localhost:8081"
                 imported_configuration = json.loads(need(*send(second_client, second_origin +
                     "/api/management/configuration/current"), 200))["published"]["configuration"]
                 assert imported_configuration == source_configuration
@@ -569,13 +585,14 @@ def main():
                                "identityLeaf")["configurationSnapshotId"] == rolled["localId"]
                 browser(second_origin, "destination-admin@example.test", password,
                         history_id=rolled["localId"])
-                image.run(*second_command, "up", "-d", "--force-recreate", "sidecar",
+                image.run(*second_command, "up", "-d", "--force-recreate", "sidecar", "host", "caddy", "fixture-ingress",
                           env=second_environment, timeout=120)
+                second_token = json.loads(image.wait_for(f"http://127.0.0.1:{second_host_port}/token"))["access_token"]
                 destination_container = image.run(*second_command, "ps", "-q", "sidecar",
                                                   env=second_environment, capture=True).stdout.strip()
                 assert destination_container
                 wait(lambda: "UP" in image.run("docker", "exec", destination_container, "curl", "--fail",
-                                                 "--silent", "http://localhost:9091/actuator/health/readiness",
+                                                 "--silent", "http://localhost:8080/actuator/health/readiness",
                                                  capture=True, timeout=10).stdout, "recreated destination readiness")
                 assert execute(second_client, second_origin, second_token,
                                "identityLeaf")["configurationSnapshotId"] == rolled["localId"]
@@ -654,12 +671,13 @@ def main():
                                          "for f in /data/sidecar.db*; do basename \"$f\"; done",
                                          capture=True, timeout=30).stdout.splitlines())
             assert restored_set == source_set
-            image.run(*command, "up", "-d", "sidecar", env=compose_environment, timeout=120)
+            image.run(*command, "up", "-d", "--force-recreate", "sidecar", "host", "caddy", "fixture-ingress", env=compose_environment, timeout=120)
+            token = json.loads(image.wait_for(f"http://127.0.0.1:{host_port}/token"))["access_token"]
             restored_container = image.run(*command, "ps", "-q", "sidecar",
                                            env=compose_environment, capture=True).stdout.strip()
             assert restored_container
             wait(lambda: "UP" in image.run("docker", "exec", restored_container, "curl", "--fail", "--silent",
-                                            "http://localhost:9091/actuator/health/readiness",
+                                            "http://localhost:8080/actuator/health/readiness",
                                             capture=True, timeout=10).stdout, "restored readiness")
             browser(origin, email, password)
             restored = client()
@@ -684,7 +702,8 @@ def main():
                                       "admin", "issue-password-reset", "--database", "/sidecar/data/sidecar.db",
                                       "--email", email, env=compose_environment, capture=True, timeout=60)
             assert re.fullmatch(r"[A-Za-z0-9_-]{43}\n?", offline_reset.stdout)
-            image.run(*command, "start", "sidecar", env=compose_environment, timeout=60)
+            image.run(*command, "up", "-d", "--force-recreate", "sidecar", "host", "caddy", "fixture-ingress",
+                      env=compose_environment, timeout=120)
             wait(lambda: send(client(), origin + "/management/password/reset")[0] == 200,
                  "manual reset page")
             recovery_client = client()

@@ -78,15 +78,14 @@ class ExecutionConfigurationCorrelationIntegrationTest {
                             "--loomspan.connections.fixture.api-key=${fixture.model.key}",
                             "--loomspan.models.fixture-model.connection=fixture",
                             "--loomspan.models.fixture-model.provider-model=fixture-provider-model",
-                            "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+                            "--loomspan-sidecar.trust.mode=file",
                             "--loomspan-sidecar.auth.jwt.audience=sidecar",
-                            "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem")) {
+                            "--loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json")) {
                 var service = context.getBean(RuntimeConfigurationService.class);
                 var coordinator = context.getBean(ExecutionCoordinator.class);
                 var oldSnapshot = service.publishedSnapshot();
-                var jwt = Jwt.withTokenValue("test-token").header("alg", "none")
-                        .issuer("https://issuer.test").subject("owner")
-                        .issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(300)).build();
+                var jwt = context.getBean(org.springframework.security.oauth2.jwt.JwtDecoder.class).decode(
+                        ai.loomspan.sidecar.support.JwtTestTokens.token("owner", List.of()));
                 var authentication = new JwtAuthenticationToken(jwt);
                 var owner = ExecutionOwner.from(authentication);
                 try {
@@ -164,16 +163,15 @@ class ExecutionConfigurationCorrelationIntegrationTest {
                             "--loomspan-sidecar.storage.database-path=" + database,
                             "--loomspan.observability.enabled=false",
                             "--fixture.model.key=local-test-key",
-                            "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+                            "--loomspan-sidecar.trust.mode=file",
                             "--loomspan-sidecar.auth.jwt.audience=sidecar",
-                            "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem")) {
+                            "--loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json")) {
                 var store = context.getBean(ConfigurationSnapshotStore.class);
                 var service = context.getBean(RuntimeConfigurationService.class);
                 var coordinator = context.getBean(ExecutionCoordinator.class);
                 var a = store.current();
-                var jwt = Jwt.withTokenValue("test-token").header("alg", "none")
-                        .issuer("https://issuer.test").subject("owner")
-                        .issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(300)).build();
+                var jwt = context.getBean(org.springframework.security.oauth2.jwt.JwtDecoder.class).decode(
+                        ai.loomspan.sidecar.support.JwtTestTokens.token("owner", List.of()));
                 var authentication = new JwtAuthenticationToken(jwt);
                 var owner = ExecutionOwner.from(authentication);
                 var id = coordinator.admit("mountedYamlSkill", Map.of(), 2, owner, authentication);
@@ -220,9 +218,9 @@ class ExecutionConfigurationCorrelationIntegrationTest {
                             "--loomspan-sidecar.storage.database-path=" + database,
                             "--loomspan.observability.enabled=false",
                             "--loomspan-sidecar.executions.diagnostics=NEVER",
-                            "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+                            "--loomspan-sidecar.trust.mode=file",
                             "--loomspan-sidecar.auth.jwt.audience=sidecar",
-                            "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem")) {
+                            "--loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json")) {
                 var store = context.getBean(ConfigurationSnapshotStore.class);
                 var service = context.getBean(RuntimeConfigurationService.class);
                 var coordinator = context.getBean(ExecutionCoordinator.class);
@@ -231,9 +229,8 @@ class ExecutionConfigurationCorrelationIntegrationTest {
                 draft.replaceContent(new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
                 assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(service, draft, List.of()).successful()).isTrue();
                 coordinator.afterHandoff(admitted -> context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(draft));
-                var jwt = Jwt.withTokenValue("test-token").header("alg", "none")
-                        .issuer("https://issuer.test").subject("owner")
-                        .issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(300)).build();
+                var jwt = context.getBean(org.springframework.security.oauth2.jwt.JwtDecoder.class).decode(
+                        ai.loomspan.sidecar.support.JwtTestTokens.token("owner", List.of()));
                 var authentication = new JwtAuthenticationToken(jwt);
                 var owner = ExecutionOwner.from(authentication);
                 var id = coordinator.admit("echoRest", Map.of(), 2, owner, authentication);

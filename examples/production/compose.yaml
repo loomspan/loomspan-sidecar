@@ -9,14 +9,10 @@ services:
       - ${CADDY_CONFIG_FILE:-./Caddyfile.internal}:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
-    ports:
-      - "${HTTPS_BIND_ADDRESS:-127.0.0.1}:${HTTPS_PORT:-8443}:${HTTPS_PORT:-8443}"
-      - "${HTTP_BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-8080}:80"
-    networks:
-      - backend
+    network_mode: "service:sidecar"
     depends_on:
       sidecar:
-        condition: service_healthy
+        condition: service_started
     restart: unless-stopped
   sidecar:
     image: ${SIDECAR_IMAGE:?Set SIDECAR_IMAGE to the locally built Sidecar image}
@@ -24,11 +20,11 @@ services:
     environment:
       SERVER_SSL_ENABLED: "false"
       SERVER_FORWARD_HEADERS_STRATEGY: framework
-      MANAGEMENT_SERVER_SSL_ENABLED: "false"
       LOOMSPAN_SIDECAR_SECURE_COOKIE: "true"
-      LOOMSPAN_SIDECAR_AUTH_JWT_ISSUER_URI: ${JWT_ISSUER_URI:?Set JWT_ISSUER_URI}
-      LOOMSPAN_SIDECAR_AUTH_JWT_AUDIENCE: ${JWT_AUDIENCE:?Set JWT_AUDIENCE}
-      LOOMSPAN_SIDECAR_AUTH_JWT_PUBLIC_KEY_LOCATION: file:/sidecar/keys/public.pem
+      SERVER_ADDRESS: 127.0.0.1
+      LOOMSPAN_SIDECAR_TRUST_MODE: colocated
+      LOOMSPAN_SIDECAR_TRUST_COLOCATED_KEY_DIRECTORY: /sidecar/keys
+      LOOMSPAN_SIDECAR_AUTH_JWT_AUDIENCE: ${JWT_AUDIENCE:-loomspan-sidecar}
       LOOMSPAN_SIDECAR_CREDENTIAL_KEY: ${LOOMSPAN_SIDECAR_CREDENTIAL_KEY:-}
       LOOMSPAN_SIDECAR_CONFIGURATION_MODE: ${LOOMSPAN_SIDECAR_CONFIGURATION_MODE:-database}
       LOOMSPAN_SIDECAR_SETUP_TOKEN: ${SETUP_TOKEN:-}
@@ -46,11 +42,14 @@ services:
       LOOMSPAN_SHUTDOWN_TIMEOUT: 30s
     volumes:
       - sidecar-data:/sidecar/data
-      - ${JWT_PUBLIC_KEY_FILE:?Set JWT_PUBLIC_KEY_FILE}:/sidecar/keys/public.pem:ro
+      - ${JWT_KEY_DIRECTORY:?Set JWT_KEY_DIRECTORY}:/sidecar/keys:ro
     networks:
       - backend
+    ports:
+      - "${HTTPS_BIND_ADDRESS:-127.0.0.1}:${HTTPS_PORT:-8443}:${HTTPS_PORT:-8443}"
+      - "${HTTP_BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-8080}:80"
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:9091/actuator/health/readiness"]
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/actuator/health/readiness"]
       interval: 10s
       timeout: 2s
       start_period: 30s

@@ -3,6 +3,7 @@ package ai.loomspan.sidecar.rest;
 import ai.loomspan.api.RestSkillHandler;
 import ai.loomspan.api.RestSkillInvocation;
 import ai.loomspan.api.SkillException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -13,6 +14,8 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.util.UriUtils;
 
 import java.net.URI;
+import java.time.Clock;
+import java.time.Instant;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -23,9 +26,14 @@ import java.util.Map;
 @Component
 final class GenericRestSkillHandler implements RestSkillHandler {
     private final GenerationRestResources generations;
+    private final Clock clock;
 
-    GenericRestSkillHandler(GenerationRestResources generations) {
+    GenericRestSkillHandler(GenerationRestResources generations) { this(generations, Clock.systemUTC()); }
+
+    @Autowired
+    GenericRestSkillHandler(GenerationRestResources generations, Clock clock) {
         this.generations = generations;
+        this.clock = clock;
     }
 
     @Override
@@ -45,16 +53,22 @@ final class GenericRestSkillHandler implements RestSkillHandler {
                     .uri(uri)
                     .header(HttpHeaders.ACCEPT, "application/json, text/*");
             target.auth().headers().forEach(request::header);
+            Instant expiration = null;
             if (target.auth().mode() == RestRouteConfiguration.AuthMode.CALLER_PASSTHROUGH) {
                 var authentication = SecurityContextHolder.getContext().getAuthentication();
                 if (!(authentication instanceof JwtAuthenticationToken jwt)) {
                     throw new SkillException(BoundedRestResponse.message(target.name(),
                             "caller-passthrough requires JWT authentication", null));
                 }
+                expiration = jwt.getToken().getExpiresAt();
                 request.header(HttpHeaders.AUTHORIZATION, "Bearer " + jwt.getToken().getTokenValue());
             }
             if (route.method() == RestRouteConfiguration.Method.POST) {
                 request.contentType(MediaType.APPLICATION_JSON).body(remaining);
+            }
+            if (target.auth().mode() == RestRouteConfiguration.AuthMode.CALLER_PASSTHROUGH
+                    && (expiration == null || !clock.instant().isBefore(expiration))) {
+                throw new SkillException("execution credential expired");
             }
             String result = request.exchange((ignored, response) ->
                     BoundedRestResponse.read(target.name(), target.maxResponseSize(), response));

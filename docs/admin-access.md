@@ -16,6 +16,8 @@ Its only successful stdout is the credential and newline.
 
 ## Local quickstart (loopback HTTP)
 
+Prepare the public-key volume first using the [quickstart fixture instructions](../examples/quickstart/README.md).
+
 PowerShell, from the repository root:
 
 ```powershell
@@ -49,19 +51,19 @@ the **setup credential** field, then enter the administrator email, chosen
 password, and confirmation. The setup credential is not the login password.
 Sign in at <http://localhost:8080/management/login> with the email and chosen
 password.
-The management console is on port 8080; port 9091 is health only. Setup closes
+Management, execution and health share application port 8080. Setup closes
 permanently in this database once activated, even while the setup credential
 remains configured. Remove the secret from the environment and recreate the
 container (a restart keeps its old environment):
 
 ```powershell
 Remove-Item Env:LOOMSPAN_SIDECAR_SETUP_TOKEN
-docker compose -f examples/quickstart/compose.yaml up -d --force-recreate sidecar
+docker compose -f examples/quickstart/compose.yaml up -d --force-recreate sidecar host ingress
 ```
 
 ```sh
 unset LOOMSPAN_SIDECAR_SETUP_TOKEN
-docker compose -f examples/quickstart/compose.yaml up -d --force-recreate sidecar
+docker compose -f examples/quickstart/compose.yaml up -d --force-recreate sidecar host ingress
 ```
 
 Quickstart stores SQLite in the persistent `quickstart_sidecar-data` Compose
@@ -94,13 +96,16 @@ Clear `SETUP_TOKEN` from the shell and env file, then recreate Sidecar:
 
 ```powershell
 Remove-Item Env:SETUP_TOKEN
-docker compose --project-name production --env-file examples/production/production.env -f examples/production/compose.yaml up -d --force-recreate sidecar
+docker compose --project-name production --env-file examples/production/production.env -f examples/production/compose.yaml up -d --force-recreate sidecar caddy
 ```
 
 ```sh
 unset SETUP_TOKEN
-docker compose --project-name production --env-file examples/production/production.env -f examples/production/compose.yaml up -d --force-recreate sidecar
+docker compose --project-name production --env-file examples/production/production.env -f examples/production/compose.yaml up -d --force-recreate sidecar caddy
 ```
+
+Include your application service in the same recreation command when it shares
+Sidecar's network namespace, as described in the production deployment guide.
 
 ## Recover an existing administrator without SMTP
 

@@ -19,12 +19,11 @@ import java.nio.file.Path;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-        "management.server.port=0",
         "loomspan.observability.enabled=true",
         "loomspan.observability.auth.api-key=0123456789abcdef0123456789abcdef",
-        "loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+        "loomspan-sidecar.trust.mode=file",
         "loomspan-sidecar.auth.jwt.audience=sidecar",
-        "loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem"
+        "loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json"
 })
 class ConsoleSecurityIntegrationTest {
     @TempDir static Path storageDirectory;

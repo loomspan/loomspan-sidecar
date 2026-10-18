@@ -73,9 +73,8 @@ def main():
     parser.add_argument("--image", required=True)
     parser.add_argument("--api-port", type=int, default=8080)
     parser.add_argument("--host-port", type=int, default=8081)
-    parser.add_argument("--management-port", type=int, default=9091)
     args = parser.parse_args()
-    ports = (args.api_port, args.host_port, args.management_port)
+    ports = (args.api_port, args.host_port)
     if any(port < 1 or port > 65535 for port in ports) or len(set(ports)) != len(ports):
         parser.error("host ports must be distinct values from 1 through 65535")
 
@@ -95,18 +94,23 @@ def main():
     compose = ROOT / "examples/quickstart/compose.yaml"
     environment = dict(os.environ, SIDECAR_IMAGE=args.image,
                        LOOMSPAN_SIDECAR_SETUP_TOKEN=generated[0].stdout.strip(),
+                       SIDECAR_KEYS_VOLUME=project + "-keys",
                        SIDECAR_API_PORT=str(args.api_port),
-                       QUICKSTART_HOST_PORT=str(args.host_port),
-                       SIDECAR_MANAGEMENT_PORT=str(args.management_port))
+                       QUICKSTART_HOST_PORT=str(args.host_port))
     api_url = f"http://127.0.0.1:{args.api_port}"
     host_url = f"http://127.0.0.1:{args.host_port}"
-    management_url = f"http://127.0.0.1:{args.management_port}"
+    management_url = api_url
     try:
         rendered = json.loads(run("docker", "compose", "-p", project, "-f", str(compose),
                                   "config", "--format", "json", env=environment, capture=True).stdout)
         for service in rendered["services"].values():
             assert all(binding.get("host_ip") == "127.0.0.1" for binding in service.get("ports", [])), \
                 "Development HTTP ports must bind only to loopback"
+        assert rendered["services"]["host"]["network_mode"] == "service:sidecar"
+        assert rendered["services"]["ingress"]["network_mode"] == "service:sidecar"
+        run("docker", "volume", "create", environment["SIDECAR_KEYS_VOLUME"])
+        run("docker", "run", "--rm", "--user", "0:0", "-v", environment["SIDECAR_KEYS_VOLUME"] + ":/keys",
+            "--entrypoint", "sh", args.image, "-c", "chown 10001:10001 /keys && chmod 700 /keys")
         run("docker", "compose", "-p", project, "-f", str(compose), "up", "-d", "--build", env=environment)
         wait_for(management_url + "/actuator/health/readiness")
         liveness = wait_for(management_url + "/actuator/health/liveness")
@@ -145,7 +149,7 @@ def main():
         assert re.fullmatch(r"[A-Za-z0-9_-]{43}\n?", reset.stdout), "reset output contract"
         environment["LOOMSPAN_SIDECAR_SETUP_TOKEN"] = ""
         run("docker", "compose", "-p", project, "-f", str(compose), "up", "-d", "--force-recreate",
-            "sidecar", env=environment)
+            "sidecar", "host", "ingress", env=environment)
         wait_for(management_url + "/actuator/health/readiness")
         recovery_browser = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
         reset_page = recovery_browser.open(api_url + "/management/password/reset").read().decode()
@@ -167,6 +171,7 @@ def main():
     finally:
         require_cleanup("docker", "compose", "-p", project, "-f", str(compose), "down", "--volumes",
                         "--remove-orphans", env=environment)
+        require_cleanup("docker", "volume", "rm", environment["SIDECAR_KEYS_VOLUME"])
 
 
 if __name__ == "__main__":

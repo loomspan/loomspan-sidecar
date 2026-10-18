@@ -167,45 +167,45 @@ outright.
 
 ## Acceptance criteria
 
-- [ ] Focused wiring tests show trust keys sourced from the configured JWKS file
+- [x] Focused wiring tests show trust keys sourced from the configured JWKS file
       in both file and database application ConfigurationMode. Neither mode
       reads trust from the database.
-- [ ] These all fail startup with clear messages:
+- [x] These all fail startup with clear messages:
       - a missing trust mode (message names the property, options and
         quickstart);
       - settings from another mode;
       - a missing colocated key directory;
       - a colocated non-loopback bind.
       Packaged Sidecar configuration sets no mode.
-- [ ] Each key rule violation (non-RSA, under 2048 bits, missing or duplicate
+- [x] Each key rule violation (non-RSA, under 2048 bits, missing or duplicate
       `kid`, wrong `use`/`alg`, private members) rejects the whole file.
       `x5c` and unknown members are ignored.
-- [ ] Missing, unreadable, malformed and empty files each stop execution
+- [x] Missing, unreadable, malformed and empty files each stop execution
       authentication and readiness with no last-good fallback. A corrected file
       recovers automatically within the documented interval.
-- [ ] Key-set publication is atomic. An unknown `kid` triggers a rate-limited
+- [x] Key-set publication is atomic. An unknown `kid` triggers a rate-limited
       reload.
-- [ ] Each invalid-JWT variant is rejected: signature, `typ`, `token_use`,
+- [x] Each invalid-JWT variant is rejected: signature, `typ`, `token_use`,
       audience, expiry and claim shape. A token signed by an untrusted key is
       rejected, and `iss` is not compared with configuration.
-- [ ] The removed settings no longer exist and no aliases remain. Management
+- [x] The removed settings no longer exist and no aliases remain. Management
       behavior and existing management regression tests are unchanged. Both
       directions of the management/execution credential separation hold.
-- [ ] Anonymous health shows status only. Authenticated details show the mode,
+- [x] Anonymous health shows status only. Authenticated details show the mode,
       path, kids, last load time and ready/waiting. One log line per load or
       reload, with no secrets.
-- [ ] An exact role grants access to a skill with the same `rbac_roles` name,
+- [x] An exact role grants access to a skill with the same `rbac_roles` name,
       and a prefixed or unprefixed variant does not. This works through
       supported Framework configuration, and the ArchUnit boundary passes.
-- [ ] The owner's fresh token can poll without changing the captured token, and
+- [x] The owner's fresh token can poll without changing the captured token, and
       a different subject is denied.
-- [ ] Queued work with an expired token fails with `execution credential expired
+- [x] Queued work with an expired token fails with `execution credential expired
       before start`. Queued work under withdrawn trust is not handed off.
       Admitted work is not cancelled.
-- [ ] An expired captured token fails the callback skill call with `execution
+- [x] An expired captured token fails the callback skill call with `execution
       credential expired` and nothing is sent. Valid callbacks forward the
       unchanged token only to approved recipients, without following redirects.
-- [ ] Shipped samples select colocated, and the documentation covers the items
+- [x] Shipped samples select colocated, and the documentation covers the items
       listed above.
 
 ## Context
@@ -236,3 +236,10 @@ outright.
 - Removing the old execution-JWT configuration intentionally breaks the
   PR 8.1.2 suite scenario until PR 8.1.5 moves it to the new trust contract. Do
   not keep the old settings working to avoid that breakage.
+
+## Execution notes
+
+- Implemented through the approved Full pipeline. Actual commands, tests, earlier failures/fixes and acceptance traceability are recorded in the [implementation plan](../plans/2026-10-18-pr-8-1-4-sidecar-current-file-jwt-trust-and-ownership.md) and its testing companion.
+- The developer clarified that a separate health listener was a planning mistake. Shipped configuration now serves health, management and execution on the single application listener, with existing management sessions/read PATs controlling health details. No shared-session subsystem was added.
+- Operator process settings and obsolete demo PEM keys are replaced directly. No database/account/token/draft/publication reset is required or performed. Namespace-sharing app/proxy containers are recreated together when replacing/restarting the Sidecar owner.
+- Full Maven verification and final image/production Docker verifiers pass. Independent Step 5 review remains required; no Git commit or release was requested or performed.

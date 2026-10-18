@@ -2,8 +2,8 @@
 
 Run one Sidecar instance per SQLite volume on a local filesystem with reliable
 file locking. Caddy serves the management console and JWT execution API over
-HTTPS, forwarding to Sidecar HTTP on the Compose network. Neither Sidecar's
-application port nor its HTTP health port is published on the host. The image
+HTTPS, forwarding to Sidecar HTTP on loopback in the shared Sidecar network namespace. Sidecar's
+application port is not published directly on the host; health shares the HTTPS ingress. The image
 runs as UID/GID 10001:10001 and contains no SMTP capture server, model fixture,
 or private signing key. The private HTTP hop is deliberate; this stack does not
 provide end-to-end TLS to Sidecar.
@@ -24,8 +24,17 @@ and `EXTERNAL_BASE_URL` to `https://SITE_HOST` with the actual HTTPS port
 `HTTP_BIND_ADDRESS` remotely only when clients need redirects or public ACME
 HTTP validation; DNS validation can keep it on loopback. The HTTP listener
 redirects to HTTPS. Never publish Sidecar port 8080
-or management port 9091. Put the issuer's RSA JWT public key in
-`examples/production/secrets/jwt-public.pem`, readable by UID 10001.
+directly. Create `JWT_KEY_DIRECTORY` (for example
+`examples/production/secrets/execution-keys`) with ownership/mode writable by
+the sole local application and readable by Sidecar UID/GID 10001:10001. Mount it
+writable in the application and read-only in Sidecar. The app must join
+`network_mode: "service:sidecar"` and atomically export its public `jwks.json`;
+Sidecar never creates keys or directories. Caddy shares this namespace too and
+its HTTPS/HTTP ingress ports are published by the Sidecar service. Sidecar, including health, explicitly binds `127.0.0.1`. Caddy depends on service start, so it does
+not deadlock while Sidecar waits for the application's first export. When
+replacing Sidecar, recreate the app and Caddy together. Applications on remote
+or independent namespaces use documented `trust.mode=file` instead of weakening
+colocated loopback rules. See [trust operations](../../docs/operations.md#execution-jwt-trust).
 
 ## Choose a certificate mode
 
@@ -119,7 +128,7 @@ untrusted forwarded headers and supplies the authoritative external origin.
 Keep `LOOMSPAN_SIDECAR_EXTERNAL_BASE_URL` set to the trusted HTTPS URL used in
 email.
 
-Set `JWT_ISSUER_URI` and `JWT_AUDIENCE` to the real token issuer and audience.
+Set `JWT_AUDIENCE` to the receiving audience (default `loomspan-sidecar`); the current JWKS file alone governs token origin. There is no issuer configuration.
 The default `database` mode requires `LOOMSPAN_SIDECAR_CREDENTIAL_KEY` before saving
 provider credentials: supply the Base64 encoding of 32 random bytes through your
 protected deployment environment. Back up that key separately from SQLite.
@@ -150,7 +159,15 @@ in `URL_VARIABLES` and supply its absolute HTTP(S) value as `TARGET_URL`.
 Only declared names resolve from the process environment, and changes require
 a restart. Remove unused names and values.
 
-Create and prepare the named volume before starting. Run the maintenance
+Create and prepare the key directory before starting. For the example shared
+UID/GID on POSIX, use `install -d -m 700 -o 10001 -g 10001
+examples/production/secrets/execution-keys` on the trusted deployment host (with
+appropriate privileges). On Windows, set equivalent ACLs for the application's
+writer and Sidecar reader. Mount the same directory in the sole app container;
+Sidecar's mount remains read-only. An empty directory is valid deployment setup,
+but readiness waits for the app to export a valid nonempty `jwks.json`.
+
+Create and prepare the named database volume before starting. Run the maintenance
 container only on a trusted operator host; these commands affect the volume
 created by this Compose project:
 
@@ -160,7 +177,7 @@ docker volume create production_sidecar-data
 docker run --rm --user 0:0 -v production_sidecar-data:/sidecar/data alpine:3.20 sh -c 'chown 10001:10001 /sidecar/data && chmod 700 /sidecar/data'
 docker compose --project-name production --env-file examples/production/production.env -f examples/production/compose.yaml up -d
 docker compose --project-name production --env-file examples/production/production.env -f examples/production/compose.yaml ps
-docker compose --project-name production --env-file examples/production/production.env -f examples/production/compose.yaml exec sidecar curl --fail --silent http://localhost:9091/actuator/health/readiness
+docker compose --project-name production --env-file examples/production/production.env -f examples/production/compose.yaml exec sidecar curl --fail --silent http://localhost:8080/actuator/health/readiness
 ```
 
 Use the HTTPS origin in a browser, open `/management/setup`, enter the one-time
@@ -174,7 +191,7 @@ setup locked while authenticated JWT execution remains available.
 ```powershell
 docker compose --project-name production --env-file examples/production/production.env -f examples/production/compose.yaml up -d --force-recreate
 docker compose --project-name production --env-file examples/production/production.env -f examples/production/compose.yaml stop sidecar
-docker compose --project-name production --env-file examples/production/production.env -f examples/production/compose.yaml start sidecar
+docker compose --project-name production --env-file examples/production/production.env -f examples/production/compose.yaml up -d --force-recreate sidecar caddy
 docker volume inspect production_sidecar-data
 ```
 
@@ -196,8 +213,7 @@ The database includes management accounts and authored configuration; a
 configuration ZIP does not restore accounts or deployment settings. Keep the
 operator env, PEM files, and JWT trust material separately protected and backed
 up. Do not place multiple Sidecar instances or network filesystem replicas on
-one database. Kubernetes deployment support is deferred pending customer
-requirements; the container is not restricted from other environments.
+one database. Kubernetes single-pod Local deployment guidance is available in the [trust guide](../../docs/operations.md#local-deployment); no Kubernetes manifest or runtime test is shipped.
 
 Configuration ZIP export/import transfers authored YAML and route text between
 installations, with destination-specific allowlisted URL values supplied by

@@ -147,7 +147,7 @@ class GenericRestSkillHandlerTest {
         var handler = handler(routes(server, "lookup: {target: callback, method: GET, path: /lookup}",
                 "caller-passthrough", "", "1KB", "2s"));
         for (String caller : List.of("first-caller", "second-caller")) {
-            var jwt = Jwt.withTokenValue(caller).header("alg", "none").subject(caller).build();
+            var jwt = Jwt.withTokenValue(caller).header("alg", "none").expiresAt(Instant.now().plusSeconds(300)).subject(caller).build();
             SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(jwt));
             handler.handle(new RestSkillInvocation("lookup", Map.of(), "test-generation"));
         }
@@ -367,7 +367,43 @@ class GenericRestSkillHandlerTest {
         assertThat(source).hasValue(12);
     }
 
-    private GenericRestSkillHandler handler(Path routes) {
+    @Test void everyPassthroughExchangeChecksStrictExpiryWithoutSending() throws Exception {
+        var now = new java.util.concurrent.atomic.AtomicReference<>(Instant.now());
+        var clock = new java.time.Clock() {
+            @Override public java.time.ZoneId getZone() { return java.time.ZoneOffset.UTC; }
+            @Override public java.time.Clock withZone(java.time.ZoneId zone) { return this; }
+            @Override public Instant instant() { return now.get(); }
+        };
+        var requests = new AtomicInteger(); var tokens = new CopyOnWriteArrayList<String>();
+        var server = server(exchange -> { requests.incrementAndGet(); tokens.add(exchange.getRequestHeaders().getFirst("Authorization")); respond(exchange, 200, "text/plain", "ok"); });
+        var passthrough = handler(routes(server, "send: {target: callback, method: POST, path: /send}", "caller-passthrough", "", "1KB", "2s"), clock);
+        var expiry = now.get().plusSeconds(1);
+        var jwt = Jwt.withTokenValue("original-token").header("alg", "none").subject("owner").expiresAt(expiry).build();
+        SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(jwt));
+        assertThat(passthrough.handle(new RestSkillInvocation("send", Map.of(), "test-generation"))).isEqualTo("ok");
+        now.set(expiry);
+        assertThatThrownBy(() -> passthrough.handle(new RestSkillInvocation("send", Map.of(), "test-generation")))
+                .isInstanceOf(SkillException.class).hasMessage("execution credential expired");
+        now.set(expiry.plusSeconds(1));
+        assertThatThrownBy(() -> passthrough.handle(new RestSkillInvocation("send", Map.of(), "test-generation"))).hasMessage("execution credential expired");
+        SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(Jwt.withTokenValue("missing-exp").header("alg", "none").subject("owner").build()));
+        assertThatThrownBy(() -> passthrough.handle(new RestSkillInvocation("send", Map.of(), "test-generation"))).hasMessage("execution credential expired");
+        assertThat(requests.get()).isEqualTo(1); assertThat(tokens).containsExactly("Bearer original-token");
+        var destinationRequests = new AtomicInteger();
+        var destination = server(exchange -> { destinationRequests.incrementAndGet(); respond(exchange, 200, "text/plain", "unexpected"); });
+        var redirect = server(exchange -> {
+            assertThat(exchange.getRequestHeaders().getFirst("Authorization")).isEqualTo("Bearer original-token");
+            exchange.getResponseHeaders().set("Location", "http://127.0.0.1:" + destination.getAddress().getPort() + "/new-recipient");
+            respond(exchange, 302, "text/plain", "redirect");
+        });
+        var redirected = handler(routes(redirect, "send: {target: callback, method: POST, path: /send}", "caller-passthrough", "", "1KB", "2s"), clock);
+        now.set(expiry.minusSeconds(1)); SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(jwt));
+        assertThatThrownBy(() -> redirected.handle(new RestSkillInvocation("send", Map.of(), "test-generation"))).hasMessageContaining("302");
+        assertThat(destinationRequests.get()).isZero();
+    }
+
+    private GenericRestSkillHandler handler(Path routes) { return handler(routes, java.time.Clock.systemUTC()); }
+    private GenericRestSkillHandler handler(Path routes, java.time.Clock clock) {
         RestRoutesProperties properties = new RestRoutesProperties();
         var beanFactory = new DefaultListableBeanFactory();
         var provider = beanFactory.getBeanProvider(SslBundles.class);
@@ -377,7 +413,7 @@ class GenericRestSkillHandlerTest {
             registry.stage("test-generation", registry.prepare(Files.readString(routes)), java.util.UUID.randomUUID());
         } catch (java.io.IOException failure) { throw new IllegalStateException(failure); }
         registries.add(registry);
-        return new GenericRestSkillHandler(registry);
+        return new GenericRestSkillHandler(registry, clock);
     }
 
     private Path routes(HttpServer server, String routes, String mode, String authExtra,

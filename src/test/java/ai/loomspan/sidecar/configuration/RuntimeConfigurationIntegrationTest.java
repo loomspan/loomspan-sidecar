@@ -183,9 +183,9 @@ class RuntimeConfigurationIntegrationTest {
             var startup = workers.submit(() -> builder.run(
                     "--loomspan-sidecar.storage.database-path=" + directory.resolve("gated.db"),
                     "--loomspan.observability.enabled=false",
-                    "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+                    "--loomspan-sidecar.trust.mode=file",
                     "--loomspan-sidecar.auth.jwt.audience=sidecar",
-                    "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem"));
+                    "--loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json"));
             try {
                 assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
                 var coordinator = starting.get().getBean(ExecutionCoordinator.class);
@@ -623,9 +623,9 @@ class RuntimeConfigurationIntegrationTest {
                 .web(WebApplicationType.NONE)
                 .run("--loomspan-sidecar.storage.database-path=" + path,
                         "--loomspan.observability.enabled=false",
-                        "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+                        "--loomspan-sidecar.trust.mode=file",
                         "--loomspan-sidecar.auth.jwt.audience=sidecar",
-                        "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem",
+                        "--loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json",
                         "--provider.primary.key=fixture-only-secret",
                         "--loomspan.connections.primary.driver=openai",
                         "--loomspan.connections.primary.base-url=http://127.0.0.1:9/v1",
@@ -640,9 +640,9 @@ class RuntimeConfigurationIntegrationTest {
                 .run("--loomspan-sidecar.storage.database-path=" + path,
                         "--loomspan-sidecar.snapshots.max-retained=" + maxRetained,
                         "--loomspan.observability.enabled=false",
-                        "--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test",
+                        "--loomspan-sidecar.trust.mode=file",
                         "--loomspan-sidecar.auth.jwt.audience=sidecar",
-                        "--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem",
+                        "--loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json",
                         "--provider.primary.key=fixture-only-secret");
     }
 

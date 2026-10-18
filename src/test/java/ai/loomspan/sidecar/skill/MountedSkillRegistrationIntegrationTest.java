@@ -102,9 +102,9 @@ class MountedSkillRegistrationIntegrationTest
         var properties = new java.util.ArrayList<String>();
         properties.add("--loomspan.observability.enabled=false");
         properties.add("--loomspan-sidecar.storage.database-path=" + temporaryDirectory.resolve("sidecar.db"));
-        properties.add("--loomspan-sidecar.auth.jwt.issuer-uri=https://issuer.test");
+        properties.add("--loomspan-sidecar.trust.mode=file");
         properties.add("--loomspan-sidecar.auth.jwt.audience=sidecar");
-        properties.add("--loomspan-sidecar.auth.jwt.public-key-location=classpath:fixtures/jwt-public.pem");
+        properties.add("--loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json");
         additionalProperties = additionalProperties.stream().map(value -> "--" + value).toList();
         properties.addAll(additionalProperties);
         return new SpringApplicationBuilder(LoomspanSidecarApplication.class)

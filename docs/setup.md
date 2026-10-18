@@ -52,14 +52,13 @@ encryption key. See [execution configuration](../agent-skills/loomspan-sidecar-a
 
 ## Establish access
 
-- **Application execution:** configure trusted JWT issuer, audience, and key
-  source; supply bearer access tokens on `/v1/**`. See [JWT authentication](../agent-skills/loomspan-sidecar-authoring/references/integration.md#jwt-authentication).
+- **Application execution:** select current-file JWT trust mode and receiving audience; supply bearer access tokens on `/v1/**`. See [JWT authentication](../agent-skills/loomspan-sidecar-authoring/references/integration.md#jwt-authentication).
 - **Configuration management:** initialize a local administrator, then use browser
   sessions or scoped personal tokens. See [administrator access](admin-access.md).
 - **Runtime investigation:** enable Framework observability and connect the
   separate Console and its MCP endpoint. See [Console setup](console-setup.md).
 
-The local quickstart's issuer and signing key are test fixtures. For deployment,
+The local quickstart's ephemeral signer and public JWKS export are test fixtures. For deployment,
 use your own identity provider and the [HTTPS Compose guide](../examples/production/README.md).
 Protect and back up SQLite and the external credential key separately.
 
@@ -88,3 +87,5 @@ define the narrow endpoint, and prepare and validate a Sidecar draft.
 The [Sidecar skill](../agent-skills/loomspan-sidecar-authoring/SKILL.md) guides
 application work; Framework owns deeper skill syntax and semantics, and Console
 owns runtime investigation. [Upgrades](upgrades.md) explains how to keep the set aligned.
+
+JWT trust remains process/file configuration in both application modes. See [current-file trust and Local deployment](operations.md#execution-jwt-trust) for required mode/path, file rules, readiness/recovery, exact roles, expiry boundaries and deployment-owned directory permissions.
