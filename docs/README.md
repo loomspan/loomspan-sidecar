@@ -3,6 +3,9 @@
 Start with the [README](../README.md). These documents serve developers evaluating,
 integrating, and operating Sidecar in their applications.
 
+For remote invocation and callbacks, see the [Standard HTTPS and Hardened mTLS
+recipes](remote-recipes.md) and their supplied Boot/Caddy fragments.
+
 | Decision or task | Authoritative home |
 | --- | --- |
 | Architecture and adoption tradeoffs | [Architecture](architecture.md) |

@@ -4,6 +4,10 @@ The Java 21 blocking SDK discovers skills, submits executions, reads status and
 waits for completion. Core runs without Spring Boot, Sidecar or Framework classes.
 Its HTTP and JSON dependencies are Apache HttpClient 5 and Jackson 3.
 
+The [remote recipes](../../docs/remote-recipes.md) configure direct Boot HTTPS or
+paired Caddy mTLS independently for SDK invocation and Sidecar callbacks, with
+provided signing and file-delivered public JWKS.
+
 Build and locally install the independent reactor from the Sidecar checkout:
 
 ```powershell

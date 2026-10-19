@@ -5,6 +5,13 @@ of `../loomspan-sidecar-test-suite`. The suite separately builds the actual Side
 checkout once per invocation and owns composed SDK/application transport and
 process-shutdown checks. Neither command invokes the other.
 
+The external SDK lane's `standard` and `hardened` selectors own composed
+bidirectional HTTPS/mTLS, provided signing/file trust, invalid-peer, protected
+namespace and post-effect no-replay evidence. See [remote recipes](remote-recipes.md)
+and the suite's `docs/sdk-lane.md` for exact run reports. Existing component TLS
+and ConfigurationMode tests remain Sidecar-owned; certificate lifecycle testing
+is outside these recipes.
+
 ## Commands
 
 Prerequisites: Java 21 (`JAVA_HOME`), Maven/wrapper, installed/resolvable Framework
@@ -98,9 +105,10 @@ The five retained baselines alone do not establish SDK Spring form-login issuanc
 or colocated signing/trust/queue behavior; the additional Local group owns those checks.
 Those earlier reports do not establish callback authentication/method/business
 security; the callback-specific Local evidence below owns that acceptance. Full
-Standard/Hardened bidirectional invocation/callbacks, provided-key deployment,
-trusted-group rotation and outbound-only coverage remain later-ticket obligations. Standard/Hardened selectors remain
-empty and fail explicitly with `no-scenarios-for-recipe` until implemented.
+Those historical baseline reports do not establish Standard/Hardened
+bidirectional invocation/callbacks or provided-key deployment; the separate
+remote-recipe evidence owns those obligations. Trusted-group rotation and
+outbound-only coverage remain later-ticket work.
 
 ## Cost observations
 
@@ -223,5 +231,30 @@ is retained as failed: all builds and callback authorization passed, but the exp
 fixture expected a CALL_TOOL after beta.8 auto-dispatched its zero-input leaf.
 A dedicated leaf requiring fixed input now forces that model turn; targeted
 runtime proof and the fresh complete report passed. Both attempts cleaned their
-projects and external key volumes. Full Standard/Hardened recipes and rotation
-remain future work.
+projects and external key volumes. Those historical Local reports do not
+establish the remote recipes; rotation remains separate work.
+
+## Standard and Hardened remote recipes
+
+The external suite's complete
+[Standard report 20261019T015656Z-c2445d463665](../../loomspan-sidecar-test-suite/evidence/sdk/20261019T015656Z-c2445d463665/report.json)
+passes six scenarios in 777.899s; its
+[Hardened report 20261019T014927Z-b5ab2b9224e2](../../loomspan-sidecar-test-suite/evidence/sdk/20261019T014927Z-b5ab2b9224e2/report.json)
+passes eight in 927.972s. Both independently build the actual checkout, SDK,
+consumers and Docker image. They exercise the supplied
+[operator fragments](remote-recipes.md), SDK provided signing/public JWKS delivery,
+form login, callbacks and exact role/record checks over both verified transports.
+Actual invalid certificate/client cases, accepted-transport JWT rejection,
+Hardened outsider refusal/fixed gateways/separate browser ingress and post-effect
+loss counters pass. The SDK guide records the initial failed fixture startup and
+its correction; failed evidence is retained rather than counted as acceptance.
+
+Root components pass 61 classes / 261 tests, SDK core 25 and starter 30, zero
+failures/errors/skips. Focused external harness passes 103 and broad safe Python
+213. Named build/startup/scenario/cleanup stages and strict result schemas pass;
+exact label listings find no containers/networks/volumes for all fourteen final
+projects. Artifact hashes and dirty source identities are in the exact reports.
+No production TLS wiring change was needed. Certificate lifecycle, arbitrary
+customer network isolation and the later trusted-group/rotation work remain
+outside this evidence. No provider, business data/reset, commit or release work
+was performed.

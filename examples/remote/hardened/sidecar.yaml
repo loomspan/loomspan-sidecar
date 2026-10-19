@@ -1,0 +1,9 @@
+# Sidecar shares sidecar-proxy's protected network namespace.
+server:
+  address: 127.0.0.1
+  port: 8080
+loomspan-sidecar:
+  trust:
+    mode: file
+    file:
+      jwks: /public/jwks.json

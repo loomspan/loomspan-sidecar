@@ -1,0 +1,19 @@
+server:
+  address: 0.0.0.0
+  port: 8443
+  ssl:
+    enabled: true
+    certificate: file:/tls/sidecar-server.pem
+    certificate-private-key: file:/tls/sidecar-server-key.pem
+spring:
+  ssl:
+    bundle:
+      pem:
+        app:
+          truststore:
+            certificate: file:/tls/group-ca.pem
+loomspan-sidecar:
+  trust:
+    mode: file
+    file:
+      jwks: /public/jwks.json

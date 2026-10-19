@@ -102,27 +102,27 @@ do not restrict customer configuration.
 
 ## Acceptance criteria
 
-- [ ] The runner's `standard` and `hardened` recipes run end to end with
+- [x] The runner's `standard` and `hardened` recipes run end to end with
       per-run temporary certificates. No certificates are committed.
-- [ ] Standard:
+- [x] Standard:
       - invocation and callback succeed over verified HTTPS;
       - an invalid server certificate is rejected in each direction;
       - a JWT rejection over accepted TLS is shown.
-- [ ] Hardened:
+- [x] Hardened:
       - invocation and callback succeed through Caddy mTLS;
       - invalid peers are rejected in both directions;
       - backend and outbound-proxy listeners cannot be reached from outside;
       - outbound destinations are fixed;
       - browser login uses a separate ingress;
       - a JWT rejection over accepted mTLS is shown.
-- [ ] Both recipes use provided signing with Sidecar file trust loaded from the
+- [x] Both recipes use provided signing with Sidecar file trust loaded from the
       exported JWKS.
-- [ ] No proxy or client replays a submission or callback after a connection
+- [x] No proxy or client replays a submission or callback after a connection
       failure.
-- [ ] Any required Sidecar or SDK TLS wiring uses standard Spring Boot
+- [x] Any required Sidecar or SDK TLS wiring uses standard Spring Boot
       configuration and has focused tests. No insecure switch or transport
       enum is added.
-- [ ] The operator documentation for both recipes states DevOps TLS ownership
+- [x] The operator documentation for both recipes states DevOps TLS ownership
       and the boundaries listed above.
 
 ## Verification ownership reconciliation
@@ -161,3 +161,17 @@ recipe or trust obligations. No TLS certificate-lifecycle testing is transferred
 - Most of this work is in `loomspan-sidecar-test-suite`. Operator
   documentation, and any required standard TLS wiring, belongs in
   `loomspan-sidecar`. This is intentional.
+
+## Execution notes
+
+Full pipeline implementation is complete pending independent Step 5 review.
+No production TLS wiring change or development-data reset was required. The
+[implementation plan](../plans/2026-10-18-pr-8-1-7-standard-https-and-hardened-mtls-recipes.md)
+records fixture decisions, failed attempts and final verification. The complete
+external SDK reports are `20261019T015656Z-c2445d463665` (Standard, six scenarios)
+and `20261019T014927Z-b5ab2b9224e2` (Hardened, eight), under the suite's
+`evidence/sdk/`; all required builds, scenarios and cleanup pass. All fourteen
+final project-label container/network/volume listings are empty. The initial
+failed Standard report `20261019T014109Z-545d2153ac89` is retained and explained
+in the suite SDK guide. No provider, business runtime/data, maintained reference
+pack, commit or release work was performed.

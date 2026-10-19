@@ -1,5 +1,9 @@
 # Production Compose deployment
 
+For paired invocation/callback deployments, use the
+[Standard HTTPS and Hardened mTLS recipes](../../docs/remote-recipes.md).
+This production ingress example remains a separate gateway composition.
+
 Run one Sidecar instance per SQLite volume on a local filesystem with reliable
 file locking. Caddy serves the management console and JWT execution API over
 HTTPS, forwarding to Sidecar HTTP on loopback in the shared Sidecar network namespace. Sidecar's

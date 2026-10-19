@@ -1,0 +1,29 @@
+# Merge into the application configuration. Deliver /signing privately and
+# provision an app-writable /public directory for the SDK's public export.
+server:
+  address: 0.0.0.0
+  port: 8443
+  ssl:
+    enabled: true
+    certificate: file:/tls/app-server.pem
+    certificate-private-key: file:/tls/app-server-key.pem
+spring:
+  ssl:
+    bundle:
+      pem:
+        sidecar:
+          truststore:
+            certificate: file:/tls/group-ca.pem
+loomspan-sdk:
+  base-url: https://sidecar:8443
+  ssl-bundle: sidecar
+  issuance:
+    issuer: loomspan-app
+    roles: [ROLE_ORDER_EDITOR]
+  signing:
+    mode: provided
+    provided:
+      format: PEM
+      key-location: /signing/signer-key.pem
+      certificate-location: /signing/signer.pem
+      jwks-export: /public/jwks.json

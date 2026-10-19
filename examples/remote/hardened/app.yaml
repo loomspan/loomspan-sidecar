@@ -1,0 +1,16 @@
+# App shares app-proxy's protected network namespace.
+server:
+  address: 127.0.0.1
+  port: 8081
+loomspan-sdk:
+  base-url: http://127.0.0.1:9080
+  issuance:
+    issuer: loomspan-app
+    roles: [ROLE_ORDER_EDITOR]
+  signing:
+    mode: provided
+    provided:
+      format: PEM
+      key-location: /signing/signer-key.pem
+      certificate-location: /signing/signer.pem
+      jwks-export: /public/jwks.json

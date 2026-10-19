@@ -4,6 +4,9 @@ Use the [quickstart](quickstart.md) for a complete first invocation or
 [setup](setup.md) for deployment choices. Application work belongs in your
 application repository; it does not require modifying Sidecar's Java code.
 
+Configure invocation and callback transport independently using the
+[Standard HTTPS and Hardened mTLS references](remote-recipes.md).
+
 The [Sidecar authoring Agent Skill](../agent-skills/loomspan-sidecar-authoring/SKILL.md)
 guides endpoint design, authorization, complete drafts, validation, and publication.
 Its references are readable without an assistant:
