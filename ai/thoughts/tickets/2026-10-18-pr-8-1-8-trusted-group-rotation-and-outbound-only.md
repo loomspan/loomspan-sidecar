@@ -83,25 +83,25 @@ Add operator instructions for:
 
 ## Acceptance criteria
 
-- [ ] Two apps share one issuer and signing key on one Sidecar. A token from one
+- [x] Two apps share one issuer and signing key on one Sidecar. A token from one
       app is accepted, and the group's callbacks are accepted under the shared
       issuer and audience.
-- [ ] User and record authorization still deny unauthorized users in the group
+- [x] User and record authorization still deny unauthorized users in the group
       scenario.
-- [ ] The rotation scenario works as follows:
+- [x] The rotation scenario works as follows:
       - after the add step, both receivers accept the new `kid`;
       - after the restart, new tokens use the new key;
       - during the overlap, old tokens remain valid;
       - after removal and reload, each receiver rejects old-key tokens
         independently, within the documented interval.
-- [ ] Admitted work is not cancelled by the rotation.
-- [ ] Rotation changes only JWKS files. No database or management trust path is
+- [x] Admitted work is not cancelled by the rotation.
+- [x] Rotation changes only JWKS files. No database or management trust path is
       used.
-- [ ] Invocation without a callback listener succeeds under the Local, Standard
+- [x] Invocation without a callback listener succeeds under the Local, Standard
       and Hardened configurations.
-- [ ] Operator documentation covers the trusted group, rotation and no-callback
+- [x] Operator documentation covers the trusted group, rotation and no-callback
       deployments.
-- [ ] Evidence records each scenario, its revisions and its results, with no
+- [x] Evidence records each scenario, its revisions and its results, with no
       secrets.
 
 ## Verification ownership reconciliation
@@ -139,3 +139,14 @@ recipe or trust obligations. No TLS certificate-lifecycle testing is transferred
 
 - Most of this work is in `loomspan-sidecar-test-suite`, and the operator
   documentation is in `loomspan-sidecar`. This is intentional.
+
+
+## Execution notes
+
+Implemented through the approved Full 5-Step Pipeline. See the matching
+[implementation verification](../validation/2026-10-18-pr-8-1-8-trusted-group-rotation-and-outbound-only.md)
+for actual fresh reports, failures/corrections, source/artifact identities and
+independent cleanup commands. Local/Standard/Hardened pass 13/8/9 scenarios;
+operator instructions are in `docs/operations.md` and `docs/remote-recipes.md`.
+No data reset, provider call, business-lane change, commit or release occurred.
+Independent Step 5 review remains pending before final pipeline completion.

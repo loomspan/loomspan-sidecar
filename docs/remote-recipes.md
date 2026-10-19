@@ -114,6 +114,60 @@ HTTP 502; a direct SDK transport loss may report acceptance unknown. Neither is
 permission to resubmit. A callback can have one effect while execution reports
 failure; recovery needs explicit application policy.
 
+## Trusted group and independent JWT rotation
+
+Use the [group and rotation procedure](operations.md#fully-trusted-application-groups)
+with either remote recipe. The representative composed group uses Standard:
+two separate app JVMs on HTTPS 8443 and 8445 share one provided signer, issuer
+`loomspan-app`, callback audience, user directory and exact role vocabulary;
+Sidecar callbacks target the first app. Each app gets its own public export, for
+example `/public/app-a.json` and `/public/app-b.json`. The shared Sidecar reads
+an independently managed `/trust/sidecar.json`, and each receiver configures
+`loomspan-sdk.callbacks.overlap-jwks: /trust/callback.json`. These illustrative
+paths are deployment choices, not new configuration keys.
+
+Deliver private signing material only to signing apps. Mount public trust
+directories read-only in receivers and grant the operator write access for
+atomic replacement. Never point receiver overlap at an app's single-key export:
+a restart would overwrite the intended overlap. Add the new public key to each
+receiver separately, verify acceptance, replace provided private material and
+restart both apps, then retire the old public key at each receiver separately.
+The callback receiver must restart with the replacement signer before its old
+startup own key can be retired. Polling is independently one second per receiver;
+there is no cross-receiver notification or database/management trust path.
+
+Apps sharing a Sidecar trust each other in every way; use separate Sidecars for
+isolation. Shared group signing preserves user/record authorization, not app
+isolation. Keep the same issuer/subject semantics when fresh credentials poll
+old executions. Trust changes do not cancel already admitted Framework work.
+
+## Outbound-only adaptations
+
+Use only model skills and empty REST targets/routes. Keep provided signing and
+public JWKS delivery, but omit callback controllers and the app callback listener.
+A Spring SDK caller may run with `spring.main.web-application-type=none`; it still
+uses public SDK discovery/submission/result polling and trusted authentication.
+
+- **Local:** retain shared loopback networking and the writable app/read-only
+  Sidecar colocated public-key directory. Omit the application callback listener
+  and callback routes.
+- **Standard:** retain `loomspan-sdk.base-url: https://sidecar:8443`, its `sidecar`
+  SSL bundle and the Sidecar HTTPS listener. Omit app inbound server settings
+  when no browser/API is needed, its server certificate delivery and the Sidecar
+  app-target SSL bundle/routes when unused.
+- **Hardened:** retain only the global block and `http://:9080` outbound block in
+  `Caddyfile.app`; keep its loopback bind, fixed Sidecar upstream and app client
+  identity. Retain Sidecar's `https://:8443` mTLS execution/readiness ingress and
+  loopback backend. Remove Sidecar's `http://:9080` callback egress block and app
+  `https://:8443` callback ingress. A non-web app also omits `https://:8444` browser
+  ingress and its loopback 8081 backend. Keep the two protected namespaces and
+  never expose outbound/backend HTTP ports. Omit unused callback server/client
+  certificate delivery.
+
+Invocation still requires execution JWT validation and the recipe's outbound
+transport authentication. Omission of callback infrastructure does not disable
+those checks. These adaptations require no database or development-data reset.
+
 ## Evidence boundary
 
 The external SDK lane runs fresh temporary certificate/signing fixtures for

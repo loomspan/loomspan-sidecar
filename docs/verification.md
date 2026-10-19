@@ -65,6 +65,8 @@ scenarios live in the external suite's existing `scripts/run_sdk.py` runtime.
 | Supplied Caddy TLS positive, untrusted CA rejection, redirect destination, fixed upstream, forwarded-header normalization | Suite [deployment-transport-baseline](../../loomspan-sidecar-test-suite/evidence/sdk/20261018T211932Z-43ccfbc20a42/report.json) supplied-Caddy variant using per-run certs; smoke also uses shipped supplied recipe for auth/health/no-bypass. Fresh evidence is linked below. |
 | Static production/supplied Compose topology | Smoke rendered configuration checks. |
 | SDK form-login issuance, exact authorities and execution ownership; colocated app restart, current-trust correction, authenticated callbacks with role/record authorization and strict queue/callback expiry without dispatch | External Local group in `scripts/sdk_lane/local.py` and its clean Boot reference app, derived from the actual shipped quickstart Compose; detailed receiver rules belong to the SDK starter component tests. Current evidence is recorded below. |
+| Two-app trusted group, independent same-issuer add/restart/remove rotation, unexpired retirement and admitted-work continuity | External Standard `trusted-group-rotation`; fresh PR 8.1.8 report below, distinct operator trust/overlap files and public SDK fixtures. |
+| Invocation with no callback listener/routes under Local, Standard and Hardened | External focused `outbound-only` case per recipe, non-web application and live absence checks; Hardened omits callback infrastructure while retaining invocation. |
 | Static public/DNS Caddy adaptation | Explicitly remove external Caddy plugin/adaptation-only checks; no Sidecar runtime assertion is lost. Preserve shipped configs and operator guidance; no DNS/ACME execution. |
 | Root-key permissions, same leaf/CA across restarts, regeneration after deletion, forced supplied replacement/reload | Delete as certificate lifecycle; no replacement anywhere. |
 | Outbound TLS/mTLS selected bundle, wrong/missing client rejection | Retain `RestTransportTlsIntegrationTest`. Future full SDK peer/hostname/expiry and bidirectional no-bypass belong to 8.1.7, not claimed by stub/baseline evidence. |
@@ -108,7 +110,7 @@ security; the callback-specific Local evidence below owns that acceptance. Full
 Those historical baseline reports do not establish Standard/Hardened
 bidirectional invocation/callbacks or provided-key deployment; the separate
 remote-recipe evidence owns those obligations. Trusted-group rotation and
-outbound-only coverage remain later-ticket work.
+outbound-only coverage are established by the PR 8.1.8 evidence below.
 
 ## Cost observations
 
@@ -258,3 +260,68 @@ No production TLS wiring change was needed. Certificate lifecycle, arbitrary
 customer network isolation and the later trusted-group/rotation work remain
 outside this evidence. No provider, business data/reset, commit or release work
 was performed.
+
+## Trusted group, independent JWT rotation and outbound-only evidence
+
+PR 8.1.8 completes its composed implementation evidence with these fresh full
+commands. Each rebuilt root Sidecar, SDK, both consumers and image before running
+all selected cases; every required build/startup/scenario/cleanup stage passed.
+
+| Recipe / report | Passed scenarios | Total seconds |
+| --- | ---: | ---: |
+| [Local 20261019T032901Z-8d4833bcc6c8](../../loomspan-sidecar-test-suite/evidence/sdk/20261019T032901Z-8d4833bcc6c8/report.json) | 13 | 611.772 |
+| [Standard 20261019T031355Z-aa841eadf316](../../loomspan-sidecar-test-suite/evidence/sdk/20261019T031355Z-aa841eadf316/report.json) | 8 | 884.328 |
+| [Hardened 20261019T033931Z-5bb5875da104](../../loomspan-sidecar-test-suite/evidence/sdk/20261019T033931Z-5bb5875da104/report.json) | 9 | 851.853 |
+
+Standard's single trusted group uses two independent app JVMs with the same
+provided signing material, issuer, callback audience and user/role semantics.
+B's SDK submission invokes A's callback with exact issuer, subject, roles and
+captured bearer equality. Literal-role method denial, Bob record denial and
+Bob result-owner 404 remain enforced. The ordered scenario proves candidate
+rejection before addition, independent receiver addition, actual restart of both
+signers, old-key overlap, independent old-key removal within five seconds of
+each publication before expiry, continued replacement acceptance, and exact
+completion of already RUNNING old-key model work after retirement. Verification
+trust changes only through the distinct current JWKS/overlap files. One-second
+polling is the public interval; five seconds is a test observation allowance,
+not an exact HTTP cutoff or proof of the scheduler's phase.
+
+Each recipe's outbound-only case uses the actual non-web SDK application,
+model-only skill, empty REST targets/routes, live listener-absence checks,
+exactly one model submission and clean process exit. Hardened also proves absent
+callback/browser ingress and callback egress while invocation mTLS still works.
+No per-ConfigurationMode or trusted-group deployment matrix was added.
+
+Final root components passed 61 classes / 261 tests; SDK core 25 and starter 30,
+zero failures/errors/skips, including both-mode filesystem trust authority and
+public Framework API-boundary checks. Focused SDK harness: 136 passed; full safe
+Python suite: 246 passed. Ruff formatting/lint and both diff checks passed.
+Every report retains source revisions/dirty flags and actual Sidecar/SDK/driver/
+reference-app artifact hashes. All three use Sidecar source
+`f0ea254e0c41e09ab900f58c1773e407575df986`, suite source
+`6e65846ee833ee91f308e07ecb8662fe56839a16` (both dirty) and Framework
+`1.0.0-beta.8`; HEAD alone does not identify the uncommitted build inputs.
+
+Independent exact-label and explicit-volume checks found no remaining containers,
+networks, project volumes or helper containers for all final projects. The durable
+cleanup audit also covers the failed attempt and seven scoped diagnostics:
+34 projects, 169 read-only checks, all absent. Secret-pattern scans found no JWT
+values or private PEM material in changed sources or new reports. No provider,
+Framework source build, business-runtime/reference-pack change, operational-data
+reset, commit, push or release occurred. Durations above include the complete
+build/runtime commands and are not production performance claims.
+
+The [initial Standard attempt](../../loomspan-sidecar-test-suite/evidence/sdk/20261019T025810Z-daadbfb4e9bf/report.json)
+is retained failed (`rotation-add-failed`, 847.813s): all mandatory builds and six
+existing cases passed, while group failed and outbound-only stayed not-run.
+That process loaded pre-fix fixture mounts. Scoped diagnostics corrected the
+import-name mount and used a stable namespace owner to preserve credential memory
+across signer restarts; fixed nonsecret marker files bridge only the bounded model
+barrier between fixture namespaces. Diagnostics are not final acceptance: the
+fresh complete Standard run above proves the corrected composition.
+
+Limits: one fully trusted Standard group and three focused outbound-only recipes.
+Apps sharing a Sidecar trust each other in every way; use separate Sidecars for
+isolation. No private-key hot reload, uninterrupted rollover, replica coordination,
+TLS certificate lifecycle or arbitrary customer-network guarantee is claimed.
+Independent Step 5 review remains the pipeline's final completion gate.

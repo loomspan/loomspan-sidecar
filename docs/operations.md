@@ -145,6 +145,78 @@ writer; unrelated pods/applications use operator-managed file mode and suitable
 secure networking. This is deployment guidance, not a shipped Kubernetes runtime
 test or a signing/key lifecycle controller.
 
+### Fully trusted application groups
+
+**Apps sharing a Sidecar trust each other in every way. Use separate Sidecars
+when applications require isolation.** Group members can assert each other's
+users and roles, reuse bearer tokens and participate in the same business and
+network trust boundary. User and record checks still apply to authenticated
+requests; they do not isolate a group member from another trusted application.
+
+Use one issuer, one provided signing key, the same callback audience, and shared
+user-directory semantics and exact role vocabulary across the group. Give each
+app a distinct SDK public export path. Configure Sidecar with an operator-owned
+public JWKS and callback receivers with their own
+`loomspan-sdk.callbacks.overlap-jwks` files; keep these separate from SDK exports.
+Each app can issue for the group, invoke the shared Sidecar and receive the
+original credential on approved callbacks. Result ownership is issuer plus
+subject, so another group app acting for the same user can read that user's
+execution; another subject cannot.
+
+### Provided-key rotation
+
+Provided private signing material loads once at app startup. Deploy replacement
+material and **restart every signing app**; changing a file never hot-reloads the
+private key. Retain secure delivery, backups and rollback policy under operator
+control. Publish complete public-only JWKS atomically in their mounted directory;
+mount the directory rather than a single inode when using atomic replacement.
+No database operation or management publication rotates JWT trust in either
+application ConfigurationMode.
+
+1. Generate replacement signing material securely and obtain its public JWK and
+   `kid`. Add that public key beside the old key in Sidecar's current JWKS.
+   Independently add it to every callback receiver's overlap JWKS. Verify new-key
+   acceptance at each receiver before changing normal signing.
+2. Deploy the replacement private material to the signing apps and restart them.
+   Verify their exported public `kid` and freshly issued tokens use the replacement
+   key, with the same issuer, callback audience and role semantics. Old tokens
+   remain accepted while both keys overlap.
+3. After the chosen overlap period, remove the old public key from Sidecar's file
+   and independently from each callback overlap file. Verify old-key rejection
+   and replacement-key acceptance at each receiver. A callback receiver always
+   includes its **own startup signing key** in valid trust: it must first restart
+   on replacement signing material for removal of the old overlap key to revoke it.
+
+Sidecar and each configured SDK overlap receiver poll their files independently
+every **one second**. Adoption is eventual; allow scheduling and request latency
+when observing it. The composed test permits five seconds per publication, which
+is a test observation allowance, not an exact HTTP cutoff guarantee. Unknown-kid
+reads may accelerate adoption. Updating Sidecar never updates callback trust,
+and updating a callback file never updates Sidecar. Missing, malformed, empty or
+unreadable configured trust withdraws acceptance until corrected; a receiver
+with no configured overlap file uses only its startup signer.
+
+Withdrawal does not cancel already admitted Framework work or undo effects.
+Queued work still needs current trust before handoff; subsequent callbacks need
+the receiving app's current trust and the original credential must remain
+unexpired. Fresh owner credentials can poll retained results. Rotation does not
+promise uninterrupted app availability or private-key hot reload.
+
+### Outbound-only applications
+
+Applications that only invoke model skills need no callback listener. Configure
+only the required model skills and omit REST targets/routes, using the default
+empty REST route resource or `targets: {}` and `routes: {}`. Keep execution JWT
+signing and Sidecar verification trust. A non-web Spring application can use
+`spring.main.web-application-type=none`; authenticate users in its own trusted
+application boundary before issuing credentials. The SDK callback servlet chain
+requires a servlet application and creates no listener in a non-web process.
+
+Retain Local's loopback/colocated arrangement, Standard's verified outbound
+HTTPS, or Hardened's app-side outbound Caddy and Sidecar mTLS ingress. The
+[remote recipe adaptations](remote-recipes.md#outbound-only-adaptations) identify
+the callback infrastructure to omit. This requires no data reset.
+
 ## Stopped-instance backup and recovery
 
 The protected console links this procedure from **Configuration recovery
