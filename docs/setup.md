@@ -2,9 +2,11 @@
 
 Choose Sidecar when your application should invoke Loomspan over HTTP. For an
 embedded Java service, follow the [Framework project](https://github.com/loomspan/loomspan-framework)
-instead. Direct Sidecar callers need an HTTP client, not an SDK. The `sdks/`
-directories in this checkout are placeholders; inspect an SDK owner's published
-package and compatibility evidence before adopting one.
+instead. Direct Sidecar callers need an HTTP client, not an SDK. This checkout
+also includes a Java 21 blocking SDK and Spring Boot starter. See the
+[Java SDK guide](../sdks/java/README.md) for local installation, client usage,
+execution-token issuance and callback authentication. The SDK is independently
+versioned at `0.1.0-SNAPSHOT`; its presence here does not imply a published release.
 
 ## Obtain a runtime
 

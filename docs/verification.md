@@ -69,7 +69,7 @@ scenarios live in the external suite's existing `scripts/run_sdk.py` runtime.
 | Invocation with no callback listener/routes under Local, Standard and Hardened | External focused `outbound-only` case per recipe, non-web application and live absence checks; Hardened omits callback infrastructure while retaining invocation. |
 | Static public/DNS Caddy adaptation | Explicitly remove external Caddy plugin/adaptation-only checks; no Sidecar runtime assertion is lost. Preserve shipped configs and operator guidance; no DNS/ACME execution. |
 | Root-key permissions, same leaf/CA across restarts, regeneration after deletion, forced supplied replacement/reload | Delete as certificate lifecycle; no replacement anywhere. |
-| Outbound TLS/mTLS selected bundle, wrong/missing client rejection | Retain `RestTransportTlsIntegrationTest`. Future full SDK peer/hostname/expiry and bidirectional no-bypass belong to 8.1.7, not claimed by stub/baseline evidence. |
+| Outbound TLS/mTLS selected bundle, wrong/missing client rejection | Retain `RestTransportTlsIntegrationTest`. Full SDK peer/hostname/expiry and bidirectional no-bypass coverage is supplied by the external Standard/Hardened recipes; see [completed remote-recipe evidence](#standard-and-hardened-remote-recipes). Stub/baseline evidence alone does not establish that coverage. |
 
 
 The small smoke proves image UID/JVM settings, rendered production topology, fresh

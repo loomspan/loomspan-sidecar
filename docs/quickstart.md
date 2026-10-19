@@ -125,7 +125,9 @@ accuracy vary by model. The skill has not queried those records or changed order
 For manual calls or an application in another language, use the
 [execution API reference](../agent-skills/loomspan-sidecar-authoring/references/integration.md#execution-api).
 Production callers obtain tokens from their own trusted issuer; the fixture token
-endpoint and checked-in signing key are for local testing only.
+endpoint and its startup-generated ephemeral signing key are for local testing
+only. Restarting the fixture replaces its public JWKS; old tokens stop validating
+as Sidecar adopts the replacement.
 
 ## Troubleshoot and stop
 
