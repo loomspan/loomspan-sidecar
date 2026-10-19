@@ -1,0 +1,180 @@
+package ai.loomspan.sdk.spring;
+
+import ai.loomspan.sdk.*;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
+import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
+import org.springframework.context.annotation.*;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.core.context.*;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
+import org.springframework.mock.web.MockHttpSession;
+import org.springframework.test.web.servlet.*;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.config.annotation.EnableWebMvc;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.*;
+
+class CallbackSecurityAutoConfigurationTest {
+    @TempDir Path directory;
+    private WebApplicationContextRunner runner() {
+        return new WebApplicationContextRunner().withUserConfiguration(App.class)
+            .withPropertyValues("loomspan-sdk.base-url=http://localhost:12345", "loomspan-sdk.signing.mode=colocated",
+                "loomspan-sdk.signing.colocated.key-directory=" + directory,
+                "loomspan-sdk.issuance.roles=ROLE_ORDER_EDITOR,ORDER_EDITOR,OTHER");
+    }
+    @Test void callbackRequiresBearerEvenWithAuthenticatedBrowserSession() {
+        runner().run(context -> {
+            MockMvc mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+            var session = new MockHttpSession();
+            var security = SecurityContextHolder.createEmptyContext();
+            security.setAuthentication(UsernamePasswordAuthenticationToken.authenticated("alice", "", List.of()));
+            session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, security);
+            mvc.perform(get("/loomspan/callbacks/plain").session(session)).andExpect(status().isUnauthorized())
+                .andExpect(header().string("WWW-Authenticate", "Bearer")).andExpect(header().doesNotExist("Location"))
+                .andExpect(forwardedUrl(null));
+            mvc.perform(get("/loomspan/callbacks/plain").session(session).header("Authorization", "Bearer invalid"))
+                .andExpect(status().isUnauthorized()).andExpect(header().string("WWW-Authenticate", "Bearer"));
+            assertThat(context.getBean(Endpoints.class).count()).isZero();
+        });
+    }
+    private String token(org.springframework.context.ApplicationContext context, List<String> roles) throws Exception {
+        var source = context.getBean(SigningKeySource.class);
+        var claims = new java.util.LinkedHashMap<String,Object>();
+        claims.put("iss", "loomspan-app"); claims.put("sub", "alice"); claims.put("aud", List.of("loomspan-app"));
+        claims.put("exp", java.time.Instant.now().plusSeconds(300).getEpochSecond());
+        claims.put("roles", roles); claims.put("token_use", "loomspan_execution");
+        var object = new com.nimbusds.jose.JWSObject(new com.nimbusds.jose.JWSHeader.Builder(com.nimbusds.jose.JWSAlgorithm.RS256)
+            .type(new com.nimbusds.jose.JOSEObjectType("loomspan-execution+jwt")).keyID(source.kid()).build(), new com.nimbusds.jose.Payload(claims));
+        var signature = source.signRs256(object.getSigningInput());
+        return object.getHeader().toBase64URL() + "." + object.getPayload().toBase64URL() + "." + com.nimbusds.jose.util.Base64URL.encode(signature);
+    }
+    @Test void requestMatrixAndExactIdentityAndContextIsolation() {
+        runner().run(context -> {
+            MockMvc mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+            String token = token(context, List.of("ROLE_ORDER_EDITOR", "ORDER_EDITOR", "OTHER"));
+            String bearer = "Bearer " + token;
+            mvc.perform(get("/loomspan/callbacks/plain").header("Authorization", bearer)).andExpect(status().isOk())
+                .andExpect(content().string("loomspan-app:alice:[ROLE_ORDER_EDITOR, ORDER_EDITOR, OTHER]"))
+                .andExpect(header().doesNotExist("Set-Cookie"));
+            assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+            mvc.perform(post("/loomspan/callbacks/plain").header("Authorization", bearer)).andExpect(status().isOk());
+            for (var request : List.of(get("/loomspan/callbacks/plain"),
+                    get("/loomspan/callbacks/plain").cookie(new jakarta.servlet.http.Cookie("JSESSIONID", "browser")),
+                    get("/loomspan/callbacks/plain").header("Authorization", ""),
+                    get("/loomspan/callbacks/plain").header("Authorization", "Basic anything"),
+                    get("/loomspan/callbacks/plain").header("Authorization", "Bearer bad"),
+                    get("/loomspan/callbacks/plain").header("Authorization", bearer, bearer),
+                    get("/loomspan/callbacks/plain").header("Authorization", bearer, "Bearer other"),
+                    get("/loomspan/callbacks/plain").header("Authorization", bearer + ", " + bearer),
+                    get("/loomspan/callbacks/plain").header("Authorization", bearer + " " + bearer),
+                    get("/loomspan/callbacks/plain?access_token=" + token),
+                    get("/loomspan/callbacks/plain?access_token=a&access_token=b"),
+                    get(java.net.URI.create("/loomspan/callbacks/plain?%61ccess_token=a")).header("Authorization", bearer))) {
+                mvc.perform(request).andExpect(status().isUnauthorized()).andExpect(header().string("WWW-Authenticate", "Bearer"))
+                    .andExpect(header().doesNotExist("Location")).andExpect(header().doesNotExist("Set-Cookie"))
+                    .andExpect(forwardedUrl(null)).andExpect(result -> assertThat(result.getResponse().getContentAsString()).doesNotContain(token));
+            }
+            assertThat(context.getBean(Endpoints.class).count()).isEqualTo(2);
+            // Isolate security from MVC's session flash-map/event bookkeeping.
+            var trap = new org.springframework.mock.web.MockHttpServletRequest(context.getServletContext()) {
+                @Override public jakarta.servlet.http.HttpSession getSession() { throw new AssertionError("session accessed"); }
+                @Override public jakarta.servlet.http.HttpSession getSession(boolean create) { throw new AssertionError("session accessed"); }
+            };
+            trap.setMethod("GET"); trap.setRequestURI("/loomspan/callbacks/plain"); trap.addHeader("Authorization", bearer);
+            var response = new org.springframework.mock.web.MockHttpServletResponse();
+            context.getBean("springSecurityFilterChain", jakarta.servlet.Filter.class).doFilter(trap, response,
+                (request, result) -> assertThat(SecurityContextHolder.getContext().getAuthentication()).isNotNull());
+            assertThat(response.getStatus()).isEqualTo(200);
+            assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+            trap.removeHeader("Authorization");
+            var rejected = new org.springframework.mock.web.MockHttpServletResponse();
+            context.getBean("springSecurityFilterChain", jakarta.servlet.Filter.class).doFilter(trap, rejected,
+                (request, result) -> { throw new AssertionError("unauthenticated callback reached servlet"); });
+            assertThat(rejected.getStatus()).isEqualTo(401);
+        });
+    }
+    @Test void methodSecurityAndBusinessAuthorizationAndOrdinaryCsrfRemainIndependent() {
+        runner().run(context -> {
+            MockMvc mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+            String permitted = "Bearer " + token(context, List.of("ROLE_ORDER_EDITOR"));
+            String literal = "Bearer " + token(context, List.of("ORDER_EDITOR"));
+            mvc.perform(get("/loomspan/callbacks/secured").header("Authorization", literal)).andExpect(status().isForbidden());
+            assertThat(context.getBean(Endpoints.class).count()).isZero();
+            mvc.perform(get("/loomspan/callbacks/secured").header("Authorization", permitted)).andExpect(status().isOk());
+            mvc.perform(get("/loomspan/callbacks/business").header("Authorization", permitted)).andExpect(status().isForbidden());
+            assertThat(context.getBean(Endpoints.class).count()).isEqualTo(2);
+            mvc.perform(get("/ordinary")).andExpect(status().is3xxRedirection());
+            mvc.perform(get("/ordinary").with(user("browser"))).andExpect(status().isOk());
+            mvc.perform(post("/ordinary").with(user("browser"))).andExpect(status().isForbidden());
+            mvc.perform(post("/ordinary").with(user("browser")).with(csrf())).andExpect(status().isOk());
+            mvc.perform(get("/login")).andExpect(status().isOk());
+        });
+    }
+    @Test void methodsAndFirewallUseNormalPolicy() {
+        runner().run(context -> {
+            MockMvc mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+            String bearer = "Bearer " + token(context, List.of());
+            for (String method : List.of("PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")) {
+                mvc.perform(request(org.springframework.http.HttpMethod.valueOf(method), "/loomspan/callbacks/plain").header("Authorization", bearer))
+                    .andExpect(status().isForbidden());
+                mvc.perform(request(org.springframework.http.HttpMethod.valueOf(method), "/loomspan/callbacks/plain"))
+                    .andExpect(status().isUnauthorized());
+            }
+            mvc.perform(request(org.springframework.http.HttpMethod.TRACE, "/loomspan/callbacks/plain")).andExpect(status().isBadRequest());
+            mvc.perform(get("/loomspan/callbacks/plain;bad=1")).andExpect(status().isBadRequest());
+            mvc.perform(get("/loomspan/callbacks/plain").with(request -> { request.setRequestURI("/loomspan//callbacks/plain"); return request; })).andExpect(status().isBadRequest());
+        });
+    }
+    @Test void prefixOverrideAndSegmentBoundary() {
+        runner().withPropertyValues("loomspan-sdk.callbacks.path-prefix=/custom/hooks/").run(context -> {
+            MockMvc mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
+            mvc.perform(get("/custom/hooks")).andExpect(status().isUnauthorized()).andExpect(header().string("WWW-Authenticate", "Bearer"));
+            mvc.perform(get("/custom/hooks/child")).andExpect(status().isUnauthorized());
+            mvc.perform(get("/custom/hooks-other")).andExpect(status().is3xxRedirection());
+            mvc.perform(get("/loomspan/callbacks/plain")).andExpect(status().is3xxRedirection());
+        });
+        for (String prefix : List.of("", "/", "/a/*", "/a?x", "/a#b", "/a\\b", "/a/../b", "/a//b")) {
+            runner().withPropertyValues("loomspan-sdk.callbacks.path-prefix=" + prefix).run(context -> assertThat(context).hasFailed());
+        }
+    }
+    @Configuration(proxyBeanMethods=false) @EnableAutoConfiguration @EnableWebMvc @EnableMethodSecurity
+    static class App {
+        @Bean org.springframework.security.core.userdetails.UserDetailsService users() {
+            return new org.springframework.security.provisioning.InMemoryUserDetailsManager(
+                org.springframework.security.core.userdetails.User.withUsername("browser").password("{noop}fixture").roles("USER").build());
+        }
+        @Bean SecurityFilterChain ordinary(HttpSecurity http) throws Exception {
+            return http.authorizeHttpRequests(a -> a.anyRequest().authenticated()).formLogin(f -> {}).build();
+        }
+        @Bean Endpoints endpoints() { return new Endpoints(); }
+        @Bean org.springframework.security.oauth2.jwt.JwtDecoder unrelatedDecoder() {
+            return token -> { throw new AssertionError("application decoder must not validate callbacks"); };
+        }
+    }
+    @RestController static class Endpoints {
+        final AtomicInteger calls = new AtomicInteger();
+        int count() { return calls.get(); }
+        @RequestMapping("/loomspan/callbacks/plain") String callback(org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken authentication) {
+            calls.incrementAndGet(); return authentication.getToken().getClaimAsString("iss") + ":" + authentication.getName() + ":" + authentication.getAuthorities();
+        }
+        @org.springframework.security.access.prepost.PreAuthorize("hasRole('ORDER_EDITOR')")
+        @GetMapping("/loomspan/callbacks/secured") String secured() { calls.incrementAndGet(); return "ok"; }
+        @GetMapping("/loomspan/callbacks/business") String business() { calls.incrementAndGet(); throw new org.springframework.security.access.AccessDeniedException("record denied"); }
+        @RequestMapping("/ordinary") String ordinary() { return "ordinary"; }
+    }
+}
+
+
+

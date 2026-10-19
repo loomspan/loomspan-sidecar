@@ -119,30 +119,30 @@ becomes complete end to end.
 
 ## Acceptance criteria
 
-- [ ] Component tests cover every row of the request table, including multiple
+- [x] Component tests cover every row of the request table, including multiple
       bearers, query tokens and cookie-only requests. 401 responses include
       `WWW-Authenticate: Bearer` and never redirect or forward to `/error`.
-- [ ] Component tests reject each JWT variant: signature, issuer, audience,
+- [x] Component tests reject each JWT variant: signature, issuer, audience,
       `typ`/`token_use`, expiry and claim shape.
-- [ ] The chain creates no sessions, disables CSRF only within the prefix, never
+- [x] The chain creates no sessions, disables CSRF only within the prefix, never
       falls through, and clears its security context after each request.
-- [ ] The prefix is configurable. GET and POST work, and disallowed methods use
+- [x] The prefix is configurable. GET and POST work, and disallowed methods use
       normal Spring handling, as documented.
-- [ ] Verified issuer, subject and exact authorities are installed without
+- [x] Verified issuer, subject and exact authorities are installed without
       prefix changes.
-- [ ] Callbacks validate against the app's own key without an overlap file.
-- [ ] A configured overlap file that becomes unusable stops callback
+- [x] Callbacks validate against the app's own key without an overlap file.
+- [x] A configured overlap file that becomes unusable stops callback
       authentication, and correcting it recovers.
-- [ ] Keys removed from the overlap file are rejected after reload.
-- [ ] Composed Local recipe scenarios pass:
+- [x] Keys removed from the overlap file are rejected after reload.
+- [x] Composed Local recipe scenarios pass:
       - an authorized callback with the forwarded token;
       - a method denial before invocation;
       - a business record denial;
       - ordinary login still working;
       - callback expiry failing without a request being sent.
-- [ ] The Local recipe now covers real invocation and callback with JWT and
+- [x] The Local recipe now covers real invocation and callback with JWT and
       user authorization.
-- [ ] SDK documentation covers the callback wiring and its limits.
+- [x] SDK documentation covers the callback wiring and its limits.
 
 ## Verification ownership reconciliation
 
@@ -176,3 +176,14 @@ recipe or trust obligations. No TLS certificate-lifecycle testing is transferred
 
 - The work spans the starter in `loomspan-sidecar` and the reference app and
   composed scenarios in `loomspan-sidecar-test-suite`. This is intentional.
+
+## Execution notes
+
+The developer approved the Full 5-Step Pipeline. Implementation and automated
+acceptance are complete; independent review remains. The
+[verification record](../plans/2026-10-18-pr-8-1-6-sdk-callback-authentication-verification.md)
+records the intended red failure, component and boundary tests, both composed
+attempts and the corrected expiry fixture. The final Local report passes all
+12 scenarios and cleanup; no provider/business-data operation, reset, commit or
+release occurred. The expiry-only leaf requires fixed input to force beta.8's
+step-model CALL_TOOL rather than zero-input automatic dispatch.

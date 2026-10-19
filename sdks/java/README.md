@@ -247,7 +247,7 @@ The export is a complete public-only JWKS written to a sibling temporary file
 and atomically replaced. Filesystem publication failure aborts startup; there is
 no ordinary-move fallback. The exported content is the trust file consumed by
 the Sidecar file-based JWT trust work in PR 8.1.4, in either application
-ConfigurationMode. That receiver and callback validation are separate work.
+ConfigurationMode. Callback validation uses its own application-side trust below.
 
 ### Token profile and exact authorities
 
@@ -274,3 +274,77 @@ unchanged. Under Spring's standard role prefix,
 `hasAuthority('ROLE_ORDER_EDITOR')`. Allowlist `ROLE_ORDER_EDITOR` to carry that
 exact authority. `ORDER_EDITOR` is a distinct name. Roles remain snapshots until
 expiry, and business input or model output cannot choose the subject or roles.
+
+### Receiving callbacks in Spring
+
+The servlet starter installs one stateless bearer-JWT `SecurityFilterChain` at
+`Ordered.HIGHEST_PRECEDENCE` on the application's existing server. Keep callback
+controllers under `/loomspan/callbacks` (including its descendants) and avoid
+competing chains at that precedence. Routes outside this prefix remain the
+application's responsibility. Ordinary form login and CSRF rules belong to your
+own lower-precedence application chain; its URL authorization is not inherited
+by callbacks.
+
+```java
+@Configuration
+@EnableMethodSecurity
+class ApplicationSecurity {
+    @Bean
+    SecurityFilterChain browser(HttpSecurity http) throws Exception {
+        return http.authorizeHttpRequests(r -> r.anyRequest().authenticated())
+                .formLogin(Customizer.withDefaults()).build();
+    }
+}
+
+@RestController
+class OrdersCallback {
+    @PostMapping("/loomspan/callbacks/orders/{id}")
+    @PreAuthorize("hasRole('ORDER_EDITOR')")
+    void update(@PathVariable String id, JwtAuthenticationToken authentication) {
+        // Check the record owner using BOTH verified issuer and subject.
+        orders.requireOwner(id, authentication.getToken().getClaimAsString("iss"),
+                authentication.getToken().getSubject());
+        orders.update(id);
+    }
+}
+```
+
+Enable standard Spring method security explicitly. The SDK authenticates; your
+annotations and business checks authorize operations and records. Token `roles`
+become authorities exactly: `ROLE_ORDER_EDITOR` satisfies standard
+`hasRole('ORDER_EDITOR')`; literal `ORDER_EDITOR` does not. The principal is a
+verified Spring `Jwt`, available through `JwtAuthenticationToken`, and the context
+is cleared after each request.
+
+Only GET and POST are allowed. Callbacks require a single Authorization bearer
+header; browser cookies and sessions never authenticate them. Missing, duplicate,
+malformed or invalid credentials and any `access_token` query parameter return
+401 with `WWW-Authenticate: Bearer`, without redirect or `/error` forwarding.
+CSRF is disabled only in this chain, and no session is read or created.
+Application denials return 403. Authenticated PUT/PATCH/DELETE/HEAD/OPTIONS return
+403; without a bearer they return 401. The default Spring firewall rejects TRACE,
+semicolon path parameters and unnormalized double-slash paths with 400 before
+authentication. Earlier servlet connector syntax rejection follows the container.
+
+| `loomspan-sdk.callbacks` setting | Default / behavior |
+| --- | --- |
+| `path-prefix` | `/loomspan/callbacks`; one literal absolute non-root prefix, trailing slash normalized; no wildcards, query, fragment, backslash or empty/dot segments |
+| `audience` | Issuance issuer; optional nonblank receiver audience override |
+| `overlap-jwks` | Absent; optional local public RSA JWKS file for rotation overlap |
+
+JWTs must have an RS256 trusted signature, `typ=loomspan-execution+jwt`,
+`token_use=loomspan_execution`, valid claim shapes, the exact configured
+`loomspan-sdk.issuance.issuer`, the receiver audience and valid timestamps with
+60 seconds of skew. There is no callback issuer setting. If overriding the
+audience, include it in `issuance.additional-audiences` for tokens intended for
+that receiver. Sidecar still checks strict credential expiry before sending.
+
+The callback validator always owns the startup signer's public key in colocated
+or provided mode, independently of Sidecar's configured JWKS. With no overlap
+file, that own key is sufficient. A configured overlap file is loaded immediately,
+polled every second and reloaded on unknown `kid` at most once per second.
+Every complete public RSA key set is validated and published atomically; removed
+keys cease to authenticate new requests. Missing, unreadable, malformed or empty
+configured overlap withdraws ALL callback trust, including the own key, until a
+valid file is restored. There is no stale fallback, private signer reload or
+public key-hosting endpoint. Trust updates do not cancel already admitted work.

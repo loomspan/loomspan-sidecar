@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ExecutionTokenAutoConfigurationTest {
     @TempDir Path directory;
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
-            .withConfiguration(AutoConfigurations.of(SidecarClientAutoConfiguration.class, ExecutionTokenAutoConfiguration.class))
+            .withConfiguration(AutoConfigurations.of(SidecarClientAutoConfiguration.class, ExecutionTokenAutoConfiguration.class, CallbackSecurityAutoConfiguration.class))
             .withPropertyValues("loomspan-sdk.base-url=http://localhost:12345");
     @Test void missingModeNamesBothOptionsAndQuickstart() {
         new ApplicationContextRunner()
@@ -34,12 +34,13 @@ class ExecutionTokenAutoConfigurationTest {
 
     @Test void explicitModeBindsDefaultsAndDiscoversConfiguration() throws Exception {
         assertThat(ImportCandidates.load(AutoConfiguration.class, getClass().getClassLoader()))
-                .contains(ExecutionTokenAutoConfiguration.class.getName(), SidecarClientAutoConfiguration.class.getName());
+                .contains(ExecutionTokenAutoConfiguration.class.getName(), SidecarClientAutoConfiguration.class.getName(), CallbackSecurityAutoConfiguration.class.getName());
         runner.withPropertyValues("loomspan-sdk.signing.mode=colocated",
                 "loomspan-sdk.signing.colocated.key-directory=" + directory,
                 "spring.application.name=some-app").run(context -> {
             assertThat(context).hasNotFailed().hasSingleBean(SigningKeySource.class)
                     .hasSingleBean(ExecutionTokenIssuer.class).hasSingleBean(SpringExecutionTokenIssuer.class);
+            assertThat(context).doesNotHaveBean(CallbackJwtTrust.class).doesNotHaveBean(org.springframework.security.web.SecurityFilterChain.class);
             assertThat(context.getBean(IssuanceProperties.class).getIssuer()).isEqualTo("loomspan-app");
             assertThat(context.getBean(IssuanceProperties.class).getLifetime()).isEqualTo(Duration.ofMinutes(15));
             assertThat(context.getBean(IssuanceProperties.class).getRoles()).isEmpty();

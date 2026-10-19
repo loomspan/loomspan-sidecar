@@ -1,2 +1,3 @@
 ai.loomspan.sdk.spring.SidecarClientAutoConfiguration
 ai.loomspan.sdk.spring.ExecutionTokenAutoConfiguration
+ai.loomspan.sdk.spring.CallbackSecurityAutoConfiguration

@@ -57,7 +57,7 @@ scenarios live in the external suite's existing `scripts/run_sdk.py` runtime.
 | Direct localhost HTTP and direct standard Spring PEM HTTPS image reachability | Existing suite [foundation-smoke](../../loomspan-sidecar-test-suite/evidence/sdk/20261018T211932Z-43ccfbc20a42/report.json) plus [deployment-transport-baseline](../../loomspan-sidecar-test-suite/evidence/sdk/20261018T211932Z-43ccfbc20a42/report.json) direct HTTPS variant; no form-login SDK claim. |
 | Supplied Caddy TLS positive, untrusted CA rejection, redirect destination, fixed upstream, forwarded-header normalization | Suite [deployment-transport-baseline](../../loomspan-sidecar-test-suite/evidence/sdk/20261018T211932Z-43ccfbc20a42/report.json) supplied-Caddy variant using per-run certs; smoke also uses shipped supplied recipe for auth/health/no-bypass. Fresh evidence is linked below. |
 | Static production/supplied Compose topology | Smoke rendered configuration checks. |
-| SDK form-login issuance, exact authorities and execution ownership; colocated app restart, current-trust correction and strict queued expiry without dispatch | External Local group in `scripts/sdk_lane/local.py` and its clean Boot reference app, derived from the actual shipped quickstart Compose; detailed receiver rules remain in the component tests. Current evidence is recorded below. |
+| SDK form-login issuance, exact authorities and execution ownership; colocated app restart, current-trust correction, authenticated callbacks with role/record authorization and strict queue/callback expiry without dispatch | External Local group in `scripts/sdk_lane/local.py` and its clean Boot reference app, derived from the actual shipped quickstart Compose; detailed receiver rules belong to the SDK starter component tests. Current evidence is recorded below. |
 | Static public/DNS Caddy adaptation | Explicitly remove external Caddy plugin/adaptation-only checks; no Sidecar runtime assertion is lost. Preserve shipped configs and operator guidance; no DNS/ACME execution. |
 | Root-key permissions, same leaf/CA across restarts, regeneration after deletion, forced supplied replacement/reload | Delete as certificate lifecycle; no replacement anywhere. |
 | Outbound TLS/mTLS selected bundle, wrong/missing client rejection | Retain `RestTransportTlsIntegrationTest`. Future full SDK peer/hostname/expiry and bidirectional no-bypass belong to 8.1.7, not claimed by stub/baseline evidence. |
@@ -96,9 +96,10 @@ fixed-upstream/no-bypass boundaries. Independent fixture counters detect effects
 
 The five retained baselines alone do not establish SDK Spring form-login issuance
 or colocated signing/trust/queue behavior; the additional Local group owns those checks.
-Neither group establishes callback authentication/method/business security, full
+Those earlier reports do not establish callback authentication/method/business
+security; the callback-specific Local evidence below owns that acceptance. Full
 Standard/Hardened bidirectional invocation/callbacks, provided-key deployment,
-trusted-group rotation or outbound-only coverage. Later tickets retain those obligations. Standard/Hardened selectors remain
+trusted-group rotation and outbound-only coverage remain later-ticket obligations. Standard/Hardened selectors remain
 empty and fail explicitly with `no-scenarios-for-recipe` until implemented.
 
 ## Cost observations
@@ -162,7 +163,7 @@ operational-data or maintained-reference changes occurred.
 
 ## Local colocated recipe evidence
 
-The [fresh Local report 20261018T222714Z-48aad3a2b736](../../loomspan-sidecar-test-suite/evidence/sdk/20261018T222714Z-48aad3a2b736/report.json)
+The [earlier Local report 20261018T222714Z-48aad3a2b736](../../loomspan-sidecar-test-suite/evidence/sdk/20261018T222714Z-48aad3a2b736/report.json)
 passes all ten selected scenarios and every build/runtime/cleanup stage in
 518.105s. It retains the five baselines above and adds the clean Boot
 form-login/CSRF consumer, exact authority 403/no dispatch, owner 404/fresh polling,
@@ -193,3 +194,34 @@ run. All five baselines and cleanup passed; new Local cases remained not-run.
 This is a fixture correction, not a shipped Local guidance defect. Callback
 security, full Standard/Hardened bidirectional TLS/mTLS, provided signing and
 trusted-group work remain outside this evidence.
+
+## SDK callback authentication and completed Local recipe
+
+The [current Local report 20261018T232143Z-36a99814fb53](../../loomspan-sidecar-test-suite/evidence/sdk/20261018T232143Z-36a99814fb53/report.json)
+passes all 12 scenarios and every build/runtime/cleanup stage in 538.779s.
+The new callback scenario verifies exact forwarded credentials and authenticated
+issuer/subject/authorities, method denial before invocation, application record
+denial before effect, and ordinary form login/CSRF alongside SDK authentication.
+The admitted planner expiry scenario observes RUNNING and model entry, holds the
+captured two-second token past expiry, emits CALL_TOOL to a required-input REST
+leaf, and observes exact `execution credential expired` plus zero callback HTTP
+arrivals, method bodies and effects through terminal completion and a quiet interval.
+It is distinct from the retained queue-expiry regression.
+
+Root components passed 61 classes / 261 tests; the independent SDK passed 25 core
+and 30 starter tests. Starter tests own the complete invalid-request/JWT matrix,
+exact authorities, chain/session/CSRF isolation, prefix/method/firewall rules,
+own-key acceptance, overlap withdrawal/recovery/removal/rate limit and shutdown.
+Root `ConfigurationModeIntegrationTest` separately passed all 8 process-JWKS cases.
+The final focused harness passed 79 tests and full safe Python suite 189; Ruff and
+diff checks passed. Report artifact hashes identify actual rebuilt Sidecar, SDK
+and consumers and the shipped quickstart sample. No provider calls, business
+runtime, maintained reference data, commit or release was involved; no data reset.
+
+The [first callback attempt](../../loomspan-sidecar-test-suite/evidence/sdk/20261018T230730Z-15907b2c1449/report.json)
+is retained as failed: all builds and callback authorization passed, but the expiry
+fixture expected a CALL_TOOL after beta.8 auto-dispatched its zero-input leaf.
+A dedicated leaf requiring fixed input now forces that model turn; targeted
+runtime proof and the fresh complete report passed. Both attempts cleaned their
+projects and external key volumes. Full Standard/Hardened recipes and rotation
+remain future work.
