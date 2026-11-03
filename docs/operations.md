@@ -17,6 +17,16 @@ framework source. It runs as UID/GID `10001:10001`, exposes application port
 heap or GC settings are needed. Its exec-form Java entry point lets container
 SIGTERM reach Spring directly.
 
+## HTTP executor activation
+
+The [HTTP executor](http-executor.md) uses captured target configuration, one
+application-owned client, ordinary JVM HTTPS trust and hostname verification.
+There are no outbound executor SSL bundles or client certificates; Caddy owns mTLS.
+Current startup and management loaders cannot activate this contract, and the
+complete application build is blocked by their obsolete route dependencies.
+Separate-route examples do not establish a supported executor deployment.
+Standard Boot inbound server TLS facilities remain independent.
+
 ## Configuration and management
 
 Choose [file or database authority](../agent-skills/loomspan-sidecar-authoring/references/configuration-modes.md)
@@ -100,7 +110,7 @@ strictly requires current trust and `now < exp` for the original captured token.
 Expired queued work fails with `execution credential expired before start`;
 withdrawn/invalid credentials fail before handoff. Already admitted Framework
 work is not cancelled by trust withdrawal. Before **each** passthrough callback,
-Sidecar strictly checks expiry and fails with `execution credential expired`
+Sidecar strictly checks expiry and fails with `HTTP caller credential missing or expired`
 without a network send at or after `exp`, even within receive skew. Callback
 receivers independently validate their trust. The original bytes go only to
 approved targets; redirects and retries remain disabled. A fresh owner token
@@ -205,8 +215,8 @@ promise uninterrupted app availability or private-key hot reload.
 ### Outbound-only applications
 
 Applications that only invoke model skills need no callback listener. Configure
-only the required model skills and omit REST targets/routes, using the default
-empty REST route resource or `targets: {}` and `routes: {}`. Keep execution JWT
+only the required model skills and omit HTTP operations. The HTTP executor
+subtree may contain `targets: {}`. Keep execution JWT
 signing and Sidecar verification trust. A non-web Spring application can use
 `spring.main.web-application-type=none`; authenticate users in its own trusted
 application boundary before issuing credentials. The SDK callback servlet chain
@@ -313,7 +323,7 @@ framework's independent API-key filter. Console keys do not authenticate `/v1`.
 
 | Key | Default / requirement |
 | --- | --- |
-| `loomspan-sidecar.url-variables` | Empty by default; exact allowed process-environment names for REST `base-url`; changes require restart. |
+| `loomspan-sidecar.url-variables` | Retained startup setting; the HTTP executor does not interpolate environment variables in base URLs. |
 | `loomspan-sidecar.storage.database-path` | `/sidecar/data/sidecar.db`; writable persistent local database path and parent directory required at startup. |
 | `loomspan-sidecar.snapshots.max-retained` | `10`; positive count of stored snapshots, including pending and failed history; protected snapshots may exceed it. |
 | `loomspan-sidecar.management.session-idle-timeout` | `30m`; positive idle deadline extended only by intentional session activity. |
@@ -331,15 +341,16 @@ framework's independent API-key filter. Console keys do not authenticate `/v1`.
 | `loomspan-sidecar.executions.max-queued` | `128`; positive waiting-record count. |
 | `loomspan-sidecar.executions.max-queued-input-size` | `64MB`; positive total serialized input bytes reserved by waiting work. |
 | `loomspan-sidecar.executions.diagnostics` | `NEVER`; allowed values are `NEVER`, `ONERROR`, and `ALWAYS`. |
-| `loomspan-sidecar.rest-routes` | File-mode REST route resource settings; `location` defaults to `classpath:/sidecar-empty-rest-routes.yaml`; changes require restart. |
+| `loomspan-sidecar.rest-routes` | Retained startup integration setting; it cannot configure the HTTP executor. |
 | `loomspan-sidecar.configuration.mode` | `database` (default) or `file`; startup-only authority, invalid values fail. |
-| `loomspan-sidecar.rest-routes.location` | `classpath:/sidecar-empty-rest-routes.yaml`; explicit missing/invalid resources fail file startup; restart applies changes. |
+| `loomspan-sidecar.rest-routes.location` | Retained separate-route location; it cannot activate HTTP executor configuration. |
 <!-- configuration-reference:end -->
 
-The route schema and `${NAME}` bindings are described in
-[REST skill routes](../agent-skills/loomspan-sidecar-authoring/references/integration.md#rest-skill-routes). Framework shutdown remains
-`loomspan.shutdown.timeout`; inbound server and outbound mTLS configuration
-remains under standard `server.ssl.*` and `spring.ssl.bundle.*` namespaces. The
+The explicit operation and target schema is described in
+[HTTP executor](http-executor.md). Framework shutdown remains
+`loomspan.shutdown.timeout`; inbound server TLS configuration
+remains under standard `server.ssl.*` and `spring.ssl.bundle.*` namespaces. Caddy
+owns outbound mTLS. The
 image honors those standard Boot environment and command-line overrides.
 
 The image's default Docker health probe uses HTTP on application port 8080, as

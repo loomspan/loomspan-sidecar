@@ -1,5 +1,12 @@
 # Standard HTTPS and Hardened Caddy mTLS
 
+Current HTTP executor startup/management integration is unavailable, and the
+complete application build is blocked by obsolete route callers. Separate-route
+files linked below cannot activate HTTP executor skills. The
+[HTTP contract](http-executor.md) defines runtime configuration and its current
+composition limitation. These topologies describe infrastructure responsibilities;
+the linked samples do not establish a runnable HTTP executor deployment.
+
 These are representative remote deployments. Invocation (SDK to Sidecar) and
 callback (Sidecar to application) transports are configured independently.
 Mixed and other compositions remain permitted and untested. Loomspan has no
@@ -35,7 +42,7 @@ mutually exclusive.
 
 The JWKS file is authoritative in both file and database application
 ConfigurationMode. Configure Sidecar trust as a process setting and configure
-REST targets, routes, skill roles and approved passthrough recipients through
+HTTP targets, operation mappings, skill roles and approved passthrough recipients through
 the selected application configuration source. The fragments below are merged
 into complete application configuration; supply your skill/model/application
 values, issuance role allowlist and security rules. Models and other external
@@ -53,8 +60,8 @@ Merge [app.yaml](../examples/remote/standard/app.yaml) and
 application settings. Configure the callback target from
 [rest-routes.yaml](../examples/remote/standard/rest-routes.yaml).
 Each Spring server listens on 8443 with its supplied certificate/private key.
-The SDK selects the `sidecar` Boot trust bundle; the Sidecar REST target selects
-the `app` bundle. Use DNS names covered by server certificate SANs. Both clients
+The SDK selects the `sidecar` Boot trust bundle; outbound HTTP executor HTTPS uses
+standard JVM trust, without a target SSL bundle. Use DNS names covered by SANs. Both clients
 verify the certificate chain and hostname. There are no client certificates or
 Caddy proxies in this recipe.
 
@@ -143,7 +150,7 @@ old executions. Trust changes do not cancel already admitted Framework work.
 
 ## Outbound-only adaptations
 
-Use only model skills and empty REST targets/routes. Keep provided signing and
+Use only model skills and empty HTTP targets. Keep provided signing and
 public JWKS delivery, but omit callback controllers and the app callback listener.
 A Spring SDK caller may run with `spring.main.web-application-type=none`; it still
 uses public SDK discovery/submission/result polling and trusted authentication.
@@ -154,7 +161,7 @@ uses public SDK discovery/submission/result polling and trusted authentication.
 - **Standard:** retain `loomspan-sdk.base-url: https://sidecar:8443`, its `sidecar`
   SSL bundle and the Sidecar HTTPS listener. Omit app inbound server settings
   when no browser/API is needed, its server certificate delivery and the Sidecar
-  app-target SSL bundle/routes when unused.
+  HTTP target settings when unused.
 - **Hardened:** retain only the global block and `http://:9080` outbound block in
   `Caddyfile.app`; keep its loopback bind, fixed Sidecar upstream and app client
   identity. Retain Sidecar's `https://:8443` mTLS execution/readiness ingress and

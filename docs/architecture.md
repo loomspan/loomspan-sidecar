@@ -2,7 +2,7 @@
 
 Sidecar runs the Loomspan Framework behind an authenticated HTTP service. Your
 application owns user authentication, business data, and the REST operations it
-exposes. Sidecar owns HTTP admission, polling records, outbound REST routing, and
+exposes. Sidecar owns HTTP admission, polling records, outbound HTTP execution, and
 configuration management. Framework owns skill validation, model execution,
 planning, authorization checks, and execution lifetime.
 
@@ -17,7 +17,7 @@ Assistant -- Console MCP --> Loomspan Console --> read-only observability API
 
 Use Sidecar for a language-neutral service boundary and independently managed
 skills. Use [embedded Framework](https://github.com/loomspan/loomspan-framework)
-for direct Java service integration. Sidecar hosts model-backed YAML and REST
+for direct Java service integration. Sidecar hosts model-backed YAML and HTTP executor
 skills, not Java application methods. HTTP adds authentication, network failure,
 deployment, and polling responsibilities that in-process callers do not have.
 
@@ -58,9 +58,18 @@ Console. [Setup](setup.md) explains how these fit together.
 A REST endpoint must authenticate the request and authorize each requested
 record independently. A model's input is not trusted identity. Caller passthrough
 forwards the original execution JWT without refreshing it; queue and model time
-can leave it expired when the callback begins. Static credentials require an
-application-specific authorization design. See [REST authoring](../agent-skills/loomspan-sidecar-authoring/references/rest-configuration.md).
+can leave it expired when the callback begins. Fixed credentials require an
+application-specific authorization design. See [HTTP executor authoring](http-executor.md).
 
 Sidecar's built-in management UI edits configuration. The separate **Loomspan
 Console** investigates runtime behavior and exposes read-only MCP tools. Neither
 installing an Agent Skill nor connecting Console publishes application skills.
+
+## HTTP runtime composition
+
+One application-owned HTTP client consumes captured skill/executor maps through the
+supported annotated executor. Per-request headers and limits isolate callers and
+targets; Framework owns admitted work and shutdown timing. Startup, restoration and
+management still expect separate route data and cannot activate this runtime. The
+complete application build remains blocked by these callers. See the
+[HTTP contract](http-executor.md) for the usable runtime composition boundary.

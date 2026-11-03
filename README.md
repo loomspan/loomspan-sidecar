@@ -9,6 +9,11 @@ For example, turn a customer's checkout failure report into an engineering
 triage brief, then add authorized order and payment lookups when the workflow
 needs evidence from your systems.
 
+The [HTTP executor contract](docs/http-executor.md) defines explicit request mappings,
+shared targets and authentication. Current startup and management integration cannot
+activate this contract; the complete application build is blocked by those callers.
+Do not use the bundled separate-route examples as executable HTTP executor setup.
+
 ## Why Sidecar?
 
 - **Integrate from any language.** Send JSON over an authenticated HTTP API,
@@ -23,7 +28,7 @@ needs evidence from your systems.
 Choose Sidecar when a separate service fits your application. Choose
 [embedded Loomspan Framework](https://github.com/loomspan/loomspan-framework)
 when you want in-process Java integration and Java application skills. Sidecar
-hosts YAML model and REST skills; it does not host Java `@SkillMethod` skills.
+hosts YAML model and HTTP executor skills; it does not host Java `@SkillMethod` skills.
 Read [architecture and tradeoffs](docs/architecture.md) before choosing the boundary.
 
 ## Work with your AI assistant
@@ -96,7 +101,7 @@ capabilities using the [authoring guide](agent-skills/loomspan-sidecar-authoring
 
 Sidecar is in beta. Pin an exact runtime and review [upgrade guidance](docs/upgrades.md).
 This checkout's POM and authoring bundle identify Sidecar `1.0.0-beta.4-SNAPSHOT` with
-Framework `1.0.0-beta.8`; their version numbers advance independently.
+Framework `1.0.0-beta.9-SNAPSHOT`; their version numbers advance independently.
 
 The supported deployment uses one Sidecar instance per persistent local SQLite
 volume. Configuration and accounts persist; execution records are memory-only

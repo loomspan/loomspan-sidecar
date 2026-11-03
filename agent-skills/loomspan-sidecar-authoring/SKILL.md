@@ -4,10 +4,17 @@ description: Build application endpoints and matching Loomspan Sidecar REST skil
 metadata:
   loomspan-component: sidecar
   loomspan-version: "1.0.0-beta.4-SNAPSHOT"
-  loomspan-framework-version: "1.0.0-beta.8"
+  loomspan-framework-version: "1.0.0-beta.9-SNAPSHOT"
 ---
 
 # Author application backed Sidecar skills
+
+Current limitation: the HTTP executor uses explicit operation mappings and captured
+targets as described in [HTTP configuration](references/rest-configuration.md). The
+startup and management paths still expect separate route data and cannot activate
+HTTP executor skills. Do not publish the bundled route example as an executable
+HTTP executor configuration. The complete application build is blocked by these
+integration callers.
 
 This is an Agent Skill for developing applications with Sidecar, not for changing
 Sidecar's implementation. Application skills are the YAML capabilities you author
@@ -24,7 +31,7 @@ Read [client setup and commands](references/client-usage.md) for authoring, [exe
 [configuration bundles](references/configuration-bundles.md), load only the
 reference needed for the task. These resources and [record example](examples/remote-authoring/README.md) are bundled.
 
-Use this bundle to access the existing Sidecar management Console API from a developer LLM. The separately installed `loomspan-docs` at exactly `1.0.0-beta.8` is an explicit dependency for deeper framework syntax and semantics, as declared by `loomspan-framework-version`. Load only relevant guidance. If unavailable, explain the missing matching guidance rather than inventing semantics or assuming a framework checkout. `loomspan-install` selects exact sources; no live service is needed for installation.
+Use this bundle to access the existing Sidecar management Console API from a developer LLM. The separately installed `loomspan-docs` at exactly `1.0.0-beta.9-SNAPSHOT` is an explicit dependency for deeper framework syntax and semantics, as declared by `loomspan-framework-version`. Load only relevant guidance. If unavailable, explain the missing matching guidance rather than inventing semantics or assuming a framework checkout. `loomspan-install` selects exact sources; no live service is needed for installation.
 
 Direct API integration requires no SDK. For Java SDK integration, use the [Java SDK guide](https://github.com/loomspan/loomspan-sidecar/blob/main/sdks/java/README.md) for dependency setup, client usage, execution-token issuance, callback authentication and lifecycle. No Java SDK specialist skill is bundled yet. Prefer the guide in the application's selected Sidecar source checkout, or select that exact revision in the linked repository; `main` is a discovery link, not version compatibility evidence. The SDK version advances independently from Sidecar. If matching documentation is unavailable, report that limitation rather than inventing SDK protocols. This skill owns Sidecar server configuration. Applications send execution requests to Sidecar; REST callbacks travel from Sidecar into the application and require independent application authentication and data authorization.
 

@@ -30,9 +30,8 @@ import java.sql.Statement;
 public class StorageConfiguration
 {
     @Bean
-    ProviderCredentialCipher providerCredentialCipher(ai.loomspan.sidecar.configuration.ConfigurationMode mode) {
-        return new ProviderCredentialCipher(mode == ai.loomspan.sidecar.configuration.ConfigurationMode.FILE
-                ? null : System.getenv("LOOMSPAN_SIDECAR_CREDENTIAL_KEY"));
+    ProviderCredentialCipher providerCredentialCipher() {
+        return new ProviderCredentialCipher(System.getenv("LOOMSPAN_SIDECAR_CREDENTIAL_KEY"));
     }
 
     @Bean
