@@ -164,7 +164,7 @@ class RuntimeConfigurationRecoveryIntegrationTest {
         var store = open(database);
         var a = store.current();
         var selected = store.submit(new ManagedConfiguration(List.of(new SkillDocument("invalid-skill.yaml",
-                "name: invalidSkill\nrest: true\nsecret: private-value\n")), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), null, a.localId());
+                "name: invalidSkill\nexecutor: missingExecutor\nsecret: private-value\n")), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), null, a.localId());
         assertThatThrownBy(() -> start(database))
                 .hasMessageContaining("skill preparation", "invalid-skill.yaml")
                 .hasMessageNotContaining("private-value");

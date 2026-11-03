@@ -9,7 +9,7 @@ import shutil
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-RELEASED_FRAMEWORK = "1.0.0-beta.8"
+RELEASED_FRAMEWORK = "1.0.0-beta.9"
 
 
 def release_version(value, label):
@@ -34,12 +34,15 @@ def main():
         raise SystemExit(f"tag {args.tag} does not match v{args.project_version}")
 
     pom = (ROOT / "pom.xml").read_text()
-    if "<loomspan.version>1.0.0-beta.8-SNAPSHOT</loomspan.version>" not in pom and \
-            "<loomspan.version>1.0.0-beta.8</loomspan.version>" not in pom:
-        raise SystemExit("pom.xml does not use the beta 8 framework line")
+    if "<loomspan.version>1.0.0-beta.9-SNAPSHOT</loomspan.version>" not in pom and \
+            "<loomspan.version>1.0.0-beta.9</loomspan.version>" not in pom:
+        raise SystemExit("pom.xml does not use the beta 9 framework line")
     if args.validate_only:
         print(f"Validated nonpublishing release plan for {args.project_version} with Loomspan {args.loomspan_version}")
         return
+
+    if f"<loomspan.version>{RELEASED_FRAMEWORK}</loomspan.version>" not in pom:
+        raise SystemExit("Release packaging requires the published Framework dependency pin")
 
     jar = pathlib.Path(args.jar) if args.jar else ROOT / "target" / f"loomspan-sidecar-{args.project_version}.jar"
     if not jar.is_file(): raise SystemExit(f"executable JAR not found: {jar}")

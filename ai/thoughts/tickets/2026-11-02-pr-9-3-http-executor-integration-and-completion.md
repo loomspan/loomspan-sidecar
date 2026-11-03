@@ -130,29 +130,29 @@ whether Framework beta.9 needs further changes before its release.
 
 ## Acceptance criteria
 
-- [ ] File readiness, management validation/publication and restart restoration
+- [x] File readiness, management validation/publication and restart restoration
   do not certify HTTP domain correctness. A Framework-valid HTTP-invalid fixture
   reaches those boundaries and fails only when invoked, with no outbound request;
   separate Framework-invalid fixtures still fail Framework validation.
 
-- [ ] The equipment-service and relevant SDK harness/generator paths use the new
+- [x] The equipment-service and relevant SDK harness/generator paths use the new
   executor architecture; representative local composed calls pass without paid
   providers, altered reference outputs, compatibility adapters or client-specific
   Sidecar behavior.
-- [ ] Sidecar-owned public-API evidence demonstrates direct and standard tool-call
+- [x] Sidecar-owned public-API evidence demonstrates direct and standard tool-call
   success/failure behavior, complete text/error fidelity, authentication/expiry,
   no automatic replay/redirect/cookie state and bounded responses.
-- [ ] Real publication/restoration/shutdown scenarios confirm captured settings,
+- [x] Real publication/restoration/shutdown scenarios confirm captured settings,
   durable ownership and resource lifetime; Framework tests are not substituted
   for Sidecar integration evidence.
-- [ ] Representative HTTPS and Caddy-owned mTLS scenarios preserve trust boundaries
+- [x] Representative HTTPS and Caddy-owned mTLS scenarios preserve trust boundaries
   without adding executor TLS identity management or an exhaustive network matrix.
-- [ ] Every intermediate blocker from earlier tickets is explicitly reconciled;
+- [x] Every intermediate blocker from earlier tickets is explicitly reconciled;
   the complete Sidecar build/required local checks and affected maintained suite
   lanes pass against the installed snapshot, with no disabled failing tests.
-- [ ] Active consumers and current guidance contain no obsolete REST contract
+- [x] Active consumers and current guidance contain no obsolete REST contract
   dependencies; application and test Framework dependencies remain public-only.
-- [ ] Internal evidence identifies what was executed, its results and limits, any
+- [x] Internal evidence identifies what was executed, its results and limits, any
   Framework gaps and their resolution, and the still-pending published-artifact/
   hosted-CI release gate. No release/publication is performed by this ticket.
 
@@ -193,3 +193,26 @@ whether Framework beta.9 needs further changes before its release.
   required local suites passing. Intermediate breakage does not permit reduced
   assurance at completion. These tickets do not instruct agents to commit, sync,
   push or publish; the developer owns those actions.
+
+
+## Execution notes
+
+- Full pipeline implementation covers the Sidecar and maintained neighboring suite;
+  both repositories began clean. Verification and material execution decisions are
+  recorded in [the implementation artifact](../verification/2026-11-02-pr-9-3-http-executor-integration-and-completion.md)
+  and governing plan. Required local gates pass; fresh independent Step 5 remains.
+- Developer authorized the namespace-only replay contract update. Runtime selects
+  the separate `fixtures/reference-namespaced` pack directly; its 316 allowlisted
+  identity changes are field-reviewed. Original accepted packs, model contracts
+  and accepted business outputs remain unchanged; no fallback/matcher relaxation.
+- Python app execution ownership uses `equipment-app` with verified subject.
+  Existing development receipts under the superseded login issuer are not relabeled
+  or migrated. Existing keys, credentials and stores were preserved; safe verification
+  used a fresh workspace/project/stores, and no operational reset was performed.
+- No supported Framework gap was established. A single diagnostic trace wire-read
+  failure is retained as a nonreproduced observation; explicit focused and complete
+  grouped reruns pass without retry logic or relaxed assertions.
+- No paid providers, live service commitments, source-repository commits/pushes,
+  tags or releases. Snapshot proof does not satisfy publication/hosted CI: publish
+  Framework beta.9 first, pin its released artifact, repeat final build/tests/final
+  commit and verify CI before Sidecar beta.4 release. Never overwrite a release.

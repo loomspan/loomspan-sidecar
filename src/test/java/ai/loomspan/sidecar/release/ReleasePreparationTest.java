@@ -11,12 +11,12 @@ class ReleasePreparationTest {
     @Test
     void releasePreparationRejectsSnapshotsAndProducesExpectedArtifactPlan() throws Exception {
         String pom = Files.readString(Path.of("pom.xml"));
-        String ci = Files.readString(Path.of(".github/workflows/ci.yml"));
-        String release = Files.readString(Path.of(".github/workflows/release.yml"));
+        String ci = Files.readString(Path.of(".github/workflows/ci.yml")).replace("\r\n", "\n");
+        String release = Files.readString(Path.of(".github/workflows/release.yml")).replace("\r\n", "\n");
         String script = Files.readString(Path.of("scripts/prepare-release.py"));
 
         assertThat(pom).contains("<id>release</id>", "requireReleaseVersion", "requireReleaseDeps",
-                "1\\.0\\.0-beta\\.8");
+                "1\\.0\\.0-beta\\.9");
         assertThat(ci).contains("docker build", "verify-deployment.py", "test_verify_deployment.py",
                 "com.microsoft.playwright.CLI").doesNotContain("push: true", "docker/login-action",
                 "--verify-kubernetes");
@@ -28,15 +28,15 @@ class ReleasePreparationTest {
                 "manifest unknown|no such manifest", "Could not establish whether image tag", "refusing to overwrite",
                 "push: true", "docker/login-action", "prepare-release.py", "softprops/action-gh-release",
                 "verify-deployment.py", "test_verify_deployment.py", "com.microsoft.playwright.CLI");
-        assertThat(script).contains("SNAPSHOT", "1.0.0-beta.8", ".sha256", "zipfile.ZipFile");
+        assertThat(script).contains("SNAPSHOT", "1.0.0-beta.9", ".sha256", "zipfile.ZipFile");
         assertThat(ci.split("verify-deployment.py", -1)).hasSize(2);
         assertThat(release.split("verify-deployment.py", -1)).hasSize(2);
         assertThat(ci + release + pom).doesNotContain("run_sdk.py", "loomspan-sidecar-test-suite");
 
-        assertThat(run("1.0.0-beta.2", "1.0.0-beta.8", "v1.0.0-beta.2")).isZero();
-        assertThat(run("1.0.0-beta.2-SNAPSHOT", "1.0.0-beta.8", "v1.0.0-beta.2-SNAPSHOT")).isNotZero();
-        assertThat(run("1.0.0-beta.2", "1.0.0-beta.3", "v1.0.0-beta.2")).isNotZero();
-        assertThat(run("1.0.0-beta.2", "1.0.0-beta.8", "vwrong")).isNotZero();
+        assertThat(run("1.0.0-beta.4", "1.0.0-beta.9", "v1.0.0-beta.4")).isZero();
+        assertThat(run("1.0.0-beta.4-SNAPSHOT", "1.0.0-beta.9", "v1.0.0-beta.4-SNAPSHOT")).isNotZero();
+        assertThat(run("1.0.0-beta.4", "1.0.0-beta.3", "v1.0.0-beta.4")).isNotZero();
+        assertThat(run("1.0.0-beta.4", "1.0.0-beta.9", "vwrong")).isNotZero();
     }
 
     private static int run(String project, String loomspan, String tag) throws Exception {

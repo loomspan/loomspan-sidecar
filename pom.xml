@@ -170,8 +170,8 @@
                     <requireReleaseDeps />
                     <requireProperty>
                       <property>loomspan.version</property>
-                      <regex>1\.0\.0-beta\.8</regex>
-                      <regexMessage>Release requires Loomspan 1.0.0-beta.8 exactly.</regexMessage>
+                      <regex>1\.0\.0-beta\.9</regex>
+                      <regexMessage>Release requires Loomspan 1.0.0-beta.9 exactly.</regexMessage>
                     </requireProperty>
                   </rules>
                 </configuration>
