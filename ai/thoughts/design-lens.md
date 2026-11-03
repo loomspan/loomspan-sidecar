@@ -4,6 +4,8 @@ Use these principles when planning, implementing and reviewing Sidecar changes.
 Keep this document self-contained. Detailed contracts, ticket and phase references,
 and implementation status belong in their own documents.
 
+Sidecar is in development with no deployments or customers.
+
 **Development policy: replace obsolete contracts, code and schemas directly.
 Do not add compatibility shims, legacy adapters or parallel legacy APIs.**
 Every new roadmap and ticket must state this policy prominently and reference
@@ -32,6 +34,31 @@ Accept technical debt only when its benefit outweighs the expected maintenance
 and future change costs. Record the tradeoff and any needed follow-up in the
 existing ticket or plan. Review for unnecessary work as well as correctness;
 simplicity does not excuse missing requirements or verification.
+
+## Keep product documentation about the current system
+
+The README, product documentation, and packaged skills are living descriptions
+of the system available to their readers. Describe current behavior, supported
+contracts, constraints, and usable examples directly. Keep them understandable
+without access to internal tickets, pull requests, implementation plans, or
+delivery history.
+
+Do not add PR numbers, ticket identifiers, implementation-slice summaries,
+completion receipts, or promises that behavior will arrive in a later PR. Keep
+work tracking, sequencing, verification-run results, and handoff notes in tickets,
+research, plans, and review artifacts under `ai/thoughts/`. Stable source and test
+references may support a documented contract; they should not narrate the work
+that produced it. Sidecar is in development with no deployments or customers.
+Do not add upgrade or migration guidance, old-to-new recipes, or
+compatibility-change histories to consumer documentation. Describe the current
+supported contract directly; keep intentional-break assessments in internal
+design and work artifacts.
+
+When a feature is incomplete, state the actual current limitation and its effect
+on the reader. Do not describe planned behavior as supported, hide a limitation
+by removing its qualification, or substitute a future delivery reference for an
+explanation. Review documentation changes against the current executable system
+and remove obsolete recipes and tracking language as part of the same change.
 
 ## Framework remains the skill execution authority
 

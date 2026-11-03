@@ -43,6 +43,4 @@ runtime; `main` is not compatibility evidence for an older release.
 
 Framework owns skill syntax and execution semantics; Console owns its runtime
 package and MCP tools. [Setup](setup.md) links those projects and explains version
-selection. Sidecar contributor process and historical release evidence belong
-outside this application map; see [repository guidance](../AGENTS.md) and the
-[audit](../ai/throughts/readme-audit.md).
+selection. Sidecar contributors should follow [repository guidance](../AGENTS.md).
