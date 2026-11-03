@@ -37,17 +37,11 @@ public final class SidecarApplicationFixture implements AutoCloseable {
         }).toList();
     }
     /** Seed one complete authored selection before a Spring context starts. */
-    public static synchronized Path seedDatabase(Path database, java.util.List<Path> skillFiles, String routesYaml) {
-        return seedDatabase(database, skillFiles, routesYaml,
-                ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
-    }
-
-    public static synchronized Path seedDatabase(Path database, java.util.List<Path> skillFiles,
-            String routesYaml, String executionYaml) {
-        return seedDatabase(database, skillFiles, routesYaml, executionYaml, java.util.Map.of());
+    public static synchronized Path seedDatabase(Path database, java.util.List<Path> skillFiles, String executionYaml) {
+        return seedDatabase(database, skillFiles, executionYaml, java.util.Map.of());
     }
     public static synchronized Path seedDatabase(Path database, java.util.List<Path> skillFiles,
-            String routesYaml, String executionYaml, java.util.Map<String,String> credentials) {
+            String executionYaml, java.util.Map<String,String> credentials) {
         if (Files.exists(database)) return database;
         var source = ai.loomspan.sidecar.storage.StorageConfiguration.dataSource(database);
         ai.loomspan.sidecar.storage.StorageConfiguration.migrate(source);
@@ -62,8 +56,11 @@ public final class SidecarApplicationFixture implements AutoCloseable {
             for (Path file : skillFiles) {
                 documents.add(new ai.loomspan.api.SkillDocument(file.getFileName().toString(), Files.readString(file)));
             }
-            store.submit(new ai.loomspan.sidecar.storage.ManagedConfiguration(documents, routesYaml, executionYaml),
-                    null, initial.localId(), executionYaml, encrypt(credentials));
+            var authored = new ai.loomspan.sidecar.storage.ManagedConfiguration(documents, executionYaml);
+            var candidate = new ai.loomspan.sidecar.configuration.EffectiveExecutionConfiguration(
+                    new ai.loomspan.sidecar.configuration.ProviderCredentialCipher(CREDENTIAL_KEY))
+                    .assemble(authored, encrypt(credentials));
+            store.submit(authored, null, initial.localId(), candidate.yaml(), candidate.retained());
         } catch (java.io.IOException failure) { throw new IllegalStateException(failure); }
         return database;
     }
@@ -108,17 +105,19 @@ public final class SidecarApplicationFixture implements AutoCloseable {
                 try (var output = exchange.getResponseBody()) { output.write(body); }
             });
             modelServer.start();
-            routes = Files.createTempFile("sidecar-rest-routes-", ".yaml");
+            routes = Files.createTempFile("sidecar-http-settings-", ".yaml");
             Files.writeString(routes, """
-                    targets:
-                      callback:
-                        base-url: http://127.0.0.1:%d
-                        auth: {mode: caller-passthrough}
-                        connect-timeout: 1s
-                        read-timeout: 5s
-                        max-response-size: 16KB
-                    routes:
-                      echoRest: {target: callback, method: POST, path: /echo}
+                    loomspan:
+                      executor-config:
+                        default:
+                          http:
+                            targets:
+                              callback:
+                                base-url: http://127.0.0.1:%d
+                                auth: {mode: caller-passthrough}
+                                connect-timeout: 1s
+                                read-timeout: 5s
+                                max-response-size: 16KB
                     """.formatted(callback.server.getAddress().getPort()));
             routes.toFile().deleteOnExit();
         } catch (Exception failure) {
@@ -128,7 +127,13 @@ public final class SidecarApplicationFixture implements AutoCloseable {
 
     public int modelPort() { return modelServer.getAddress().getPort(); }
     public int callbackPort() { return callback.server.getAddress().getPort(); }
-    public Path routes() { return routes; }
+    public Path execution() { return routes; }
+    public String executionWithProvider() {
+        try {
+            return Files.readString(routes) + "  connections:\n    fixture:\n      driver: openai\n      base-url: http://127.0.0.1:"
+                    + modelPort() + "/v1\n      api-key-ref: fixture.model.key\n  models:\n    fixture-model:\n      connection: fixture\n      provider-model: fixture-provider-model\n";
+        } catch (java.io.IOException failure) { throw new java.io.UncheckedIOException(failure); }
+    }
     public ConcurrentLinkedQueue<String> modelResponses() { return modelResponses; }
     public ConcurrentLinkedQueue<String> modelRequests() { return modelRequests; }
     public ConcurrentLinkedQueue<String> modelAuthorizations() { return modelAuthorizations; }

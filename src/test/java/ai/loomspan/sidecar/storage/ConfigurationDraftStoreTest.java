@@ -27,12 +27,12 @@ class ConfigurationDraftStoreTest {
         long b = new ManagementAccountRepository(jdbc).insert("b@example.test", "editor", 1);
         var store = new ConfigurationDraftStore(jdbc, new TransactionTemplate(new DataSourceTransactionManager(data)));
         var snapshot = new ConfigurationSnapshot(java.util.UUID.randomUUID(), null, 1,
-                new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), SnapshotStatus.PUBLISHED);
+                new ManagedConfiguration(List.of(), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), SnapshotStatus.PUBLISHED);
         var initial = store.createIfAbsent(a, snapshot);
         assertThat(store.createIfAbsent(a, snapshot)).isEqualTo(initial);
         assertThat(store.read(b)).isNull();
         var content = new ManagedConfiguration(List.of(new SkillDocument("one.yaml", "name: one"),
-                new SkillDocument("two.yaml", "name: two")), "targets: {}\nroutes: {}\n# saved\n", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
+                new SkillDocument("two.yaml", "name: two")), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
         var changed = store.replace(a, initial.draftId(), initial.revision(), snapshot.localId(),
                 snapshot.localId(), content, null);
         assertThat(changed.revision()).isEqualTo(initial.revision() + 1);
@@ -61,7 +61,7 @@ class ConfigurationDraftStoreTest {
         long account = new ManagementAccountRepository(jdbc).insert("a@example.test", "editor", 1);
         var store = new ConfigurationDraftStore(jdbc, new TransactionTemplate(new DataSourceTransactionManager(data)));
         var snapshot = new ConfigurationSnapshot(UUID.randomUUID(), null, 1,
-                new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES,
+                new ManagedConfiguration(List.of(),
                         ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), SnapshotStatus.PUBLISHED);
         var draft = store.createIfAbsent(account, snapshot);
         var cipher = new ProviderCredentialCipher(Base64.getEncoder().encodeToString(new byte[32]));
@@ -88,11 +88,11 @@ class ConfigurationDraftStoreTest {
         long account = new ManagementAccountRepository(jdbc).insert("destination@example.test", "editor", 1);
         var store = new ConfigurationDraftStore(jdbc, new TransactionTemplate(new DataSourceTransactionManager(data)));
         var base = new ConfigurationSnapshot(UUID.randomUUID(), null, 1,
-                new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES,
+                new ManagedConfiguration(List.of(),
                         ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), SnapshotStatus.PUBLISHED);
         var draft = store.createIfAbsent(account, base);
-        var imported = new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES,
-                "loomspan:\n  connections:\n    primary:\n      driver: openai\n      api-key-ref: destination.key\n", List.of("destination.key"));
+        var imported = new ManagedConfiguration(List.of(),
+                "loomspan:\n  executor-config: {default: {http: {}}}\n  connections:\n    primary:\n      driver: openai\n      api-key-ref: destination.key\n", List.of("destination.key"));
         var loaded = store.replace(account, draft.draftId(), draft.revision(), base.localId(),
                 base.localId(), imported, UUID.randomUUID());
         assertThat(loaded.retainedSource()).isFalse();
@@ -122,7 +122,7 @@ class ConfigurationDraftStoreTest {
         long account = new ManagementAccountRepository(jdbc).insert("rollback@example.test", "editor", 1);
         var store = new ConfigurationDraftStore(jdbc, new TransactionTemplate(new DataSourceTransactionManager(data)));
         var base = new ConfigurationSnapshot(UUID.randomUUID(), null, 1,
-                new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES,
+                new ManagedConfiguration(List.of(),
                         ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), SnapshotStatus.PUBLISHED);
         var draft = store.createIfAbsent(account, base);
         var source = UUID.randomUUID();

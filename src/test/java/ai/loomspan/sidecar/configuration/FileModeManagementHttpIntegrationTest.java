@@ -50,7 +50,7 @@ class FileModeManagementHttpIntegrationTest {
         String candidate = capability.substring(0, capability.length() - 1)
                 + ",\"draftId\":\"" + id + "\",\"revision\":1,\"baseSnapshotId\":\"" + id + "\"}";
         String save = candidate.substring(0, candidate.length() - 1)
-                + ",\"skillDocuments\":[],\"restRoutesYaml\":\"targets: {}\",\"executionConfigurationYaml\":\"loomspan: {}\"}";
+                + ",\"skillDocuments\":[],\"executionConfigurationYaml\":\"loomspan: {executor-config: {default: {http: {}}}}\"}";
         String credential = candidate.substring(0, candidate.length() - 1) + ",\"identifier\":\"fixture\"}";
         for (String action : new String[] {"", "/handoff", "/takeover"})
             readOnly(browser.post("/api/management/editing/lease" + action, "{\"label\":\"fixture\"}"));

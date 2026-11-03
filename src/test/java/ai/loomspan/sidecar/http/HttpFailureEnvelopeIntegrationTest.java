@@ -1,4 +1,4 @@
-package ai.loomspan.sidecar.rest;
+package ai.loomspan.sidecar.http;
 
 import ai.loomspan.sidecar.LoomspanSidecarApplication;
 import ai.loomspan.sidecar.support.JwtTestTokens;
@@ -26,7 +26,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class RestFailureEnvelopeIntegrationTest {
+class HttpFailureEnvelopeIntegrationTest {
     @TempDir Path directory;
 
     @Test
@@ -55,20 +55,17 @@ class RestFailureEnvelopeIntegrationTest {
         });
         server.start();
         try {
-            var routes = new StringBuilder("targets:\n");
+            var routes = new StringBuilder("loomspan:\n  executor-config:\n    default:\n      http:\n        targets:\n");
             for (String mode : List.of("timeout", "oversize", "media")) {
                 Files.writeString(directory.resolve(mode + ".yml"), """
                         name: %s
                         description: Transport failure fixture.
-                        rest: true
+                        executor: http
+                        config: {target: %s, method: GET, path: /%s}
                         input_schema: {type: object, properties: {}}
-                        """.formatted(mode));
-                routes.append("  %s: {base-url: 'http://127.0.0.1:%d', auth: {mode: none}, connect-timeout: 1s, read-timeout: 200ms, max-response-size: %s}\n"
+                        """.formatted(mode, mode, mode));
+                routes.append("          %s: {base-url: 'http://127.0.0.1:%d', auth: {mode: none}, connect-timeout: 1s, read-timeout: 200ms, max-response-size: %s}\n"
                         .formatted(mode, server.getAddress().getPort(), mode.equals("oversize") ? "5B" : "1KB"));
-            }
-            routes.append("routes:\n");
-            for (String mode : List.of("timeout", "oversize", "media")) {
-                routes.append("  %s: {target: %s, method: GET, path: /%s}\n".formatted(mode, mode, mode));
             }
             Path file = directory.resolve("routes.yaml");
             Files.writeString(file, routes);
@@ -86,7 +83,7 @@ class RestFailureEnvelopeIntegrationTest {
                 String base = "http://127.0.0.1:" + port;
                 String token = JwtTestTokens.token("transport-owner", List.of());
                 var mapper = new ObjectMapper();
-                for (var scenario : Map.of("timeout", "transport error", "oversize", "byte limit", "media", "unsupported").entrySet()) {
+                for (var scenario : Map.of("timeout", "transport failed", "oversize", "size limit", "media", "cannot be decoded").entrySet()) {
                     var accepted = client.send(request(base + "/v1/skills/" + scenario.getKey() + "/executions", token)
                             .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString("{}")).build(),
                             HttpResponse.BodyHandlers.ofString());

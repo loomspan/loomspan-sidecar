@@ -280,22 +280,34 @@ Terminal failures do not become model recovery feedback through this mechanism.
 
 ### HTTP configuration validation
 
-Sidecar validates HTTP configuration at startup and during management validation
-before publication. Catch configuration errors such as unknown targets,
-unsupported methods, invalid pointer syntax and a body configured for GET.
-Checks requiring actual input, including missing values and destination-specific
-value types, run at invocation before dispatch. Validation does not call the
-destination service; temporary service unavailability must not prevent publishing
-otherwise valid configuration. Reuse the same Sidecar-owned HTTP validation logic
-across startup, management and invocation where applicable. Framework continues
-to validate its own executor contracts; do not add Framework HTTP-validation hooks.
+HTTP-specific validation is invocation-time only, before HTTP dispatch, in both
+file and database modes. The executor validates captured skill/target configuration
+and actual input, including unknown targets, methods, pointers, body combinations,
+HTTP credential usability and destination-specific value rules.
+
+Startup, readiness, draft validation, publication, import, rollback and restoration
+must not run HTTP domain validators or probe destinations. Framework still validates
+its own declarations, executor references, selected-map structure, schemas and
+authorization. Sidecar retains management authorization, storage/bundle integrity
+and credential-record protection; these are not HTTP operational validation.
+Management success does not certify executor configuration or destination usability.
+A Framework-valid but HTTP-invalid configuration can start, be published/restored
+and report ready; invocation fails clearly before sending its HTTP request.
+
+This developer decision supersedes the earlier early-validation requirement.
+Keep SkillExecutor invocation-only: no new public configuration accessor,
+validation hook, internal access, independent Boot Config Data re-parsing or
+parallel configuration contract is needed for this work. HTTP validators do not
+contact destinations. Unit tests may exercise them directly, but production
+startup/management paths must not call them.
 
 ### Management and durable configuration
 
 Keep the file-mode/database-mode distinction while replacing the separate routes
 document. HTTP operations live in skill YAML and shared targets live under
-`loomspan.executor-config`. Management edits, validates and publishes them together
-as one complete configuration. Database mode restores the selected publication
+`loomspan.executor-config`. Management edits and publishes them together as one
+complete configuration, validating Framework contracts and management invariants
+only, not HTTP domain semantics. Database mode restores the selected publication
 after restart without filling missing settings from startup files. File mode
 continues to apply changes through restart.
 

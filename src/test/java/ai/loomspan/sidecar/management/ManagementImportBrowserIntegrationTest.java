@@ -1,6 +1,6 @@
 package ai.loomspan.sidecar.management;
 
-import ai.loomspan.sidecar.bundle.ConfigurationBundleV3;
+import ai.loomspan.sidecar.bundle.ConfigurationBundleV4;
 import ai.loomspan.sidecar.configuration.RuntimeConfigurationService;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshotStore;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshot;
@@ -46,7 +46,7 @@ class ManagementImportBrowserIntegrationTest {
 
     @Test void importLoadsSavedDraftAndRequiresSharedValidationAndPublication() throws Exception {
         synchronized (editing) { editing.clearLease(); }
-        Path bundle = ConfigurationBundleV3.write(runtime.publishedSnapshot(), List.of(), true);
+        Path bundle = ConfigurationBundleV4.write(runtime.publishedSnapshot(), List.of(), true);
         var before = runtime.inspect().publishedId();
         try (Playwright playwright = Playwright.create(); Browser browser = playwright.chromium().launch();
                 BrowserContext context = browser.newContext()) {

@@ -1,4 +1,7 @@
 loomspan:
+  executor-config:
+    default:
+      http: {}
   observability:
     enabled: false
 
@@ -12,7 +15,6 @@ loomspan-sidecar:
     edit-lease-timeout: 15m
     mail-from: ${LOOMSPAN_SIDECAR_MAIL_FROM:}
     external-base-url: ${LOOMSPAN_SIDECAR_EXTERNAL_BASE_URL:}
-  url-variables: []
   auth:
     jwt:
       audience: loomspan-sidecar

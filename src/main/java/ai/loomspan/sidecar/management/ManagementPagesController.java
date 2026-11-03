@@ -175,11 +175,11 @@ public class ManagementPagesController
         var user = ManagementController.principal(auth);
         boolean editor = !"viewer".equals(user.role()) && runtime.mode() == ai.loomspan.sidecar.configuration.ConfigurationMode.DATABASE;
         String actions = action("/management/configuration/current", ICON_CURRENT, "Inspect runtime",
-                "Review the skills and REST routes this Sidecar is executing now.")
+                "Review the skills and execution settings this Sidecar is executing now.")
                 + action("/management/configuration/history", ICON_HISTORY, "Browse history",
                         "Compare retained submissions" + (editor ? " and roll back to a known-good snapshot." : "."))
                 + (editor ? action("/management/configuration/edit", ICON_EDIT, "Edit configuration",
-                        "Draft, validate, and publish skill and route changes.")
+                        "Draft, validate, and publish skill and execution changes.")
                         + action("/management/configuration/import", ICON_IMPORT, "Import a bundle",
                                 "Promote a configuration exported from another Sidecar.")
                         : "")
@@ -233,12 +233,12 @@ public class ManagementPagesController
     String current(Authentication auth, HttpServletRequest request)
     {
         if (runtime.mode() == ai.loomspan.sidecar.configuration.ConfigurationMode.FILE) return filePage(auth, request);
-        return console("Current configuration", "The skills and REST routes this Sidecar is running right now.", ManagementController.principal(auth), request,
+        return console("Current configuration", "The skills and execution settings this Sidecar is running right now.", ManagementController.principal(auth), request,
                 "<button id='current-refresh' type='button'>Refresh configuration</button>"
                         + "<label><input id='current-export-credentials' type='checkbox'> Include encrypted credentials (requires Edit)</label>"
                         + "<button id='current-export' class='btn-primary' type='button'>Download current configuration</button>",
                 "<section data-console='current'><p id='current-status' class='notice' role='status' aria-live='polite'>Loading runtime snapshot…</p>"
-                        + "<p class='notice warning'>Bundles exclude credentials by default. Include encrypted credentials only for a destination using the same encryption key. Keep credential-bearing bundles secure. Authored REST YAML may contain sensitive values.</p>"
+                        + "<p class='notice warning'>Bundles exclude credentials by default. Include encrypted credentials only for a destination using the same encryption key. Keep credential-bearing bundles secure. Authored YAML may contain sensitive values.</p>"
                         + "<div id='current-content' class='stack-lg'></div></section>");
     }
 
@@ -287,7 +287,7 @@ public class ManagementPagesController
     String edit(Authentication auth, HttpServletRequest request)
     {
         if (runtime.mode() == ai.loomspan.sidecar.configuration.ConfigurationMode.FILE) return filePage(auth, request);
-        return console("Edit configuration", "Change skills, REST routes and execution settings in a private draft, validate, then publish.", ManagementController.principal(auth), request, "",
+        return console("Edit configuration", "Change skills and execution settings in a private draft, validate, then publish.", ManagementController.principal(auth), request, "",
                 "<section data-console='editor' class='stack-lg'>"
                         + "<div class='card editor-lease'><div class='editor-lease-info'><p id='editor-message' class='notice' role='status' aria-live='polite'>Loading configuration…</p>"
                         + "<p id='editor-owner' class='editor-owner'></p><p id='editor-deadline' class='hint'></p></div>"
@@ -305,8 +305,6 @@ public class ManagementPagesController
                         + "<div id='editor-fields' class='stack-lg' hidden><div><div class='section-head'><div><h2 class='section-title'>Skill YAML documents</h2>"
                         + "<p class='hint'>Each source name is a diagnostic label. Edit complete YAML documents.</p></div>"
                         + "<button id='editor-add' type='button'>Add skill document</button></div><div id='editor-skills' class='stack'></div></div>"
-                        + "<div class='editor-document'><label for='editor-rest' class='section-title'>REST targets and routes YAML</label>"
-                         + "<textarea id='editor-rest' class='code' spellcheck='false'></textarea></div>"
                          + "<section class='card stack'><h2 class='section-title'>Database configuration</h2>"
                          + "<p class='hint'>All execution settings and encrypted credentials belong to this database draft. Save, validate, then publish.</p>"
                          + "<div id='editor-credential-controls' class='stack'><h3>Managed provider credentials</h3>"
@@ -353,8 +351,8 @@ public class ManagementPagesController
                          + "<label class='field'>Attachment maximum size<input id='editor-attachment-size' placeholder='20MB'></label>"
                          + "</div></details><button id='editor-generate-execution' type='button'>Generate execution YAML from fields</button></section>"
                          + "<div class='editor-document'><label for='editor-execution' class='section-title'>Framework execution settings YAML</label>"
-                         + "<p class='hint'>Publishable connections, model aliases, session limits, and execution trace policy. "
-                         + "Use credential references. Process settings still require a restart.</p>"
+                         + "<p class='hint'>Publishable connections, model aliases, executor configuration, session limits, and execution trace policy. "
+                         + "Use credential references. Process settings still require a restart. HTTP settings are checked only on invocation; validation and readiness do not establish HTTP validity or reachability.</p>"
                          + "<textarea id='editor-execution' class='code' spellcheck='false'></textarea></div></div>"
                         + "<div class='editor-bar'><div class='editor-bar-state'>"
                         + "<span class='editor-bar-item'><span class='editor-bar-label'>Draft</span><span id='editor-save' class='badge' role='status' aria-live='polite'>Not editing</span>"
@@ -373,7 +371,7 @@ public class ManagementPagesController
         if (runtime.mode() == ai.loomspan.sidecar.configuration.ConfigurationMode.FILE) return filePage(auth, request);
         return console("Import configuration", "Load an exported bundle into your saved draft, then validate and publish it.", ManagementController.principal(auth), request, "",
                 "<section data-console='import' class='stack-lg'><ol class='stepper'><li>Choose bundle</li><li>Review on this Sidecar</li><li>Load into draft</li></ol>"
-                        + "<div class='card stack'><h2>Configuration bundle</h2><p class='muted'>Choose a format-3 current-configuration bundle exported from this or another Sidecar.</p>"
+                        + "<div class='card stack'><h2>Configuration bundle</h2><p class='muted'>Choose a format-4 current-configuration bundle exported from this or another Sidecar.</p>"
                         + "<label>Credential import<select id='import-credential-mode'><option value='included'>Use included encrypted credentials (same key)</option><option value='configuration-only'>Configuration only; provide destination replacements</option></select></label>"
                         + "<label class='dropzone'><span>Bundle file (.zip)</span><input id='import-file' type='file' accept='.zip,application/zip'></label>"
                         + "<div class='row'><button id='import-review' class='btn-primary' type='button'>Review on this destination</button></div>"

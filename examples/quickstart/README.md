@@ -25,10 +25,9 @@ Host and ingress depend on Sidecar being started, never healthy: readiness is
 waiting until the first valid export. Recreate all three together when replacing
 Sidecar so namespace references remain current. SQLite persists independently.
 The initially empty database does not automatically publish the deterministic
-skills/routes under `sidecar/`; the verifier publishes them through management.
-Their routes use literal `http://127.0.0.1:8081`.
+skills and execution configuration under `sidecar/`; the verifier publishes them through management.
+Their targets use literal `http://127.0.0.1:8081`.
 
 See [trust operations](../../docs/operations.md#execution-jwt-trust) for file
-validation, withdrawal/recovery and lifetime behavior. No database reset is
-required by this configuration replacement. Use an application-owned signer
+validation, withdrawal/recovery and lifetime behavior. Use an application-owned signer
 and independently authorized callbacks for deployment.

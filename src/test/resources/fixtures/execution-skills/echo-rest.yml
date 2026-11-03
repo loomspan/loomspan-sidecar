@@ -1,6 +1,7 @@
 name: echoRest
 description: Echo a message through the application REST handler.
-rest: true
+executor: http
+config: {target: callback, method: POST, path: /echo, body: {source: input}}
 input_schema:
   type: object
   properties:

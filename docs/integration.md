@@ -12,8 +12,8 @@ guides endpoint design, authorization, complete drafts, validation, and publicat
 Its references are readable without an assistant:
 
 - [Execution API, JWTs and polling](../agent-skills/loomspan-sidecar-authoring/references/integration.md#execution-api)
-- [REST routes and transport](../agent-skills/loomspan-sidecar-authoring/references/integration.md#rest-skill-routes)
-- [REST skill design and application authorization](../agent-skills/loomspan-sidecar-authoring/references/rest-configuration.md)
+- [HTTP operations and transport](../agent-skills/loomspan-sidecar-authoring/references/integration.md#http-operations)
+- [HTTP skill design and application authorization](../agent-skills/loomspan-sidecar-authoring/references/rest-configuration.md)
 - [Publishable execution settings](../agent-skills/loomspan-sidecar-authoring/references/execution-configuration.md)
 - [Management API and exact publication checks](../agent-skills/loomspan-sidecar-authoring/references/management-api.md)
 - [Python authoring client](../agent-skills/loomspan-sidecar-authoring/references/client-usage.md)

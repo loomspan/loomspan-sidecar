@@ -52,11 +52,16 @@ The obsolete routes document disappears from runtime, storage, API and browser U
   configuration lives in each executor-backed skill's YAML; named shared targets
   live in the selected `loomspan.executor-config` subtree. Remove the separate
   route table and `restRoutesYaml`-style fields rather than preserve both formats.
-- Sidecar validates HTTP domain configuration at startup and during draft
-  validation before publication. Catch unknown targets, invalid method/body
-  combinations, pointer syntax and target settings without dispatching requests.
-  Reuse PR 9.1 validation; actual-input checks remain invocation-time. Validation
-  must not activate skills or fail merely because a destination is unavailable.
+- HTTP-specific configuration and input validation runs only inside executor
+  invocation, before dispatch, using captured configuration. Do not run HTTP domain
+  validators during startup/readiness, draft validation, publication, import,
+  rollback or restoration. Unknown targets, invalid HTTP methods/body combinations,
+  pointers, target settings and HTTP credential usability fail on invocation.
+  Framework-valid but HTTP-invalid configuration may start, publish, restore and
+  report ready. Preserve Framework validation and management authorization,
+  storage/bundle and credential-record integrity checks; none certifies HTTP
+  operational correctness. No new Framework accessor/hook, internal dependency,
+  startup config re-parsing or second configuration contract is required.
 - Framework owns skill validation, RBAC, prepared publication and captured runtime
   configurations. Use its public APIs to publish one complete coherent skill and
   execution configuration, including executor data. Do not add HTTP-specific
@@ -124,11 +129,14 @@ The obsolete routes document disappears from runtime, storage, API and browser U
 
 ## Acceptance criteria
 
-- [ ] Both file startup and database restoration run the new HTTP executor
-  configuration; malformed HTTP configuration fails before activation/dispatch.
+- [ ] File startup, management publication and database restoration accept
+  Framework-valid but HTTP-invalid configuration without domain validation or
+  network probes. Invocation rejects it clearly before HTTP dispatch. Framework
+  structural/reference failures still reject configuration at their normal boundary.
   Missing managed settings never inherit startup or prior-publication values.
 - [ ] A valid management candidate is validated and published coherently through
-  public Framework APIs without network probes. Invalid/stale/unauthorized
+  public Framework APIs without network probes or HTTP domain validation.
+  Framework-invalid, stale or unauthorized
   candidates fail without partially replacing the active configuration.
 - [ ] Existing draft ownership, lease/revision, permission, CSRF, scope and
   recipient-approval behavior holds across editing, publication, import and rollback.
@@ -145,6 +153,8 @@ The obsolete routes document disappears from runtime, storage, API and browser U
   planning or adding compatibility machinery.
 - [ ] Documentation, packaged guidance and repository constraints describe the
   actual new architecture and limits without migration/upgrade/delivery narratives.
+  Validation/readiness success must not claim HTTP configuration is operationally
+  valid; HTTP-specific errors may first appear when a skill is invoked.
 - [ ] This ticket's relevant backend, browser and lifecycle tests pass, or any
   permitted intermediate blocker is precisely assigned for final reconciliation.
   No tests are disabled merely because they expose unfinished replacement work.
@@ -174,6 +184,51 @@ The obsolete routes document disappears from runtime, storage, API and browser U
 
 ## Pipeline notes
 
+### Resolved validation blocker — 2026-11-02
+
+The developer approved the Full 5-Step Pipeline. Research is complete; Steps 2–3
+produced drafts under the former early HTTP-validation requirement. Implementation
+and independent review have not started; no tests or development-data resets have
+been performed by those stages or this decision update.
+
+**Decision: HTTP-specific validation is invocation-time only, including for
+management publication. The startup-accessor blocker is resolved by changing the
+requirement; no Framework change or new snapshot installation is required for it.**
+
+Framework continues to validate its own declarations, executor references,
+selected-map structure, schemas and authorization. Sidecar retains management
+permissions and storage/bundle/credential-record integrity. Startup/readiness,
+draft validation, publication, import, rollback and restoration do not run HTTP
+domain validators or probe destinations. The HTTP executor validates its captured
+configuration and input before dispatch. Framework-valid HTTP-invalid settings
+may be published/restored and report ready; their invocation fails before sending
+a request. Management success is not certification of executor operational validity.
+
+The former blocker arose because selected executor configuration is available
+through invocation but not public startup metadata. Do not add the previously
+suggested accessor, a validator hook, internal access, independent Config Data
+re-parsing or a second configuration contract to work around that intentional
+boundary. Preserve research as historical evidence, not an outstanding API request.
+
+**Resume Steps 2–3 using the existing installed snapshot.** Recheck the current
+source, finalize both updated drafts against this decision, then continue the
+already-approved pipeline into implementation and independent review. Do not
+restart Step 1 or ask for renewed profile approval solely because this blocker
+was resolved. Do not treat the updated drafts as executed or verified plans.
+
+Handoff artifacts:
+
+- [Research, with decision addendum](../research/2026-11-02-pr-9-2-http-configuration-management-and-authoring.md)
+- [Implementation draft ready to resume](../plans/2026-11-02-pr-9-2-http-configuration-management-and-authoring.md)
+- [Testing draft ready to resume](../plans/2026-11-02-pr-9-2-http-configuration-management-and-authoring-testing.md)
+
+The development-reset impact remains separate: replacement of obsolete
+snapshot/draft schemas requires developer-owned replacement of existing SQLite
+stores, losing colocated accounts, tokens, drafts and snapshots. No reset is
+performed or authorized by this update.
+
+### Existing execution constraints
+
 - The developer will commit locally between tickets without syncing. Intermediate
   builds and application startup may be broken until the last ticket; this is
   explicitly accepted. Do not add shims, temporary Framework stubs, disabled tests
@@ -186,3 +241,17 @@ The obsolete routes document disappears from runtime, storage, API and browser U
   required local suites passing. Intermediate breakage does not permit reduced
   assurance at completion. These tickets do not instruct agents to commit, sync,
   push or publish; the developer owns those actions.
+
+
+### Step 4 implementation handoff — 2026-11-02
+
+Steps 2–3 were finalized and Step 4 implemented the new contract, credentials,
+publication/restoration, independent durable correlation, browser/remote authoring
+and current guidance. See [verification and acceptance evidence](../verification/2026-11-02-pr-9-2-http-configuration-management-and-authoring.md).
+Final broad verification ran 298 tests: 297 passed; only the unchanged beta.8
+release-preparation guard failed, with zero errors/skips. Two additional full
+Sidecar shutdown completion/cutoff tests pass separately. The exact release
+preparation and version-tag fixture blockers are assigned to PR 9.3 there,
+without disabling tests or changing the required snapshot dependency.
+Fresh independent Step 5 review remains required. No commit, release or actual
+development-data reset was performed.

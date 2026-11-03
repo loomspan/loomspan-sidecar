@@ -69,44 +69,45 @@ class ManagementEditorBrowserIntegrationTest {
             first.navigate(url("/management/configuration/edit"));
             second.navigate(url("/management/configuration/edit"));
             waitText(first, "editor-message", "Saved draft and published configuration loaded.");
+            assertThat(first.locator("#editor-rest").count()).isZero();
             waitText(second, "editor-message", "Saved draft and published configuration loaded.");
             first.locator("#editor-acquire").click();
             waitText(first, "editor-owner", "You hold editing control.");
-            first.locator("#editor-execution").fill("loomspan: {}\n# saved-execution\n");
+            first.locator("#editor-execution").fill("loomspan: {executor-config: {default: {http: {}}}}\n# saved-execution\n");
             waitText(first, "editor-save", "Saved draft revision");
             first.locator("#editor-execution").fill("loomspan: [}\n");
             waitText(first, "editor-message", "Save failed.");
             assertThat(first.locator("#editor-execution").inputValue()).isEqualTo("loomspan: [}\n");
             assertThat(first.locator("#editor-saved-content").textContent()).contains("saved-execution")
                     .doesNotContain("loomspan: [}");
-            first.locator("#editor-execution").fill("loomspan: {}\n# saved-execution\n");
+            first.locator("#editor-execution").fill("loomspan: {executor-config: {default: {http: {}}}}\n# saved-execution\n");
             waitText(first, "editor-save", "Saved draft revision");
-            first.locator("#editor-rest").fill("targets: {}\nroutes: {}\n# saved-from-first\n");
+            first.locator("#editor-execution").fill("loomspan: {executor-config: {default: {http: {}}}}\n# saved-from-first\n");
             waitText(first, "editor-save", "Saved draft revision");
-            second.waitForFunction("() => document.getElementById('editor-rest').value.includes('saved-from-first')");
-            assertThat(second.locator("#editor-execution").inputValue()).contains("saved-execution");
-            assertThat(second.locator("#editor-rest").isEditable()).isFalse();
+            second.waitForFunction("() => document.getElementById('editor-execution').value.includes('saved-from-first')");
+            assertThat(second.locator("#editor-execution").inputValue()).contains("saved-from-first");
+            assertThat(second.locator("#editor-execution").isEditable()).isFalse();
             first.route("**/api/management/editing/draft", route -> {
                 if (route.request().method().equals("PUT")) route.fulfill(new com.microsoft.playwright.Route.FulfillOptions()
                         .setStatus(409).setContentType("application/json").setBody("{\"code\":\"revision_conflict\"}"));
                 else route.resume();
             });
-            first.locator("#editor-rest").fill("targets: {}\nroutes: {}\n# unsent-local\n");
+            first.locator("#editor-execution").fill("loomspan: {executor-config: {default: {http: {}}}}\n# unsent-local\n");
             waitText(first, "editor-save", "Unsaved local changes");
             second.locator("#editor-handoff").click();
             waitText(second, "editor-owner", "You hold editing control.");
-            first.waitForFunction("() => document.getElementById('editor-rest').readOnly");
-            assertThat(first.locator("#editor-rest").inputValue()).contains("unsent-local");
+            first.waitForFunction("() => document.getElementById('editor-execution').readOnly");
+            assertThat(first.locator("#editor-execution").inputValue()).contains("unsent-local");
             assertThat(first.locator("#editor-saved-content").textContent()).contains("saved-from-first")
                     .doesNotContain("unsent-local");
-            assertThat(second.locator("#editor-rest").inputValue()).contains("saved-from-first").doesNotContain("unsent-local");
+            assertThat(second.locator("#editor-execution").inputValue()).contains("saved-from-first").doesNotContain("unsent-local");
             first.onceDialog(dialog -> dialog.accept());
             first.locator("#editor-handoff").click();
             first.locator("#editor-resume-local").waitFor();
-            assertThat(first.locator("#editor-rest").isEditable()).isFalse();
-            assertThat(first.locator("#editor-rest").inputValue()).contains("unsent-local");
+            assertThat(first.locator("#editor-execution").isEditable()).isFalse();
+            assertThat(first.locator("#editor-execution").inputValue()).contains("unsent-local");
             first.locator("#editor-resume-local").click();
-            assertThat(first.locator("#editor-rest").isEditable()).isTrue();
+            assertThat(first.locator("#editor-execution").isEditable()).isTrue();
         }
     }
 
@@ -124,9 +125,9 @@ class ManagementEditorBrowserIntegrationTest {
             waitText(second, "editor-message", "Saved draft and published configuration loaded.");
             second.locator("#editor-handoff").click();
             waitText(second, "editor-owner", "You hold editing control.");
-            first.waitForFunction("() => document.getElementById('editor-rest').readOnly");
-            assertThat(first.locator("#editor-rest").isEditable()).isFalse();
-            assertThat(second.locator("#editor-rest").isEditable()).isTrue();
+            first.waitForFunction("() => document.getElementById('editor-execution').readOnly");
+            assertThat(first.locator("#editor-execution").isEditable()).isFalse();
+            assertThat(second.locator("#editor-execution").isEditable()).isTrue();
         }
     }
 

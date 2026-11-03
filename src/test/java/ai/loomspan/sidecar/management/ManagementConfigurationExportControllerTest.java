@@ -33,7 +33,7 @@ class ManagementConfigurationExportControllerTest {
         var skills = new ArrayList<SkillDocument>();
         for (int i = 0; i < 9999; i++) skills.add(new SkillDocument("skill-" + i, "name: example\n"));
         when(runtime.captureExport(org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.any())).thenReturn(new RuntimeConfigurationService.ExportCapture(new ConfigurationSnapshot(UUID.randomUUID(), null, 1,
-                new ManagedConfiguration(skills, "targets: {}\nroutes: {}\n", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), SnapshotStatus.PUBLISHED), java.util.List.of()));
+                new ManagedConfiguration(skills, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), SnapshotStatus.PUBLISHED), java.util.List.of()));
         var mvc = MockMvcBuilders.standaloneSetup(new ManagementConfigurationController(
                 runtime, mock(ManagementEditingService.class), mock(ManagementConfigurationImportService.class),
                 mock(ManagementConfigurationRollbackService.class))).build();

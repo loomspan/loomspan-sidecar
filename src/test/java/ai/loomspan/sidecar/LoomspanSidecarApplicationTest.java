@@ -26,7 +26,7 @@ class LoomspanSidecarApplicationTest
                         "--loomspan-sidecar.auth.jwt.audience=sidecar",
                         "--loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json"))
         {
-            assertThat(context.getBean(SkillCatalog.class).skills()).isEmpty();
+            assertThat(context.getBean(ai.loomspan.api.SkillReloader.class).snapshot("default").skills()).isEmpty();
         }
     }
 }

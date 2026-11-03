@@ -78,17 +78,20 @@ class ManagementEditingHttpIntegrationTest {
         Browser client = login(email);
         JsonNode grant = ok(client.post("/api/management/editing/lease", "{\"label\":\"Execution\"}"));
         JsonNode draft = grant.path("draft");
+        var obsolete = (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(save(grant, draft, "# obsolete"));
+        obsolete.put("restRoutesYaml", "targets: {}");
+        assertThat(client.put("/api/management/editing/draft", obsolete.toString()).statusCode()).isEqualTo(400);
         var incomplete = (com.fasterxml.jackson.databind.node.ObjectNode)
                 mapper.readTree(save(grant, draft, "# settings"));
         incomplete.remove("executionConfigurationYaml");
         assertThat(client.put("/api/management/editing/draft", incomplete.toString()).statusCode())
                 .isEqualTo(400);
-        incomplete.put("executionConfigurationYaml", "loomspan: {}\n# exact authored settings\n");
+        incomplete.put("executionConfigurationYaml", "loomspan: {executor-config: {default: {http: {}}}}\n# exact authored settings\n");
         JsonNode saved = ok(client.put("/api/management/editing/draft", incomplete.toString()));
         assertThat(saved.path("configuration").path("executionConfigurationYaml").asText())
-                .isEqualTo("loomspan: {}\n# exact authored settings\n");
+                .isEqualTo("loomspan: {executor-config: {default: {http: {}}}}\n# exact authored settings\n");
         assertThat(ok(client.get("/api/management/editing/draft")).path("configuration")
-                .path("executionConfigurationYaml").asText()).isEqualTo("loomspan: {}\n# exact authored settings\n");
+                .path("executionConfigurationYaml").asText()).isEqualTo("loomspan: {executor-config: {default: {http: {}}}}\n# exact authored settings\n");
     }
 
     @Test void invalidYamlCannotPersistOrEchoInlineProviderSecrets() throws Exception {
@@ -99,7 +102,7 @@ class ManagementEditingHttpIntegrationTest {
         JsonNode draft = grant.path("draft");
         String sentinel = "inline-secret-" + UUID.randomUUID();
         for (String yaml : java.util.List.of(
-                "loomspan: {connections: {primary: {\"api-key\": " + sentinel + "}}}\nloomspan: {}\n",
+                "loomspan: {connections: {primary: {\"api-key\": " + sentinel + "}}}\nloomspan: {executor-config: {default: {http: {}}}}\n",
                 "loomspan: {connections: {primary: {'api-key': " + sentinel + "}}\n",
                 "loomspan: [}\nconnections: {primary: {'api-key': " + sentinel + "}}\n",
                 "loomspan: [}\nconnections: {primary: {\"api\\x2dkey\": " + sentinel + "}}\n")) {
@@ -122,7 +125,7 @@ class ManagementEditingHttpIntegrationTest {
         Browser client = login(email);
         JsonNode grant = ok(client.post("/api/management/editing/lease", "{\"label\":\"Header reference\"}"));
         var body = (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(save(grant, grant.path("draft"), ""));
-        body.put("executionConfigurationYaml", "loomspan:\n  connections:\n    headers:\n      driver: openai\n"
+        body.put("executionConfigurationYaml", "loomspan:\n  executor-config: {default: {http: {}}}\n  connections:\n    headers:\n      driver: openai\n"
                 + "      base-url: http://127.0.0.1:9/v1\n      api-key-ref: provider.key\n"
                 + "      header-refs:\n        api-key: provider.key\n"
                 + "  models:\n    credentials-json: {connection: headers, provider-model: fixture}\n");
@@ -332,8 +335,7 @@ class ManagementEditingHttpIntegrationTest {
         return mapper.writeValueAsString(Map.of("editingSessionId", grant.path("editingSessionId").asText(),
                 "generation", grant.path("generation").asText(), "draftId", draft.path("draftId").asText(),
                 "revision", draft.path("revision").asLong(), "baseSnapshotId", baseId,
-                "skillDocuments", java.util.List.of(), "restRoutesYaml", "targets: {}\nroutes: {}\n" + marker + "\n",
-                "executionConfigurationYaml", "loomspan: {}\n"));
+                "skillDocuments", java.util.List.of(), "executionConfigurationYaml", "loomspan: {executor-config: {default: {http: {}}}}\n" + marker + "\n"));
     }
     private final class Browser {
         private final HttpClient client = HttpClient.newBuilder().cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ALL))

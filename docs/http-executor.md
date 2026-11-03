@@ -4,12 +4,13 @@ The `http` executor implements application HTTP operations. YAML skills use the
 Framework's executor contract; Sidecar validates HTTP configuration and actual
 mapped input without duplicating Framework schema or role validation.
 
-**Current activation limitation:** the startup loader and management editor do
-not assemble this executor configuration. They still expect separate route data
-and cannot activate these skills. The runtime can be composed using its public
-configuration validators and Framework namespace publication APIs. The current
-checkout's complete application build is blocked by those integration callers;
-the isolated HTTP runtime verification is not an application deployment check.
+File mode loads skill YAML and `loomspan.executor-config` from startup files and
+applies changes through restart. Database mode publishes and restores complete
+skill/execution configuration through the management API and browser editor.
+HTTP domain validation occurs only on invocation, before dispatch. Readiness and
+management validation/publication do not establish HTTP validity or reachability.
+Framework declaration/reference checks and management security/integrity checks
+still apply at their normal boundaries.
 
 ```yaml
 name: updateOrder
@@ -57,8 +58,8 @@ Timeouts are duration strings of 1 through 2,147,483,647 milliseconds; sizes are
 size strings of 1 through 2,147,483,647 bytes. Limits cannot be overridden by a
 skill. Read timeout measures socket inactivity, not a total execution deadline.
 Unknown fields, malformed shapes and invalid settings fail without network calls.
-`HttpExecutorConfiguration.validate` and `validateOperation` are reusable for
-startup/management consumers; invocation calls those same validators.
+The executor validates captured target settings and operation mappings on each
+invocation; management and startup do not run these domain validators.
 
 ## Request mapping
 
@@ -118,8 +119,10 @@ reference. `HttpExecutorConfiguration.withCredentials(selectedMap, records)`
 attaches retained encrypted records before preparation. Invocation decrypts them
 using `ProviderCredentialCipher` and the external `LOOMSPAN_SIDECAR_CREDENTIAL_KEY`,
 in either configuration mode. Missing references/key and invalid ciphertext fail.
-This helper does not provision or persist credentials; current startup/management
-does not yet attach them. The external key never belongs in an export or payload.
+In database mode, save service values through the existing write-only draft
+credential API/control; publication captures retained encrypted records, identities
+and versions. Ordinary authored YAML contains references only. File mode supplies
+the encrypted inventory directly. The external key never belongs in an export or payload.
 
 Targets must be approved by the configuration's authorized publisher. The
 destination independently validates JWT audience, trust, roles and record access.

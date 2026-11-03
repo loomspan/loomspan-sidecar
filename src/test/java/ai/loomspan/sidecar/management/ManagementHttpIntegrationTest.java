@@ -130,7 +130,7 @@ class ManagementHttpIntegrationTest {
                 + encode(PASSWORD) + "&_csrf=" + encode(csrf));
         var page = browser.get("/management/configuration/edit");
         assertThat(page.statusCode()).isEqualTo(200);
-        assertThat(page.body()).contains("id='editor-skills'", "id='editor-rest'", "/management/assets/editor.js")
+        assertThat(page.body()).contains("id='editor-skills'", "id='editor-execution'", "/management/assets/editor.js")
                 .doesNotContain("sourceName", "restRoutesYaml");
         assertThat(page.headers().firstValue("Cache-Control")).hasValue("no-store");
         assertThat(browser.get("/management/assets/editor.js").statusCode()).isEqualTo(200);

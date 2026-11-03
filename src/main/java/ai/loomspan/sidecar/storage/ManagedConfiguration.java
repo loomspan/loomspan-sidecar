@@ -8,18 +8,17 @@ import java.util.Objects;
 import java.util.Set;
 
 /** Exact authored content, without parsing or resolving placeholders. */
-public record ManagedConfiguration(List<SkillDocument> skillDocuments, String restRoutesYaml,
+public record ManagedConfiguration(List<SkillDocument> skillDocuments,
         String executionConfigurationYaml, List<String> credentialIdentifiers)
 {
-    public ManagedConfiguration(List<SkillDocument> skillDocuments, String restRoutesYaml,
+    public ManagedConfiguration(List<SkillDocument> skillDocuments,
             String executionConfigurationYaml) {
-        this(skillDocuments, restRoutesYaml, executionConfigurationYaml, List.of());
+        this(skillDocuments, executionConfigurationYaml, List.of());
     }
 
     public ManagedConfiguration
     {
         Objects.requireNonNull(skillDocuments, "skillDocuments");
-        Objects.requireNonNull(restRoutesYaml, "restRoutesYaml");
         Objects.requireNonNull(executionConfigurationYaml, "executionConfigurationYaml");
         Objects.requireNonNull(credentialIdentifiers, "credentialIdentifiers");
         credentialIdentifiers = List.copyOf(credentialIdentifiers);

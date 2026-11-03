@@ -28,19 +28,18 @@ class ConfigurationSnapshotRepositoryTest
         StoreFixture first = open(file);
         UUID source = UUID.randomUUID();
         String skills = "# original\nname: answer\nmodel: primary\n";
-        String rest = "# authored\ntargets:\n  customer:\n    base-url: ${CUSTOMER_API_URL}\n"
-                + "    auth: {mode: static, headers: {X-Secret: literal-secret-sentinel}}\nroutes: {}\n";
+        String execution = "# authored\nloomspan: {executor-config: {default: {http: {targets: {customer: {base-url: 'https://customer.example.test', auth: {mode: none}}}}}}}\n";
         var configuration = new ManagedConfiguration(List.of(new SkillDocument("a.yaml", skills),
-                new SkillDocument("B.yml", "name: callback\nrest: true\n")), rest, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
+                new SkillDocument("B.yml", "name: callback\nexecutor: http\nconfig: {target: customer, method: GET, path: /}\n")), execution);
         ConfigurationSnapshot written = first.store.submit(configuration, source, first.store.current().localId());
 
         StoreFixture reopened = open(file);
         ConfigurationSnapshot read = reopened.store.findByLocalId(written.localId());
         assertThat(read).isEqualTo(written);
-        assertThat(read.configuration().restRoutesYaml()).isEqualTo(rest);
         assertThat(read.configuration().skillDocuments()).extracting(SkillDocument::sourceName)
                 .containsExactly("a.yaml", "B.yml");
         assertThat(read.configuration().skillDocuments().getFirst().yaml()).isEqualTo(skills);
+        assertThat(read.configuration().executionConfigurationYaml()).isEqualTo(execution);
         assertThat(read.status()).isEqualTo(SnapshotStatus.PENDING);
         assertThat(read.sourceId()).isEqualTo(source);
     }
@@ -48,17 +47,17 @@ class ConfigurationSnapshotRepositoryTest
     @Test
     void rejectsInvalidDocumentLabelsAndNullContent()
     {
-        assertThatThrownBy(() -> new ManagedConfiguration(null, "", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION)).isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new ManagedConfiguration(List.of(), null, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION)).isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new ManagedConfiguration(java.util.Arrays.asList((SkillDocument) null), "", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION))
+        assertThatThrownBy(() -> new ManagedConfiguration(null, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new ManagedConfiguration(List.of(), (String) null)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new ManagedConfiguration(java.util.Arrays.asList((SkillDocument) null), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION))
                 .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new ManagedConfiguration(List.of(new SkillDocument(" ", "")), "", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION))
+        assertThatThrownBy(() -> new ManagedConfiguration(List.of(new SkillDocument(" ", "")), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new ManagedConfiguration(List.of(new SkillDocument("same", ""),
-                new SkillDocument("same", "")), "", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new ManagedConfiguration(List.of(new SkillDocument("x", null)), "", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION))
+                new SkillDocument("same", "")), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new ManagedConfiguration(List.of(new SkillDocument("x", null)), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThat(new ManagedConfiguration(List.of(new SkillDocument("x", ""), new SkillDocument("X", "")), "", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION)
+        assertThat(new ManagedConfiguration(List.of(new SkillDocument("x", ""), new SkillDocument("X", "")), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION)
                 .skillDocuments()).hasSize(2);
     }
 
@@ -67,7 +66,7 @@ class ConfigurationSnapshotRepositoryTest
     {
         StoreFixture fixture = open(directory.resolve("identity.db"));
         var mutable = new ArrayList<>(List.of(new SkillDocument("one.yaml", "first\n")));
-        var configuration = new ManagedConfiguration(mutable, "targets: {}\nroutes: {}\n", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
+        var configuration = new ManagedConfiguration(mutable, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
         mutable.clear();
         UUID source = UUID.randomUUID();
         var one = fixture.store.submit(configuration, source, fixture.store.current().localId());
@@ -84,7 +83,7 @@ class ConfigurationSnapshotRepositoryTest
                 .isInstanceOf(UnsupportedOperationException.class);
         assertThat(fixture.store.current().status()).isEqualTo(SnapshotStatus.PENDING);
         var jdbc = new JdbcTemplate(fixture.source);
-        assertThatThrownBy(() -> jdbc.update("UPDATE configuration_snapshot SET rest_routes_yaml = 'changed' "
+        assertThatThrownBy(() -> jdbc.update("UPDATE configuration_snapshot SET execution_configuration_yaml = 'changed' "
                 + "WHERE submission_sequence = ?", one.submissionSequence())).isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> jdbc.update("UPDATE configuration_skill_document SET yaml = 'changed' "
                 + "WHERE snapshot_sequence = ?", one.submissionSequence())).isInstanceOf(RuntimeException.class);
@@ -97,10 +96,8 @@ class ConfigurationSnapshotRepositoryTest
     {
         StoreFixture fixture = open(directory.resolve("status-recording.db"));
         var initial = fixture.store.current();
-        var a = fixture.store.submit(new ManagedConfiguration(List.of(new SkillDocument("a", "name: A")),
-                "routes: {a: true}", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), null, initial.localId());
-        var b = fixture.store.submit(new ManagedConfiguration(List.of(new SkillDocument("b", "name: B")),
-                "routes: {b: true}", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), null, a.localId());
+        var a = fixture.store.submit(new ManagedConfiguration(List.of(new SkillDocument("a", "name: A")), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), null, initial.localId());
+        var b = fixture.store.submit(new ManagedConfiguration(List.of(new SkillDocument("b", "name: B")), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), null, a.localId());
         fixture.store.updateStatus(b.localId(), SnapshotStatus.PUBLISHED);
         assertThat(fixture.store.current().localId()).isEqualTo(b.localId());
         assertThat(fixture.store.current().configuration()).isEqualTo(b.configuration());
@@ -119,8 +116,8 @@ class ConfigurationSnapshotRepositoryTest
         String sentinel = "snapshot-secret-sentinel";
         var encrypted = new EncryptedCredential("provider.snapshot.key", version,
                 cipher.encrypt("provider.snapshot.key", version, sentinel));
-        var authored = new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES,
-                "loomspan:\n  connections:\n    primary:\n      driver: openai\n      api-key-ref: provider.snapshot.key\n", List.of("provider.snapshot.key"));
+        var authored = new ManagedConfiguration(List.of(),
+                "loomspan:\n  executor-config: {default: {http: {}}}\n  connections:\n    primary:\n      driver: openai\n      api-key-ref: provider.snapshot.key\n", List.of("provider.snapshot.key"));
         var snapshot = fixture.store.submit(authored, null, fixture.store.current().localId(),
                 authored.executionConfigurationYaml(), List.of(encrypted));
         assertThat(fixture.store.credentialVersions(snapshot)).containsExactly(encrypted);
@@ -129,12 +126,12 @@ class ConfigurationSnapshotRepositoryTest
                 String.class, snapshot.submissionSequence())).isEqualTo(encrypted.ciphertext()).doesNotContain(sentinel);
         assertThatThrownBy(() -> jdbc.update("UPDATE configuration_snapshot_credential SET ciphertext = 'changed' "
                 + "WHERE snapshot_sequence = ?", snapshot.submissionSequence())).isInstanceOf(RuntimeException.class);
-        Path bundle = ai.loomspan.sidecar.bundle.ConfigurationBundleV3.write(snapshot);
+        Path bundle = ai.loomspan.sidecar.bundle.ConfigurationBundleV4.write(snapshot);
         try {
             byte[] bytes = java.nio.file.Files.readAllBytes(bundle);
             assertThat(new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1)).doesNotContain(sentinel,
                     encrypted.ciphertext());
-            var imported = ai.loomspan.sidecar.bundle.ConfigurationBundleV3.read(bundle);
+            var imported = ai.loomspan.sidecar.bundle.ConfigurationBundleV4.read(bundle);
             assertThat(imported.configuration().credentialIdentifiers()).containsExactly("provider.snapshot.key");
         } finally { java.nio.file.Files.deleteIfExists(bundle); }
     }

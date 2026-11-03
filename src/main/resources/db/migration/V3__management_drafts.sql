@@ -6,7 +6,6 @@ CREATE TABLE management_draft (
     retained_source INTEGER NOT NULL DEFAULT 0 CHECK (retained_source IN (0, 1)),
     revision INTEGER NOT NULL CHECK (revision > 0),
     document_count INTEGER NOT NULL CHECK (document_count >= 0),
-    rest_routes_yaml TEXT NOT NULL,
     execution_configuration_yaml TEXT NOT NULL
 );
 

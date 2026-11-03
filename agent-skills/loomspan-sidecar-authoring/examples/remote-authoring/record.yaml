@@ -1,6 +1,11 @@
 name: readRecord
 description: Read one record owned by the authenticated caller
-rest: true
+executor: http
+config:
+  target: records
+  method: GET
+  path: /records/{recordId}
+  pathParams: {recordId: /recordId}
 rbac_roles: [RECORD_READER]
 input_schema:
   type: object

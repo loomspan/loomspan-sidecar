@@ -41,6 +41,6 @@ class ProviderCredentialCipherTest {
         byte[] modified = Base64.getDecoder().decode(sealed); modified[modified.length - 1] ^= 1;
         assertThatThrownBy(() -> cipher.decrypt("provider.key", "v1", Base64.getEncoder().encodeToString(modified)))
                 .hasMessageContaining("cannot be decrypted");
-        assertThatThrownBy(() -> new ProviderCredentialCipher("invalid")).hasMessageContaining("32-byte key");
+        assertThatThrownBy(() -> new ProviderCredentialCipher("invalid").decrypt("provider.key", "v1", sealed)).hasMessageContaining("32-byte key");
     }
 }

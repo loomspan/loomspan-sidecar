@@ -1,32 +1,9 @@
 # Standard HTTPS and Hardened Caddy mTLS
 
-Current HTTP executor startup/management integration is unavailable, and the
-complete application build is blocked by obsolete route callers. Separate-route
-files linked below cannot activate HTTP executor skills. The
-[HTTP contract](http-executor.md) defines runtime configuration and its current
-composition limitation. These topologies describe infrastructure responsibilities;
-the linked samples do not establish a runnable HTTP executor deployment.
-
-These are representative remote deployments. Invocation (SDK to Sidecar) and
-callback (Sidecar to application) transports are configured independently.
-Mixed and other compositions remain permitted and untested. Loomspan has no
-transport-mode selector or runtime network verifier.
-
-DevOps owns certificate issuance, storage, delivery, renewal, replacement, CA
-rotation and revocation. Supply certificates and keys using standard
-[Spring Boot server SSL](https://docs.spring.io/spring-boot/how-to/webserver.html#howto.webserver.configure-ssl),
-[Boot SSL bundles](https://docs.spring.io/spring-boot/reference/features/ssl.html)
-and [Caddy TLS](https://caddyserver.com/docs/caddyfile/directives/tls).
-No Loomspan certificate watcher, renewal service, reload controller or timed
-connection retirement is provided. Plan certificate replacement with the
-deployment's own restart and connection policies; these recipes do not promise
-seamless rollover or revocation propagation on established connections.
-
-Plaintext HTTP never crosses hosts in either recipe. JWT authentication,
-exact authority names and application method/record authorization still apply
-after transport authentication. mTLS authenticates group participation; it does
-not bind bearer JWTs to a certificate or replace user authorization. Applications
-sharing a Sidecar must trust each other in every way.
+HTTP operations live in skill YAML; shared targets live in complete execution
+YAML. Load [HTTP configuration](http-executor.md) through file-mode Boot Config
+Data or the management editor/API in database mode. Validation/readiness do not
+certify HTTP operational validity; HTTP-specific checks run at invocation.
 
 ## Signing and trust delivery
 
@@ -58,9 +35,12 @@ Sidecar  -- verified HTTPS --> App Spring callback listener
 Merge [app.yaml](../examples/remote/standard/app.yaml) and
 [sidecar.yaml](../examples/remote/standard/sidecar.yaml) into their respective
 application settings. Configure the callback target from
-[rest-routes.yaml](../examples/remote/standard/rest-routes.yaml).
+[execution.yaml](../examples/remote/standard/execution.yaml).
 Each Spring server listens on 8443 with its supplied certificate/private key.
-The SDK selects the `sidecar` Boot trust bundle; outbound HTTP executor HTTPS uses
+Provision the application CA in the JVM trust store used by Sidecar (for example
+with standard `javax.net.ssl.trustStore` process settings); the executor does not
+select a Boot SSL bundle. The SDK selects its `sidecar` Boot trust bundle.
+Outbound HTTP executor HTTPS uses
 standard JVM trust, without a target SSL bundle. Use DNS names covered by SANs. Both clients
 verify the certificate chain and hostname. There are no client certificates or
 Caddy proxies in this recipe.
@@ -84,7 +64,7 @@ Browser -> HTTPS :8444 -> App Caddy -> local HTTP -> app form login
 
 Use [app.yaml](../examples/remote/hardened/app.yaml),
 [sidecar.yaml](../examples/remote/hardened/sidecar.yaml),
-[rest-routes.yaml](../examples/remote/hardened/rest-routes.yaml),
+[execution.yaml](../examples/remote/hardened/execution.yaml),
 [Caddyfile.app](../examples/remote/hardened/Caddyfile.app) and
 [Caddyfile.sidecar](../examples/remote/hardened/Caddyfile.sidecar).
 These supplied configurations are exercised with `caddy:2.10.2`. Review

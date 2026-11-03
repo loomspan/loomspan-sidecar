@@ -63,20 +63,15 @@ automatically. See the [fixture notes](../examples/quickstart/README.md).
 2. Choose **Add skill document**, use `triage-support-request.yaml` as the source
    label, and paste the complete contents of
    [triage-support-request.yaml](../examples/quickstart/triage-support-request.yaml).
-3. Set **REST targets and routes YAML** to the following (the first skill has no
-   application callbacks):
-
-   ```yaml
-   targets: {}
-   routes: {}
-   ```
-
-4. Set **Framework execution settings YAML** to the following. Replace
+3. Set **Framework execution settings YAML** to the following. Replace
    `YOUR_PROVIDER_MODEL_ID` with an OpenAI model ID available to your account;
    `assistant` is the Loomspan alias used by the skill.
 
    ```yaml
    loomspan:
+     executor-config:
+       default:
+         http: {}
      connections:
        primary:
          driver: openai
@@ -87,13 +82,13 @@ automatically. See the [fixture notes](../examples/quickstart/README.md).
          provider-model: YOUR_PROVIDER_MODEL_ID
    ```
 
-5. Wait until the draft is saved. Under **Managed provider credentials**, enter
+4. Wait until the draft is saved. Under **Managed provider credentials**, enter
    `provider.primary.key` as **Identifier**, paste your provider key into **New
    value**, and choose **Save or replace credential**. Do not place the key in
    the YAML, skill input, or an assistant prompt.
-6. Wait for the saved revision and its automatic validation. Resolve any errors
-   (use **Retry validation** if needed), then choose **Publish validated draft**.
-   If the lease expires, reacquire editing and wait for fresh validation.
+5. Wait for the saved revision, then choose **Retry validation**. Resolve any
+   errors and validate again, then choose **Publish validated draft**.
+   If the lease expires, reacquire editing and validate the saved revision again.
    Confirm **Current configuration** contains `triageSupportRequest`.
 
 Saving and validation do not activate or execute a skill. Validation checks the

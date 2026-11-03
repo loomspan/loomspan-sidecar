@@ -2,7 +2,7 @@
 
 Applications call the execution API with JWTs; management users author complete snapshots. For framework semantics use the matching installed `loomspan-docs` dependency declared in this skill.
 
-Contents: [runtime](#runtime-configuration), [routes](#rest-skill-routes), [JWTs](#jwt-authentication), [execution](#execution-api), [authoring](#remote-configuration-authoring), [limits](#capacity-retention-and-diagnostics).
+Contents: [runtime](#runtime-configuration), [HTTP operations](#http-operations), [JWTs](#jwt-authentication), [execution](#execution-api), [authoring](#remote-configuration-authoring), [limits](#capacity-retention-and-diagnostics).
 
 ## Runtime configuration
 
@@ -15,6 +15,9 @@ model in the same complete Console draft; the manifest does not create them:
 
 ```yaml
 loomspan:
+  executor-config:
+    default:
+      http: {}
   connections:
     primary:
       driver: openai
@@ -28,103 +31,21 @@ loomspan:
 
 Save `provider.primary.key` through the write-only draft credential control or API;
 never put the resolved credential in authored YAML. Publish complete
-[execution settings](execution-configuration.md) with skills and routes. The
+[execution settings](execution-configuration.md) with skills. The
 [management API](management-api.md) owns draft, validation and publication checks.
 
-## REST skill routes
+## HTTP operations
 
-Exactly one production handler is always present. Each complete snapshot has
-one authored route document. When no REST skills exist, use:
+Use the [HTTP executor contract](rest-configuration.md) for skill-owned operations,
+explicit JSON Pointers, body choices, target settings, service credentials and
+caller passthrough. Publish skill documents with complete execution YAML containing
+`loomspan.executor-config.default.http.targets`. Executor-backed skills are JAVA
+in the Framework catalog and retain their authored YAML in managed configuration.
 
-```yaml
-targets: {}
-routes: {}
-```
-
-Each REST skill must have one exact, case-sensitive route and every route must name
-a registered REST skill and target. Invalid, unknown, duplicate, or incomplete
-configuration fails validation or startup without contacting any target. A complete example is:
-
-```yaml
-targets:
-  expenses:
-    base-url: https://expenses.internal/api
-    auth:
-      mode: caller-passthrough
-    ssl-bundle: expenses-mtls
-    connect-timeout: 5s
-    read-timeout: 30s
-    max-response-size: 1MB
-  customers:
-    base-url: https://customers.internal/v1
-    auth:
-      mode: static
-      headers:
-        X-Service-Key: ${CUSTOMER_SERVICE_KEY}
-    connect-timeout: 5s
-    read-timeout: 30s
-    max-response-size: 1MB
-routes:
-  expenseLookup:
-    target: expenses
-    method: GET
-    path: /expenses/{category}
-  customerLookup:
-    target: customers
-    method: POST
-    path: /customers/{id}
-```
-
-`base-url` accepts a literal HTTP(S) URL or a whole-value `${NAME}` reference.
-The name must appear in `loomspan-sidecar.url-variables`; only the process
-environment supplies its value. Missing, blank, composed, defaulted, and invalid
-URLs fail validation or startup. Unused allowlist entries require no value.
-Other string fields and names retain required Spring `${NAME}` placeholder
-behavior. Resolved secret values are omitted from diagnostics. Authentication modes are `none`,
-`static`, and `caller-passthrough`; configured headers are accepted only for
-`static`. Invocation input never becomes a header. Every request sends
-`Accept: application/json, text/*`.
-
-GET and POST are the only methods. `{name}` occupies a complete path segment and
-consumes the same-named input. GET encodes remaining non-null string, finite-number,
-and boolean values as query parameters. POST sends the remaining JSON-compatible
-object, preserving nulls and nested arrays/objects and sending `{}` when all fields
-were consumed. Resource, file, stream, non-string object key, nonfinite number, and
-other non-JSON values fail before I/O. Segment encoding and base-path confinement
-prevent input from replacing the configured authority or traversing above its base.
-
-Each framework generation owns matching routes and isolated Apache HTTP clients.
-Old generations retain them until public retirement establishes that admitted
-and nested work has finished. Shutdown retains clients through the framework's
-completion or cutoff and closes them without another drain period. Redirects, automatic retries, and
-automatic cookie storage/replay are disabled; caller sessions are not shared across
-executions. Literal plus signs in GET query names and values are percent-encoded.
-Connect/read timeouts and the byte response cap apply per target; equality
-with the cap succeeds and excess is stopped while streaming. Any bodyless 2xx returns
-`""`. A nonempty successful response must be `application/json`, a structured
-`+json` type, or `text/*`; its declared charset is honored and UTF-8 is used when
-none is declared. JSON is returned as unchanged text, not parsed. Non-2xx and
-transport/media/size failures become bounded, body-free skill diagnostics. Early
-failures discard the connection before cleanup can drain the unread response.
-
-Outbound TLS uses standard Boot SSL bundles, including client keys for mTLS; bundle
-configuration remains under `spring.ssl.bundle.*`, for example:
-
-```yaml
-spring:
-  ssl:
-    bundle:
-      jks:
-        expenses-mtls:
-          keystore:
-            location: file:/sidecar/tls/client.p12
-            password: ${CLIENT_STORE_PASSWORD}
-            type: PKCS12
-          truststore:
-            location: file:/sidecar/tls/trust.p12
-            password: ${TRUST_STORE_PASSWORD}
-            type: PKCS12
-```
+HTTP configuration and input are validated at invocation before dispatch.
+Framework validation, readiness and management publication do not certify HTTP
+validity or destination reachability. Direct HTTPS uses JVM trust and hostname
+verification; Caddy owns outbound mTLS. Standard Boot inbound TLS is independent.
 
 ## JWT authentication
 
@@ -195,7 +116,7 @@ GET  /v1/executions/{id}
 ```
 
 Catalog discovery exposes every descriptor, including role-restricted skills;
-descriptors include nullable `outputSchema` metadata (null for REST skills).
+descriptors include nullable `outputSchema` metadata (as exposed by the public Framework descriptor).
 authorization is enforced when POST validates the JSON-object input. Accepted
 requests return `202`, an `id`, and a `Location` header without waiting. Poll the
 location until `COMPLETED` or `FAILED`. Successful results are the framework's
@@ -234,8 +155,8 @@ An external coding agent can use the portable
 [Python 3.9+ client](client-usage.md).
 The agent works in the integrating application's repository to design an
 endpoint and its authorization checks. The checked-in
-[record example](../examples/remote-authoring/README.md) pairs a REST manifest
-with a route; the local test fixture exercises both allowed and denied record
+[record example](../examples/remote-authoring/README.md) pairs an HTTP executor skill
+with shared target settings; the local test fixture exercises both allowed and denied record
 access. Install or load the complete skill through the host; no specific agent
 product or access allowlist is required.
 
@@ -279,12 +200,14 @@ total heap: running inputs, results, diagnostics, and uncooperative framework
 work may consume additional memory.
 
 Complete validated snapshots can be published while work runs. Old admitted
-work keeps its captured definitions, execution settings, provider resources,
-and REST resources. Restart loses all
+work keeps its captured definitions, execution settings and provider resources.
+HTTP requests use captured settings through the shared application-owned client.
+Restart loses all
 queued, active and retained execution records, shutdown discards waiting work,
 and unfinished admitted work may be interrupted at the framework deadline.
-Invalid selected content prevents startup and readiness until corrected through
-a stopped database restore. REST clients stay
-available for framework-owned admitted work until normal completion or the single
+Framework-invalid selected content or credential-record integrity failures prevent
+startup and readiness until corrected through a stopped database restore.
+HTTP-specific configuration errors first fail on invocation before dispatch.
+The HTTP client stays available for framework-owned admitted work until normal completion or the single
 `loomspan.shutdown.timeout` cutoff, then close without a second drain period. The framework default is 30 seconds; configure the deployment termination grace to cover that budget and cleanup.
 

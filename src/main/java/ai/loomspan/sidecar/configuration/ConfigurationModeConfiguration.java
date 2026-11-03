@@ -24,9 +24,22 @@ public class ConfigurationModeConfiguration {
             case "database" -> ConfigurationMode.DATABASE;
             default -> throw new IllegalArgumentException("loomspan-sidecar.configuration.mode must be file or database");
         };
-        if (mode == ConfigurationMode.DATABASE)
+        if (mode == ConfigurationMode.DATABASE) {
+            // Load only our fixed empty bootstrap through Boot's installed YAML loader.
+            // Never read or reconstruct the operator's selected Config Data here.
+            var loaders = org.springframework.core.io.support.SpringFactoriesLoader.loadFactories(
+                    org.springframework.boot.env.PropertySourceLoader.class, ConfigurationModeConfiguration.class.getClassLoader());
+            org.springframework.core.annotation.AnnotationAwareOrderComparator.sort(loaders);
+            var loader = loaders.stream().filter(candidate -> java.util.Arrays.asList(candidate.getFileExtensions()).contains("yml"))
+                    .findFirst().orElseThrow();
+            try {
+                for (var source : loader.load("sidecar-empty-executor-bootstrap",
+                        new org.springframework.core.io.ClassPathResource("sidecar-database-bootstrap.yml")))
+                    environment.getPropertySources().addFirst(source);
+            } catch (java.io.IOException failure) { throw new IllegalStateException("Cannot load empty database bootstrap", failure); }
             environment.getPropertySources().addFirst(new MapPropertySource("sidecar-database-bootstrap",
                     Map.of("loomspan.skills.locations", List.of("classpath:/sidecar-empty-skills/*.yaml"))));
+        }
         return mode;
     }
 
@@ -36,7 +49,7 @@ public class ConfigurationModeConfiguration {
             @Override
             public <T> Bindable<T> onStart(ConfigurationPropertyName name, Bindable<T> target,
                     BindContext context) {
-                if (excluded(name)) return null;
+                if (excluded(name) && !name.toString().equals("loomspan.executor-config")) return null;
                 return super.onStart(name, target, context);
             }
             @Override
@@ -56,7 +69,7 @@ public class ConfigurationModeConfiguration {
     private static boolean excluded(ConfigurationPropertyName name) {
         String property = name.toString();
         for (String root : List.of("loomspan.connections", "loomspan.models", "loomspan.session",
-                "loomspan.execution-trace.persistence"))
+                "loomspan.executor-config", "loomspan.execution-trace.persistence"))
             if (property.equals(root) || property.startsWith(root + ".") || property.startsWith(root + "[")) return true;
         return false;
     }

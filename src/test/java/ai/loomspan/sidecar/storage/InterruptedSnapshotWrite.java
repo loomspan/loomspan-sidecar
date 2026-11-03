@@ -15,12 +15,11 @@ public final class InterruptedSnapshotWrite
         {
             connection.setAutoCommit(false);
             try (var insert = connection.prepareStatement("INSERT INTO configuration_snapshot"
-                    + "(local_id, document_count, rest_routes_yaml, execution_configuration_yaml, "
-                    + "effective_execution_yaml) VALUES (?, 1, ?, ?, 'loomspan: {}')"))
+                    + "(local_id, document_count, execution_configuration_yaml, "
+                    + "effective_execution_yaml) VALUES (?, 1, ?, 'loomspan: {executor-config: {default: {http: {}}}}')"))
             {
                 insert.setString(1, args[2]);
-                insert.setString(2, "targets: {interrupted: true}\nroutes: {}\n");
-                insert.setString(3, ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
+                insert.setString(2, ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
                 insert.executeUpdate();
             }
             long sequence;

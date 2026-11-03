@@ -28,11 +28,11 @@ public final class ConfigurationDraftStore {
     public Saved read(long accountId) {
         return transactions.execute(ignored -> {
             var rows = jdbc.query("SELECT draft_id, base_snapshot_id, source_snapshot_id, revision, "
-                    + "document_count, rest_routes_yaml, execution_configuration_yaml, retained_source "
+                    + "document_count, execution_configuration_yaml, retained_source "
                     + "FROM management_draft WHERE account_id = ?",
                     (rs, row) -> new Header(UUID.fromString(rs.getString(1)), UUID.fromString(rs.getString(2)),
                             rs.getString(3) == null ? null : UUID.fromString(rs.getString(3)),
-                            rs.getLong(4), rs.getInt(5), rs.getString(6), rs.getString(7), rs.getInt(8) == 1), accountId);
+                            rs.getLong(4), rs.getInt(5), rs.getString(6), rs.getInt(7) == 1), accountId);
             if (rows.isEmpty()) return null;
             Header header = rows.getFirst();
             var documents = jdbc.query("SELECT ordinal, label, yaml FROM management_draft_document "
@@ -45,17 +45,17 @@ public final class ConfigurationDraftStore {
             var identifiers = requiredCredentialIdentifiers(accountId);
             return new Saved(accountId, header.id, header.baseId, header.sourceId, header.revision,
                     new ManagedConfiguration(documents.stream().map(Document::content).toList(),
-                            header.rest, header.execution, identifiers), header.retainedSource);
+                            header.execution, identifiers), header.retainedSource);
         });
     }
 
     public Saved createIfAbsent(long accountId, ConfigurationSnapshot base) {
         transactions.executeWithoutResult(ignored -> {
             int inserted = jdbc.update("INSERT OR IGNORE INTO management_draft(account_id, draft_id, base_snapshot_id, "
-                    + "source_snapshot_id, revision, document_count, rest_routes_yaml, "
-                    + "execution_configuration_yaml) VALUES (?, ?, ?, NULL, 1, ?, ?, ?)",
+                    + "source_snapshot_id, revision, document_count, "
+                    + "execution_configuration_yaml) VALUES (?, ?, ?, NULL, 1, ?, ?)",
                     accountId, UUID.randomUUID().toString(), base.localId().toString(),
-                    base.configuration().skillDocuments().size(), base.configuration().restRoutesYaml(),
+                    base.configuration().skillDocuments().size(),
                     base.configuration().executionConfigurationYaml());
             if (inserted == 1) {
                 insertDocuments(accountId, base.configuration());
@@ -82,11 +82,11 @@ public final class ConfigurationDraftStore {
         Objects.requireNonNull(configuration);
         transactions.executeWithoutResult(ignored -> {
             int changed = jdbc.update("UPDATE management_draft SET base_snapshot_id = ?, source_snapshot_id = ?, "
-                    + "revision = revision + 1, document_count = ?, rest_routes_yaml = ?, "
+                    + "revision = revision + 1, document_count = ?, "
                     + "execution_configuration_yaml = ?, retained_source = ? "
                     + "WHERE account_id = ? AND draft_id = ? AND revision = ? AND base_snapshot_id = ?",
                     nextBaseId.toString(), sourceId == null ? null : sourceId.toString(),
-                    configuration.skillDocuments().size(), configuration.restRoutesYaml(),
+                    configuration.skillDocuments().size(),
                     configuration.executionConfigurationYaml(),
                     credentials == null ? 0 : 1,
                     accountId, draftId.toString(), expectedRevision, expectedBaseId.toString());
@@ -174,6 +174,6 @@ public final class ConfigurationDraftStore {
     }
 
     private record Header(UUID id, UUID baseId, UUID sourceId, long revision, int count,
-            String rest, String execution, boolean retainedSource) {}
+            String execution, boolean retainedSource) {}
     private record Document(int ordinal, SkillDocument content) {}
 }

@@ -58,7 +58,7 @@ class AuthenticatedExecutionApiIntegrationTest {
     private static final SidecarApplicationFixture FIXTURE = new SidecarApplicationFixture();
     private static final ConcurrentLinkedQueue<String> MODEL_RESPONSES = FIXTURE.modelResponses();
     private static final SidecarApplicationFixture.CallbackFixture CALLBACK = FIXTURE.callback();
-    private static final Path ROUTES = FIXTURE.routes();
+    private static final Path ROUTES = FIXTURE.execution();
     @LocalServerPort int port;
     private final HttpClient client = HttpClient.newHttpClient();
     private final ObjectMapper mapper = new ObjectMapper();
@@ -66,7 +66,7 @@ class AuthenticatedExecutionApiIntegrationTest {
     @Autowired ai.loomspan.sidecar.security.CurrentFileJwtTrust trust;
     @Autowired ai.loomspan.sidecar.storage.ConfigurationSnapshotStore snapshots;
     @Autowired ai.loomspan.sidecar.configuration.RuntimeConfigurationService runtimeConfiguration;
-    @Autowired ai.loomspan.sidecar.rest.GenerationRestResources restGenerations;
+    @Autowired ai.loomspan.sidecar.configuration.ConfigurationGenerationRegistry restGenerations;
     @Autowired ConfigurableApplicationContext applicationContext;
     @Autowired ai.loomspan.sidecar.support.RuntimePublicationFixture publicationFixture;
 
@@ -76,19 +76,7 @@ class AuthenticatedExecutionApiIntegrationTest {
         properties.add("loomspan-sidecar.storage.database-path", () -> SidecarApplicationFixture.seedDatabase(
                 storageDirectory.resolve("sidecar.db"), List.of(
                         SidecarApplicationFixture.resourceFile("fixtures/execution-skills/echo-rest.yml"),
-                        SidecarApplicationFixture.resourceFile("fixtures/execution-skills/nested-rest.yml")),
-                readRoutes(), """
-                        loomspan:
-                          connections:
-                            fixture:
-                              driver: openai
-                              base-url: http://127.0.0.1:%d/v1
-                              api-key-ref: fixture.model.key
-                          models:
-                            fixture-model:
-                              connection: fixture
-                              provider-model: fixture-provider-model
-                        """.formatted(FIXTURE.modelPort()), java.util.Map.of("fixture.model.key", "local-test-key")).toString());
+                        SidecarApplicationFixture.resourceFile("fixtures/execution-skills/nested-rest.yml")), FIXTURE.executionWithProvider(), java.util.Map.of("fixture.model.key", "local-test-key")).toString());
         properties.add("fixture.model.key", () -> "local-test-key");
         properties.add("loomspan.connections.fixture.driver", () -> "openai");
         properties.add("loomspan.connections.fixture.base-url",
@@ -124,7 +112,7 @@ class AuthenticatedExecutionApiIntegrationTest {
 
         var authenticated = send("GET", "/v1/skills", JwtTestTokens.token("reader", List.of()), null);
         assertThat(authenticated.statusCode()).isEqualTo(200);
-        assertThat(authenticated.body()).contains("echoRest", "REST", "inputSchema");
+        assertThat(authenticated.body()).contains("echoRest", "JAVA", "inputSchema");
 
         var restSkill = send("GET", "/v1/skills/echoRest", JwtTestTokens.token("reader", List.of()), null);
         assertThat(restSkill.statusCode()).isEqualTo(200);
@@ -294,8 +282,7 @@ class AuthenticatedExecutionApiIntegrationTest {
         assertThat(polled.statusCode()).isEqualTo(200);
         assertThat(terminal.path("status").asText()).isEqualTo("FAILED");
         assertThat(terminal.path("failure").path("kind").asText()).isEqualTo("SKILL_FAILURE");
-        assertThat(terminal.path("failure").path("message").asText()).contains("HTTP status 503");
-        assertThat(terminal.path("failure").path("message").asText()).doesNotContain("fixture-secret");
+        assertThat(terminal.path("failure").path("message").asText()).isEqualTo("HTTP 503\nfixture-secret");
         assertThat(terminal.toString()).doesNotContain("stackTrace", "java.lang");
     }
 
@@ -363,13 +350,13 @@ class AuthenticatedExecutionApiIntegrationTest {
     @Test
     void nestedExecutionExposesTheOriginalJwtToTheRestHandler() throws Exception {
         MODEL_RESPONSES.add(completion("""
-                {"capabilityName":"nestedRest","createdAt":"2026-09-13T00:00:00Z","status":"VALID",\
+                {"capabilityName":"default-nestedRest","createdAt":"2026-09-13T00:00:00Z","status":"VALID",\
                 "tasks":[{"taskId":"rest-task","title":"Call REST leaf","status":"PENDING",\
-                "capabilityName":"echoRest","intent":"Echo through REST","dependsOn":[],\
+                "capabilityName":"default-echoRest","intent":"Echo through REST","dependsOn":[],\
                 "expectedOutputs":["REST echo"],"parallelGroup":null,"note":""}]}
                 """));
         MODEL_RESPONSES.add(completion("""
-                {"stepAction":"CALL_TOOL","taskId":"rest-task","toolName":"echoRest",\
+                {"stepAction":"CALL_TOOL","taskId":"rest-task","toolName":"default-echoRest",\
                 "toolArguments":{"message":"nested-message"}}
                 """));
         MODEL_RESPONSES.add(completion("""
@@ -395,14 +382,14 @@ class AuthenticatedExecutionApiIntegrationTest {
     void nestedRestCallAfterPublicationKeepsItsAdmittedGeneration() throws Exception {
         var original = snapshots.current();
         MODEL_RESPONSES.add(completion("""
-                {"capabilityName":"nestedRest","createdAt":"2026-09-13T00:00:00Z","status":"VALID",\
+                {"capabilityName":"default-nestedRest","createdAt":"2026-09-13T00:00:00Z","status":"VALID",\
                 "tasks":[{"taskId":"rest-task","title":"Call REST leaf","status":"PENDING",\
-                "capabilityName":"echoRest","intent":"Echo through REST","dependsOn":[],\
+                "capabilityName":"default-echoRest","intent":"Echo through REST","dependsOn":[],\
                 "expectedOutputs":["REST echo"],"parallelGroup":null,"note":""}]}
                 """));
         FIXTURE.blockNextModelResponse();
         MODEL_RESPONSES.add(completion("""
-                {"stepAction":"CALL_TOOL","taskId":"rest-task","toolName":"echoRest",\
+                {"stepAction":"CALL_TOOL","taskId":"rest-task","toolName":"default-echoRest",\
                 "toolArguments":{"message":"nested-after-publication"}}
                 """));
         MODEL_RESPONSES.add(completion("""
@@ -423,13 +410,13 @@ class AuthenticatedExecutionApiIntegrationTest {
             var accepted = send("POST", "/v1/skills/nestedRest/executions", token, "{\"message\":\"start\"}");
             assertThat(accepted.statusCode()).isEqualTo(202);
             assertThat(FIXTURE.awaitModelBlock(5, TimeUnit.SECONDS)).isTrue();
-            String newRoutes = Files.readString(ROUTES).replace(
+            String newExecution = original.configuration().executionConfigurationYaml().replace(
                     "http://127.0.0.1:" + FIXTURE.callbackPort(),
                     "http://127.0.0.1:" + second.getAddress().getPort());
             var draft = new ai.loomspan.sidecar.storage.ConfigurationDraft(original);
             draft.replaceContent(new ai.loomspan.sidecar.storage.ManagedConfiguration(
-                    original.configuration().skillDocuments(), newRoutes,
-                    original.configuration().executionConfigurationYaml()));
+                    original.configuration().skillDocuments(),
+                    newExecution));
             assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(runtimeConfiguration, draft).successful()).isTrue();
             var published = publicationFixture.publish(draft);
             assertThat(restGenerations.protectedIds()).contains(original.localId(), published.localId());
@@ -471,20 +458,20 @@ class AuthenticatedExecutionApiIntegrationTest {
         });
         second.start();
         try {
-            String newRoutes = Files.readString(ROUTES).replace(
+            String newExecution = old.configuration().executionConfigurationYaml().replace(
                     "http://127.0.0.1:" + FIXTURE.callbackPort(),
                     "http://127.0.0.1:" + second.getAddress().getPort());
             var draft = new ai.loomspan.sidecar.storage.ConfigurationDraft(old);
             draft.replaceContent(new ai.loomspan.sidecar.storage.ManagedConfiguration(
-                    old.configuration().skillDocuments(), newRoutes,
-                    old.configuration().executionConfigurationYaml()));
+                    old.configuration().skillDocuments(),
+                    newExecution));
             assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(runtimeConfiguration, draft).successful()).isTrue();
             publicationFixture.publish(draft);
             for (int index = 0; index < 11; index++) {
                 var nextDraft = new ai.loomspan.sidecar.storage.ConfigurationDraft(snapshots.current());
                 nextDraft.replaceContent(new ai.loomspan.sidecar.storage.ManagedConfiguration(
-                        old.configuration().skillDocuments(), newRoutes,
-                        old.configuration().executionConfigurationYaml()));
+                        old.configuration().skillDocuments(),
+                        newExecution));
                 assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(runtimeConfiguration, nextDraft).successful()).isTrue();
                 publicationFixture.publish(nextDraft);
             }
@@ -505,8 +492,8 @@ class AuthenticatedExecutionApiIntegrationTest {
             assertThat(restGenerations.protectedIds()).doesNotContain(old.localId());
             var finalDraft = new ai.loomspan.sidecar.storage.ConfigurationDraft(snapshots.current());
             finalDraft.replaceContent(new ai.loomspan.sidecar.storage.ManagedConfiguration(
-                    old.configuration().skillDocuments(), newRoutes,
-                    old.configuration().executionConfigurationYaml()));
+                    old.configuration().skillDocuments(),
+                    newExecution));
             assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(runtimeConfiguration, finalDraft).successful()).isTrue();
             publicationFixture.publish(finalDraft);
             assertThat(snapshots.findByLocalId(old.localId())).isNull();
@@ -525,8 +512,7 @@ class AuthenticatedExecutionApiIntegrationTest {
         assertThat(send("GET", "/v1/skills", token, null).body()).contains("echoRest");
         try {
             var draft = new ai.loomspan.sidecar.storage.ConfigurationDraft(snapshots.current());
-            draft.replaceContent(new ai.loomspan.sidecar.storage.ManagedConfiguration(List.of(),
-                    ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
+            draft.replaceContent(new ai.loomspan.sidecar.storage.ManagedConfiguration(List.of(), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
             assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(runtimeConfiguration, draft, List.of()).successful()).isTrue();
             publicationFixture.publish(draft, List.of());
             assertThat(mapper.readTree(send("GET", "/v1/skills", token, null).body()).isEmpty()).isTrue();

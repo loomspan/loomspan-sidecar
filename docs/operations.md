@@ -22,9 +22,10 @@ SIGTERM reach Spring directly.
 The [HTTP executor](http-executor.md) uses captured target configuration, one
 application-owned client, ordinary JVM HTTPS trust and hostname verification.
 There are no outbound executor SSL bundles or client certificates; Caddy owns mTLS.
-Current startup and management loaders cannot activate this contract, and the
-complete application build is blocked by their obsolete route dependencies.
-Separate-route examples do not establish a supported executor deployment.
+File mode loads operations and shared executor settings from startup files.
+Database mode publishes/restores complete skill and execution configuration.
+HTTP domain checks occur on invocation before dispatch; readiness/publication
+do not establish HTTP validity or reachability.
 Standard Boot inbound server TLS facilities remain independent.
 
 ## Configuration and management
@@ -308,9 +309,10 @@ The application listener remains Boot's default `8080`. Health shares that
 listener at `/actuator/health` and
 `/actuator/health/readiness`. Other Actuator endpoints are not exposed.
 Readiness and liveness probe groups are available at
-`/actuator/health/readiness` and `/actuator/health/liveness`. Registration and
-route validation are eager, so invalid configuration prevents startup from
-becoming ready. Readiness changes to refusing traffic synchronously when the
+`/actuator/health/readiness` and `/actuator/health/liveness`. Framework registration
+and structural/reference validation run before readiness. HTTP-specific settings
+are checked only on invocation before dispatch; HTTP-invalid but Framework-valid
+configuration may report ready. Readiness changes to refusing traffic synchronously when the
 owning application context closes; liveness remains up during ordinary long work.
 Loomspan observability routes are disabled by default, so no Console operator
 API is exposed. When Loomspan Console observability is enabled, its
@@ -323,7 +325,6 @@ framework's independent API-key filter. Console keys do not authenticate `/v1`.
 
 | Key | Default / requirement |
 | --- | --- |
-| `loomspan-sidecar.url-variables` | Retained startup setting; the HTTP executor does not interpolate environment variables in base URLs. |
 | `loomspan-sidecar.storage.database-path` | `/sidecar/data/sidecar.db`; writable persistent local database path and parent directory required at startup. |
 | `loomspan-sidecar.snapshots.max-retained` | `10`; positive count of stored snapshots, including pending and failed history; protected snapshots may exceed it. |
 | `loomspan-sidecar.management.session-idle-timeout` | `30m`; positive idle deadline extended only by intentional session activity. |
@@ -341,9 +342,7 @@ framework's independent API-key filter. Console keys do not authenticate `/v1`.
 | `loomspan-sidecar.executions.max-queued` | `128`; positive waiting-record count. |
 | `loomspan-sidecar.executions.max-queued-input-size` | `64MB`; positive total serialized input bytes reserved by waiting work. |
 | `loomspan-sidecar.executions.diagnostics` | `NEVER`; allowed values are `NEVER`, `ONERROR`, and `ALWAYS`. |
-| `loomspan-sidecar.rest-routes` | Retained startup integration setting; it cannot configure the HTTP executor. |
 | `loomspan-sidecar.configuration.mode` | `database` (default) or `file`; startup-only authority, invalid values fail. |
-| `loomspan-sidecar.rest-routes.location` | Retained separate-route location; it cannot activate HTTP executor configuration. |
 <!-- configuration-reference:end -->
 
 The explicit operation and target schema is described in

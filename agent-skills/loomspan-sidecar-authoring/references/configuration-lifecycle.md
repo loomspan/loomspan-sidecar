@@ -4,31 +4,29 @@
 Sidecar migrates and validates a file-backed SQLite database at startup. In
 `database` mode it atomically creates one empty current snapshot on a new database, then activates
 and records it as **published** before opening execution dispatch.
-The empty content is no skill documents, the exact REST text
-`targets: {}\nroutes: {}\n`, and execution YAML `loomspan: {}\n`, which uses
-framework defaults. Reopening retains that snapshot; an inconsistent
+The empty content contains no skill documents and an explicitly empty
+`loomspan.executor-config.default.http` map for the registered executor.
+Reopening retains that snapshot; an inconsistent
 initialized store or existing database without migration history fails startup.
 On restart the committed current pointer is prepared and published as a new
 process-local framework generation, regardless of its previous status. The
 durable local UUID is preserved. Invalid content or required bookkeeping failure
 aborts startup without falling back to empty or older content.
 
-Each snapshot contains an ordered set of complete `SkillDocument` diagnostic
-labels and original YAML text, plus original REST targets/routes YAML and
-framework execution YAML. Labels are nonblank and exactly unique; the set may be empty. The
-REST text is stored before parsing or placeholder resolution, so comments and
-`${NAME}` references in `base-url` remain exactly as authored. REST YAML secret
-handling is separate from the provider credential feature. Snapshots include the full framework-supported model-backed and
-REST skill authoring surface. They do not include accounts, sessions, leases,
-deployment URL-variable declarations or resolved environment values,
-identity-provider settings, or arbitrary Spring settings. Publishable model
-connections, aliases, session settings and trace persistence are included. Each
-snapshot also retains complete effective execution YAML. Provider credential
-values retained for database publications and drafts are encrypted in separate
-SQLite tables. Ordinary snapshot reads and default exports contain credential
-identifiers, never values or ciphertext. An explicit authorized export can
-include authenticated ciphertext, but never plaintext values or the encryption key. Protect the database volume and exported bundles; REST YAML may
-still contain literal sensitive values under its existing contract.
+Each snapshot contains ordered `SkillDocument` source labels and original YAML,
+complete authored execution YAML and exact encrypted credential versions. Execution
+YAML includes providers, models, session/trace settings and namespace executor data.
+Labels are nonblank and unique. Snapshots exclude accounts, sessions, leases,
+process identity/trust, SMTP and arbitrary Spring settings. No omitted managed
+value inherits earlier or startup content.
+
+Captured effective YAML remains internal and may contain encrypted HTTP records.
+Ordinary inspection and configuration-only bundles expose authored YAML and
+credential identifiers, never stored ciphertext or plaintext values. Explicit
+authorized exports can include authenticated ciphertext, with the encryption key
+kept separate. Protect SQLite and authored business data in exported bundles.
+HTTP-specific configuration errors are checked only at invocation before dispatch;
+Framework validation and readiness do not certify operational HTTP validity.
 
 A snapshot has a fresh stable local UUID, optional source UUID for provenance,
 and increasing submission sequence for later oldest-first history pruning.
@@ -36,7 +34,7 @@ Content and identity do not change after insertion. Separate local status is
 `pending`, `published`, or `failed`; `pending` means the publication outcome is
 unknown. A source UUID never selects or overwrites a local snapshot. The
 configuration bundle carries the same complete authored content with independent
-integer `formatVersion: 3`, source identity, and informational producer
+integer `formatVersion: 4`, source identity, and informational producer
 application and framework versions. The destination allocates a new local UUID;
 imported status does not prove publication there. The archive layout, integrity
 checks, and import/export operations are described in
@@ -46,8 +44,8 @@ version and application version are not transfer compatibility rules.
 ## Durable private configuration drafts
 
 Sidecar stores one saved draft per management account, with ordered complete
-skill documents, REST YAML, execution YAML, encrypted
-provider credential versions, base snapshot UUID, source provenance and a
+skill documents, execution YAML, encrypted
+provider and HTTP service credential versions, base snapshot UUID, source provenance and a
 monotonic revision. The saved content is in the same SQLite database and must
 be included in stopped-instance backups. Leases and successful validation
 proofs remain process-local, so restart requires reacquisition and revalidation.

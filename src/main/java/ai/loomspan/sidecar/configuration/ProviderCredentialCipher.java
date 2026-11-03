@@ -9,26 +9,17 @@ import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
-/** Encrypts retained provider credentials with key material supplied outside SQLite. */
+/** Encrypts retained credentials with key material supplied outside SQLite. */
 public final class ProviderCredentialCipher {
     public static final class Failure extends IllegalStateException {
         public Failure(String message) { super(message); }
     }
     private static final SecureRandom RANDOM = new SecureRandom();
-    private final byte[] key;
+    private final String encodedKey;
 
+    /** Resolve key usability only when encrypted records are actually read or written. */
     public ProviderCredentialCipher(String encodedKey) {
-        if (encodedKey == null || encodedKey.isBlank()) {
-            key = null;
-            return;
-        }
-        try {
-            key = Base64.getDecoder().decode(encodedKey);
-        } catch (IllegalArgumentException invalid) {
-            throw new Failure("LOOMSPAN_SIDECAR_CREDENTIAL_KEY must be a base64-encoded 32-byte key");
-        }
-        if (key.length != 32)
-            throw new Failure("LOOMSPAN_SIDECAR_CREDENTIAL_KEY must be a base64-encoded 32-byte key");
+        this.encodedKey = encodedKey;
     }
 
     public String encrypt(String identifier, String version, String value) {
@@ -65,8 +56,15 @@ public final class ProviderCredentialCipher {
     }
 
     private SecretKeySpec secretKey() {
-        if (key == null)
-            throw new Failure("LOOMSPAN_SIDECAR_CREDENTIAL_KEY is required for encrypted provider credentials");
+        if (encodedKey == null || encodedKey.isBlank())
+            throw new Failure("LOOMSPAN_SIDECAR_CREDENTIAL_KEY is required for encrypted credentials");
+        byte[] key;
+        try { key = Base64.getDecoder().decode(encodedKey); }
+        catch (IllegalArgumentException invalid) {
+            throw new Failure("LOOMSPAN_SIDECAR_CREDENTIAL_KEY must be a base64-encoded 32-byte key");
+        }
+        if (key.length != 32)
+            throw new Failure("LOOMSPAN_SIDECAR_CREDENTIAL_KEY must be a base64-encoded 32-byte key");
         return new SecretKeySpec(key, "AES");
     }
 

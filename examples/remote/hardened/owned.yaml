@@ -1,0 +1,8 @@
+name: owned
+description: Read an owned application record
+executor: http
+config:
+  target: app
+  method: POST
+  path: /loomspan/callbacks/owned
+  body: {source: input}

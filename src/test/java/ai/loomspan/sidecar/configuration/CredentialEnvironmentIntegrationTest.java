@@ -14,13 +14,14 @@ class CredentialEnvironmentIntegrationTest {
     @TempDir Path directory;
     @Test void productionKeyEnvironmentRestoresOrFailsWithoutChangingCiphertext() throws Exception {
         var database = directory.resolve("retained.db");
-        SidecarApplicationFixture.seedDatabase(database, List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES,
-                "loomspan:\n  connections:\n    fixture:\n      driver: openai\n      base-url: http://127.0.0.1:9/v1\n      api-key-ref: fixture.key\n",
+        SidecarApplicationFixture.seedDatabase(database, List.of(),
+                "loomspan:\n  executor-config: {default: {http: {}}}\n  connections:\n    fixture:\n      driver: openai\n      base-url: http://127.0.0.1:9/v1\n      api-key-ref: fixture.key\n",
                 Map.of("fixture.key", "retained-test-secret"));
         var jdbc = new JdbcTemplate(StorageConfiguration.dataSource(database));
         var before = jdbc.queryForList("SELECT * FROM configuration_snapshot_credential");
         assertThat(probe(database, null, "database").exit).isNotZero();
-        assertThat(probe(database, Base64.getEncoder().encodeToString(new byte[32]), "database").exit).isZero();
+        var correct = probe(database, Base64.getEncoder().encodeToString(new byte[32]), "database");
+        assertThat(correct.exit).as("Correct-key startup: %s", correct.output).isZero();
         byte[] other = new byte[32]; other[0] = 9;
         var wrong = probe(database, Base64.getEncoder().encodeToString(other), "database");
         assertThat(wrong.exit).isNotZero();

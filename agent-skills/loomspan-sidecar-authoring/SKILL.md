@@ -1,6 +1,6 @@
 ---
 name: loomspan-sidecar-authoring
-description: Build application endpoints and matching Loomspan Sidecar REST skills through the shared management API. Use when working in an integrating application's repository to inspect its data access, author a complete Sidecar draft, validate it, hand off editing control, and optionally publish. Do not use for execution JWT issuance or management token administration.
+description: Build application endpoints and matching Loomspan Sidecar HTTP executor skills through the shared management API. Use when working in an integrating application's repository to inspect its data access, author a complete Sidecar draft, validate it, hand off editing control, and optionally publish. Do not use for execution JWT issuance or management token administration.
 metadata:
   loomspan-component: sidecar
   loomspan-version: "1.0.0-beta.4-SNAPSHOT"
@@ -9,12 +9,11 @@ metadata:
 
 # Author application backed Sidecar skills
 
-Current limitation: the HTTP executor uses explicit operation mappings and captured
-targets as described in [HTTP configuration](references/rest-configuration.md). The
-startup and management paths still expect separate route data and cannot activate
-HTTP executor skills. Do not publish the bundled route example as an executable
-HTTP executor configuration. The complete application build is blocked by these
-integration callers.
+Author operations in skill YAML and shared targets under
+`loomspan.executor-config.default.http`, as described in
+[HTTP configuration](references/rest-configuration.md). HTTP-specific errors are
+checked only when invoked, before dispatch. Startup/readiness and successful
+management validation/publication do not certify HTTP operational validity.
 
 This is an Agent Skill for developing applications with Sidecar, not for changing
 Sidecar's implementation. Application skills are the YAML capabilities you author
@@ -24,7 +23,7 @@ runtime investigation through MCP.
 
 Work in the integrating application's checkout. Inspect its behavior, data model, existing authentication, per-record authorization, and tests before changing endpoints. Repository access comes from the agent's environment; Sidecar does not grant code access. Define a narrow endpoint that independently checks its caller and authorizes the requested data. Add application tests for allowed and denied access.
 
-Read [client setup and commands](references/client-usage.md) for authoring, [execution configuration](references/execution-configuration.md) for publishable framework settings, [REST configuration](references/rest-configuration.md) for routes, and [integration](references/integration.md) for server setup, JWTs and direct execution API requests/polling. For exact [editing/publication APIs](references/management-api.md),
+Read [client setup and commands](references/client-usage.md) for authoring, [execution configuration](references/execution-configuration.md) for publishable framework settings, [HTTP configuration](references/rest-configuration.md) for operations and targets, and [integration](references/integration.md) for server setup, JWTs and direct execution API requests/polling. For exact [editing/publication APIs](references/management-api.md),
 [access and personal tokens](references/management-access.md),
 [configuration modes and key operations](references/configuration-modes.md),
 [snapshot lifecycle](references/configuration-lifecycle.md), and
@@ -37,8 +36,8 @@ Direct API integration requires no SDK. For Java SDK integration, use the [Java 
 
 Use the bundled Python client and a user-provided management token from `LOOMSPAN_SIDECAR_MANAGEMENT_TOKEN`. Keep the secret out of prompts, command arguments, files, logs, and output. A Read token inspects, an Edit token saves and validates, and a Publish token may publish; the live user role also applies. Never use the management token for execution or as an application data credential.
 
-Author a complete candidate with `skillDocuments`, `restRoutesYaml`, `executionConfigurationYaml`. Inspect the current publication and saved draft, acquire control, save, and correct structured server validation issues. Read `current.mode`: file mode is read-only and applies complete file changes by restart. Database mode authors complete providers, model aliases, session limits and trace persistence; it never inherits file or external provider values. Use references in YAML and write-only `replace-credential` under the same Edit grant. Never put resolved values in ordinary save bodies, prompts or logs. Exports default to configuration-only; explicitly include encrypted credentials for same-key destinations with Edit authority. Wrong/missing keys fail; choose configuration-only import and provide replacements for different keys. Never move the encryption key inside a bundle. Process settings remain deployment configuration and require restart. Server validation prepares candidate resources without calling a model or activating the draft. On a changed base, inspect both complete configurations and deliberately submit a complete reconciliation; do not merge or overwrite silently. Renew only at the user's direction. For a client change, explicitly hand off and read the current publication and saved draft under the new grant. A displaced holder must stop writing.
+Author a complete candidate with `skillDocuments` and `executionConfigurationYaml`. Inspect the current publication and saved draft, acquire control, save, and correct structured server validation issues. Read `current.mode`: file mode is read-only and applies complete file changes by restart. Database mode authors complete providers, model aliases, session limits, executor targets and trace persistence; it never inherits file or external provider values. Use references in YAML and write-only `replace-credential` under the same Edit grant. Never put resolved values in ordinary save bodies, prompts or logs. Exports default to configuration-only; explicitly include encrypted credentials for same-key destinations with Edit authority. Wrong/missing keys fail; choose configuration-only import and provide replacements for different keys. Never move the encryption key inside a bundle. Process settings remain deployment configuration and require restart. Server validation prepares candidate resources without calling a model or activating the draft. On a changed base, inspect both complete configurations and deliberately submit a complete reconciliation; do not merge or overwrite silently. Renew only at the user's direction. For a client change, explicitly hand off and read the current publication and saved draft under the new grant. A displaced holder must stop writing.
 
 An Edit token can leave a saved validated draft for the same user to hand off and publish in the console. A Publish token can explicitly hand off, validate the exact new grant/revision/base, and publish remotely. Publication does not require an extra console approval. After publication, verify the published skill with a separate execution JWT and check both allowed and denied application data access. Treat conflicts, expired or revoked tokens, and ambiguous publication as reasons to inspect state before another mutation.
 
-The local [record example](examples/remote-authoring/README.md) illustrates one route and its authorization boundary; adapt it to the application's real data and security contract.
+The local [record example](examples/remote-authoring/README.md) illustrates an HTTP operation and its authorization boundary; adapt it to the application's real data and security contract.

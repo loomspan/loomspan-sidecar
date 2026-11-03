@@ -20,8 +20,8 @@
 - Application and test code may depend on Loomspan Java types only from the
   closed supported `ai.loomspan.api` surface. An ArchUnit test must forbid
   dependencies on `ai.loomspan.internal..` and `ai.loomspan.autoconfigure..`.
-- `RestSkillHandler` is the deliberately planned, supported SPI for the generic
-  outbound handler. This authorization does not permit new SPIs, framework bean
+- An annotated `@SkillExecutor` bean method is the supported contract for the
+  HTTP executor. This authorization does not permit new SPIs, framework bean
   replacement, reflection into internals, or undocumented configuration.
   New extension contracts require explicit developer planning.
 - An unavailable public contract is a framework issue to resolve there, not

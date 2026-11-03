@@ -61,8 +61,8 @@ volume can issue a reset credential for an existing enabled administrator with
 page accepts that credential without a token-bearing URL. There is no security
 question or admin-assigned replacement password.
 
-The current-configuration page shows the complete authored skill YAML and REST
-routes/targets from the **runtime-published** snapshot, including placeholders
+The current-configuration page shows the complete authored skill and execution
+YAML from the **runtime-published** snapshot, including shared HTTP targets
 and any literal sensitive values. Give viewer access only to people allowed to
 read those values. The separately labeled intended ID/status are the database
 selection for restart, not proof of what handles executions now. Authored text

@@ -23,23 +23,22 @@ class MountedSkillRegistrationIntegrationTest
     Path temporaryDirectory;
 
     @Test
-    void activatesNamedYamlAndYmlDocumentsFromDatabaseWithoutScanningRouteFile() throws IOException
+    void activatesNamedYamlAndYmlDocumentsFromDatabaseWithoutScanningExecutionSettings() throws IOException
     {
         Path skills = temporaryDirectory.resolve("sidecar/skills");
         copyFixture("fixtures/skills/mounted-yaml-skill.yaml", skills.resolve("mounted.yaml"));
         copyFixture("fixtures/skills/mounted-yml-skill.yml", skills.resolve("nested/mounted.yml"));
-        copyFixture("fixtures/rest-routes-invalid-as-skill.yaml",
-                temporaryDirectory.resolve("sidecar/rest-routes.yaml"));
+        copyFixture("fixtures/executor-settings-invalid-as-skill.yaml",
+                temporaryDirectory.resolve("sidecar/execution.yaml"));
 
         ai.loomspan.sidecar.support.SidecarApplicationFixture.seedDatabase(temporaryDirectory.resolve("sidecar.db"),
                 List.of(skills.resolve("mounted.yaml"), skills.resolve("nested/mounted.yml")),
-                ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_REST_ROUTES,
                 modelExecutionYaml());
         try (var context = runApplication(modelProperties()))
         {
-            var catalog = context.getBean(SkillReloader.class).snapshot();
+            var catalog = context.getBean(SkillReloader.class).snapshot("default");
             assertThat(catalog.skills()).extracting(descriptor -> descriptor.name())
-                    .containsExactly("mountedYamlSkill", "mountedYmlSkill");
+                    .containsExactly("default-mountedYamlSkill", "default-mountedYmlSkill");
             assertThat(catalog.skills()).extracting(descriptor -> descriptor.kind())
                     .containsOnly(SkillKind.YAML);
         }
@@ -53,13 +52,12 @@ class MountedSkillRegistrationIntegrationTest
 
         ai.loomspan.sidecar.support.SidecarApplicationFixture.seedDatabase(temporaryDirectory.resolve("sidecar.db"),
                 List.of(custom.resolve("only.yml")),
-                ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_REST_ROUTES,
                 modelExecutionYaml());
         try (var context = runApplication(modelProperties()))
         {
-            assertThat(context.getBean(SkillReloader.class).snapshot().skills())
+            assertThat(context.getBean(SkillReloader.class).snapshot("default").skills())
                     .extracting(descriptor -> descriptor.name())
-                    .containsExactly("mountedYmlSkill");
+                    .containsExactly("default-mountedYmlSkill");
         }
     }
 
@@ -70,7 +68,7 @@ class MountedSkillRegistrationIntegrationTest
         copyFixture("fixtures/skills/mounted-yaml-skill.yaml", skills.resolve("mounted.yaml"));
         ai.loomspan.sidecar.support.SidecarApplicationFixture.seedDatabase(temporaryDirectory.resolve("sidecar.db"),
                 List.of(skills.resolve("mounted.yaml")),
-                ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_REST_ROUTES);
+                ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
 
         Throwable failure = catchThrowable(() ->
         {
@@ -89,11 +87,12 @@ class MountedSkillRegistrationIntegrationTest
         Files.writeString(skill, """
                 name: externalRest
                 description: Must not bypass database selection.
-                rest: true
+                executor: http
+                config: {target: missing, method: GET, path: /}
                 input_schema: {type: object, properties: {}}
                 """);
         try (var context = runApplication(List.of("loomspan.skills.locations=" + skill.toUri()))) {
-            assertThat(context.getBean(ai.loomspan.api.SkillReloader.class).snapshot().skills()).isEmpty();
+            assertThat(context.getBean(ai.loomspan.api.SkillReloader.class).snapshot("default").skills()).isEmpty();
         }
     }
 
@@ -124,6 +123,7 @@ class MountedSkillRegistrationIntegrationTest
     private static String modelExecutionYaml() {
         return """
                 loomspan:
+                  executor-config: {default: {http: {}}}
                   connections:
                     fixture:
                       driver: ollama

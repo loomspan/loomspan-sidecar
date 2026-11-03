@@ -33,13 +33,12 @@ public final class ConfigurationSnapshotRepository
                 .addValue("localId", localId.toString())
                 .addValue("sourceId", sourceId == null ? null : sourceId.toString())
                 .addValue("count", configuration.skillDocuments().size())
-                .addValue("rest", configuration.restRoutesYaml())
                 .addValue("execution", configuration.executionConfigurationYaml())
                 .addValue("effective", effectiveYaml);
         var key = new GeneratedKeyHolder();
-        jdbc.update("INSERT INTO configuration_snapshot(local_id, source_id, document_count, rest_routes_yaml, "
+        jdbc.update("INSERT INTO configuration_snapshot(local_id, source_id, document_count, "
                 + "execution_configuration_yaml, effective_execution_yaml) "
-                + "VALUES (:localId, :sourceId, :count, :rest, :execution, :effective)",
+                + "VALUES (:localId, :sourceId, :count, :execution, :effective)",
                 params, key, new String[] {"submission_sequence"});
         long sequence = Objects.requireNonNull(key.getKey()).longValue();
         for (int ordinal = 0; ordinal < configuration.skillDocuments().size(); ordinal++)
@@ -76,13 +75,13 @@ public final class ConfigurationSnapshotRepository
 
     ConfigurationSnapshot requireBySequence(long sequence)
     {
-        var rows = jdbc.query("SELECT s.local_id, s.source_id, s.document_count, s.rest_routes_yaml, "
+        var rows = jdbc.query("SELECT s.local_id, s.source_id, s.document_count, "
                 + "s.execution_configuration_yaml, s.effective_execution_yaml, t.status "
                 + "FROM configuration_snapshot s LEFT JOIN configuration_snapshot_status t "
                 + "ON t.snapshot_sequence = s.submission_sequence WHERE s.submission_sequence = :sequence",
                 new MapSqlParameterSource("sequence", sequence), (rs, row) -> new Header(
                         UUID.fromString(rs.getString(1)), rs.getString(2) == null ? null : UUID.fromString(rs.getString(2)),
-                        rs.getInt(3), rs.getString(4), rs.getString(5), rs.getString(6), rs.getString(7)));
+                        rs.getInt(3), rs.getString(4), rs.getString(5), rs.getString(6)));
         if (rows.size() != 1 || rows.getFirst().status == null)
         {
             throw new IllegalStateException("Missing or incomplete configuration snapshot");
@@ -106,7 +105,7 @@ public final class ConfigurationSnapshotRepository
         var identifiers = credentialVersions(sequence).stream().map(EncryptedCredential::identifier)
                 .toList();
         return new ConfigurationSnapshot(header.localId, header.sourceId, sequence,
-                new ManagedConfiguration(content, header.restYaml, header.executionYaml,
+                new ManagedConfiguration(content, header.executionYaml,
                         identifiers), header.effectiveYaml,
                 SnapshotStatus.fromDatabase(header.status));
     }
@@ -189,7 +188,7 @@ public final class ConfigurationSnapshotRepository
 
     record State(boolean initialized, Long currentSequence) {}
     record SnapshotId(long sequence, UUID localId) {}
-    private record Header(UUID localId, UUID sourceId, int documentCount, String restYaml,
+    private record Header(UUID localId, UUID sourceId, int documentCount,
             String executionYaml, String effectiveYaml, String status) {}
     private record DocumentRow(int ordinal, SkillDocument document) {}
 }

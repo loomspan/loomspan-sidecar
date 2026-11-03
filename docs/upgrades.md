@@ -15,35 +15,18 @@ before upgrading. Sidecar and Framework versions advance independently.
 4. Test the target in an isolated environment using representative application
    invocations, polling, allowed and denied callbacks, publication, restart, and
    recovery. Verify file-mode startup or database-mode restoration as applicable.
-5. Update the runtime deliberately. Follow the [version-aware installer](https://github.com/loomspan/loomspan-framework/blob/v1.0.0-beta.8/agent-skills/loomspan-install/SKILL.md)
+5. Update the runtime deliberately. Follow the version-aware installer at
+   `agent-skills/loomspan-install/SKILL.md` in the matching Framework checkout
+   described by [assistant setup](setup.md#equip-your-development-assistant)
    to select guidance for the new Sidecar and its bundled Framework. Update Console
    to the coordinated Framework version and verify MCP connectivity separately.
 
-## Framework beta.8
+## Configuration and recovery
 
-This checkout bundles Framework `1.0.0-beta.8`. Use the matching Console and
-framework authoring guidance. Catalog responses from `/v1/skills` and
-`/v1/skills/{name}` now include nullable `outputSchema` metadata; REST skills
-have no output schema. Clients that enforce an exact descriptor shape must
-accept this field. This dependency upgrade requires no Sidecar development-data
-reset.
-
-## Earlier development data
-
-Earlier development revisions changed the V1/V3 schema definitions and replaced
-format 1 configuration bundles with format 3. An earlier local development
-database may therefore require a reset rather than an in-place migration. Stop
-Sidecar and preserve a complete backup before deliberately recreating only that
-development database, its accounts, and drafts. Reauthor incompatible content or
-produce format 3 exports from compatible data. This is destructive and is not a
-routine deployed-database upgrade procedure.
-
-The former notice did not identify exact source/target versions. The audit keeps
-its [original wording](../ai/throughts/development-data-reset-extract.md) for review;
-do not infer a safe migration path for a deployed database from it. Resolve that
-path against the selected release before changing deployed data.
-
-Rollback of authored configuration loads retained content into a draft for a new
-publication; it is not a runtime binary downgrade or database schema rollback.
-See [configuration lifecycle](../agent-skills/loomspan-sidecar-authoring/references/configuration-lifecycle.md)
-and [bundle compatibility](../agent-skills/loomspan-sidecar-authoring/references/configuration-bundles.md).
+Use complete file startup configuration or the selected database publication.
+Retained-history rollback loads complete content into a draft for validation and
+new publication; it does not restore accounts or change runtime binaries.
+Configuration bundles use format 4 and transfer authored skill/execution content,
+with optional authenticated encrypted credentials. See
+[configuration lifecycle](../agent-skills/loomspan-sidecar-authoring/references/configuration-lifecycle.md)
+and [bundles](../agent-skills/loomspan-sidecar-authoring/references/configuration-bundles.md).

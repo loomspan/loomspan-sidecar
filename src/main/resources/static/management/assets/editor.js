@@ -4,7 +4,7 @@
   if (!root) return;
   const $ = id => document.getElementById(id);
   const state = { session: null, runtimeId: null, draft: null, grant: null, ownership: null,
-    docs: [], rest: '', execution: '', credentialIdentifiers: [],
+    docs: [], execution: '', credentialIdentifiers: [],
     configuredCredentialIdentifiers: [],
     dirty: false, busy: false, failed: false, valid: false, fault: false,
     editing: false, timer: null, lastActivity: 0, localVersion: 0 };
@@ -30,7 +30,7 @@
   const candidate = () => ({ ...capability(), draftId: state.draft?.draftId,
     revision: state.draft?.revision, baseSnapshotId: state.draft?.baseSnapshotId });
   const content = () => ({ skillDocuments: state.docs.map(d => ({ sourceName: d.sourceName, yaml: d.yaml })),
-    restRoutesYaml: state.rest, executionConfigurationYaml: state.execution });
+    executionConfigurationYaml: state.execution });
   const render = () => {
     const editable = state.editing && !state.fault && !state.busy;
     $('editor-fields').hidden = !state.session;
@@ -57,7 +57,7 @@
     $('editor-publish').disabled = !state.grant || !state.valid || state.dirty || state.busy || state.draft?.stale || state.fault;
     $('editor-save').textContent = state.busy ? 'Working…' : state.failed ? 'Unsaved local changes' : state.dirty
       ? 'Unsaved local changes' : state.draft ? `Saved draft revision ${state.draft.revision}` : 'Published configuration';
-    $('editor-validation-state').textContent = state.valid && !state.dirty ? 'Valid' : state.draft?.stale ? 'Stale base' : 'Out of date';
+    $('editor-validation-state').textContent = state.valid && !state.dirty ? 'Framework validated' : state.draft?.stale ? 'Stale base' : 'Out of date';
     $('editor-owner').textContent = state.grant ? 'You hold editing control.' : state.ownership?.held
       ? `Editing control: ${state.ownership.holderLabel || 'another client'}.` : 'No editing session holds control.';
     $('editor-deadline').textContent = state.grant ? `Lease expires ${new Date(state.grant.expiresAt).toLocaleString()}. Renew only with explicit activity.` : '';
@@ -80,7 +80,6 @@
       section.append(head, yaml); list.append(section);
     });
     if (!state.docs.length) { const empty = document.createElement('p'); empty.className = 'empty'; empty.textContent = 'No skill documents.'; list.append(empty); }
-    $('editor-rest').value = state.rest;
     $('editor-execution').value = state.execution;
     render();
   };
@@ -93,11 +92,9 @@
     $('editor-saved-content').textContent = draft ?
       `Revision ${draft.revision}${draft.stale ? ' (stale)' : ''}\n`
         + draft.configuration.skillDocuments.map(d => `--- ${d.sourceName} ---\n${d.yaml}`).join('\n')
-        + `\n--- REST routes ---\n${draft.configuration.restRoutesYaml}`
         + `\n--- Execution settings ---\n${draft.configuration.executionConfigurationYaml}` : '';
     if (overwrite) {
       state.docs = (draft?.configuration.skillDocuments || []).map(d => ({ ...d }));
-      state.rest = draft?.configuration.restRoutesYaml || '';
       state.execution = draft?.configuration.executionConfigurationYaml || '';
       state.dirty = false; state.failed = false;
       draw();
@@ -163,7 +160,6 @@
       } else if (!draft && state.draft && !state.dirty) setDraft(null);
       if (!draft && !state.draft && !state.dirty) {
         state.docs = current.published.configuration.skillDocuments.map(d => ({ ...d }));
-        state.rest = current.published.configuration.restRoutesYaml;
         state.execution = current.published.configuration.executionConfigurationYaml;
         state.credentialIdentifiers = current.published.configuration.credentialIdentifiers || [];
         state.configuredCredentialIdentifiers = state.credentialIdentifiers;
@@ -190,7 +186,7 @@
     state.busy = true; render();
     try {
       const draft = await api('/editing/draft/validate', 'POST', candidate());
-      setDraft(draft, false); message(draft.validation.successful ? 'Saved revision validated.' : 'Validation found errors.');
+      setDraft(draft, false); message(draft.validation.successful ? 'Saved revision validated. HTTP settings are checked on invocation.' : 'Validation found errors.');
     } catch (error) { if (error.status === 409) await poll(); message('Validation failed: ' + error.message, true); }
     finally { state.busy = false; render(); }
   };
@@ -214,7 +210,6 @@
       if (state.grant?.generation === grant.generation) { state.grant.expiresAt = grant.expiresAt; render(); }
     }).catch(() => lose('Editing lease ended.'));
   };
-  $('editor-rest').addEventListener('input', event => { state.rest = event.target.value; changed(); });
   $('editor-execution').addEventListener('input', event => { state.execution = event.target.value; changed(); });
   $('editor-credential-replace').addEventListener('click', async () => {
     if (!state.grant || !state.editing || state.dirty || state.busy) return;
@@ -260,7 +255,7 @@
     const scalar = text => JSON.stringify(text);
     const connection = value('editor-connection-name') || 'primary';
     const model = value('editor-model-alias') || 'default';
-    const lines = ['loomspan:', '  connections:', `    ${scalar(connection)}:`,
+    const lines = ['loomspan:', '  executor-config: {default: {http: {}}}', '  connections:', `    ${scalar(connection)}:`,
       `      driver: ${scalar(value('editor-driver'))}`];
     if (value('editor-base-url')) lines.push(`      base-url: ${scalar(value('editor-base-url'))}`);
     if (value('editor-api-key-ref')) lines.push(`      api-key-ref: ${scalar(value('editor-api-key-ref'))}`);

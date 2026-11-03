@@ -116,17 +116,7 @@ class ExactRoleExecutionIntegrationTest {
     private static java.nio.file.Path routeFile() {
         try {
             var file = java.nio.file.Files.createTempFile("sidecar-custom-role-routes-", ".yaml");
-            java.nio.file.Files.writeString(file, """
-                    targets:
-                      callback:
-                        base-url: http://127.0.0.1:%d
-                        auth: {mode: none}
-                        connect-timeout: 1s
-                        read-timeout: 2s
-                        max-response-size: 1KB
-                    routes:
-                      echoRest: {target: callback, method: POST, path: /echo}
-                    """.formatted(CALLBACK.getAddress().getPort()));
+            java.nio.file.Files.writeString(file, "loomspan: {executor-config: {default: {http: {targets: {callback: {base-url: 'http://127.0.0.1:%d', auth: {mode: none}}}}}}}\n".formatted(CALLBACK.getAddress().getPort()));
             file.toFile().deleteOnExit();
             return file;
         } catch (Exception failure) { throw new ExceptionInInitializerError(failure); }

@@ -23,7 +23,7 @@ import ai.loomspan.api.SkillExecutionEvent;
 import ai.loomspan.api.SkillExecutionView;
 import ai.loomspan.api.SkillInvocationHandoff;
 import ai.loomspan.sidecar.config.SidecarExecutionProperties;
-import ai.loomspan.sidecar.rest.GenerationRestResources;
+import ai.loomspan.sidecar.configuration.ConfigurationGenerationRegistry;
 import ai.loomspan.sidecar.security.ExecutionOwner;
 import jakarta.annotation.PreDestroy;
 import org.springframework.boot.availability.AvailabilityChangeEvent;
@@ -60,9 +60,9 @@ public class ExecutionCoordinator implements ApplicationListener<ContextClosedEv
 
     @Autowired
     public ExecutionCoordinator(SkillInvocationHandoff skillInvocationHandoff, SidecarExecutionProperties properties,
-            ApplicationContext owningContext, GenerationRestResources resources, Clock clock,
+            ApplicationContext owningContext, ConfigurationGenerationRegistry generations, Clock clock,
             JwtDecoder credentialDecoder) {
-        this(skillInvocationHandoff, properties, owningContext, clock, task -> { }, resources::snapshotId, credentialDecoder);
+        this(skillInvocationHandoff, properties, owningContext, clock, task -> { }, generations::snapshotId, credentialDecoder);
     }
 
     ExecutionCoordinator(SkillInvocationHandoff handoff, SidecarExecutionProperties properties, ApplicationContext context) {

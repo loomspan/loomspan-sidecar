@@ -13,7 +13,8 @@ import tools.jackson.dataformat.yaml.YAMLMapper;
 /** Builds one reference-only framework candidate from complete database content. */
 public final class EffectiveExecutionConfiguration {
     private static final YAMLMapper YAML = YAMLMapper.builder()
-            .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build();
+            .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+            .enable(tools.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build();
     private static final YAMLMapper CREDENTIAL_SCAN = YAMLMapper.builder().build();
     private static final java.util.Set<String> DIRECT_CREDENTIAL_FIELDS = java.util.Set.of(
             "api-key", "headers", "credentials-json", "credentials-uri", "credentials-ref");
@@ -39,30 +40,55 @@ public final class EffectiveExecutionConfiguration {
         public List<EncryptedCredential> retained() { return retained; }
         public boolean sameContent(Candidate other) {
             if (other == null || !yaml.equals(other.yaml) || !values.equals(other.values)) return false;
-            Map<String, String> versions = new LinkedHashMap<>();
-            retained.forEach(value -> versions.put(value.identifier(), value.version()));
-            Map<String, String> otherVersions = new LinkedHashMap<>();
-            other.retained.forEach(value -> otherVersions.put(value.identifier(), value.version()));
-            return versions.equals(otherVersions);
+            return new java.util.HashSet<>(retained).equals(new java.util.HashSet<>(other.retained));
         }
         @Override public String toString() { return "Effective execution candidate [redacted]"; }
     }
 
     public Candidate assemble(ManagedConfiguration authored, List<EncryptedCredential> managed) {
+        assertNoDirectAuthoredCredentials(authored.executionConfigurationYaml());
         Map<String, Object> root = yaml(authored.executionConfigurationYaml());
         Map<String, Object> loomspan = child(root, "loomspan");
         rejectAuthoredValues(loomspan);
         var retained = new ArrayList<EncryptedCredential>();
-        Map<String, String> values = new LinkedHashMap<>();
-        for (EncryptedCredential credential : managed) {
-            if (values.put(credential.identifier(), cipher.decrypt(credential.identifier(),
+        Map<String, String> decrypted = new LinkedHashMap<>();
+        for (EncryptedCredential credential : managed.stream()
+                .sorted(java.util.Comparator.comparing(EncryptedCredential::identifier)).toList()) {
+            if (decrypted.put(credential.identifier(), cipher.decrypt(credential.identifier(),
                     credential.version(), credential.ciphertext())) != null)
                 throw new IllegalArgumentException("Duplicate credential identifier");
             retained.add(credential);
         }
-        if (!values.keySet().containsAll(authored.credentialIdentifiers()))
-            throw new IllegalArgumentException("Required provider credentials are not configured");
-        return new Candidate(authored.executionConfigurationYaml(), values, retained);
+        if (!decrypted.keySet().containsAll(authored.credentialIdentifiers()))
+            throw new IllegalArgumentException("Required credentials are not configured");
+        Map<String, String> values = new LinkedHashMap<>();
+        Object connections = loomspan.get("connections");
+        if (connections instanceof Map<?, ?> providers) for (Object provider : providers.values()) {
+            if (!(provider instanceof Map<?, ?> fields)) continue;
+            reference(fields.get("api-key-ref"), decrypted, values);
+            if (fields.get("header-refs") instanceof Map<?, ?> headers)
+                headers.values().forEach(ref -> reference(ref, decrypted, values));
+            if (fields.get("gemini") instanceof Map<?, ?> options)
+                reference(options.get("credentials-json-ref"), decrypted, values);
+        }
+        boolean attached = false;
+        if (!retained.isEmpty() && loomspan.get("executor-config") instanceof Map<?, ?> namespaces
+                && namespaces.get("default") instanceof Map<?, ?> executors
+                && executors.get("http") instanceof Map<?, ?> http) {
+            var selected = new LinkedHashMap<String, Object>();
+            http.forEach((key, value) -> selected.put((String) key, value));
+            var executorCopy = new LinkedHashMap<Object, Object>(executors);
+            executorCopy.put("http", ai.loomspan.sidecar.http.HttpExecutorConfiguration.withCredentials(selected, retained));
+            var namespaceCopy = new LinkedHashMap<Object, Object>(namespaces);
+            namespaceCopy.put("default", executorCopy);
+            loomspan.put("executor-config", namespaceCopy);
+            attached = true;
+        }
+        return new Candidate(attached ? YAML.writeValueAsString(root) : authored.executionConfigurationYaml(), values, retained);
+    }
+
+    private static void reference(Object ref, Map<String, String> records, Map<String, String> values) {
+        if (ref instanceof String id && records.containsKey(id)) values.put(id, records.get(id));
     }
 
     public void authenticate(List<EncryptedCredential> credentials) {
@@ -87,7 +113,16 @@ public final class EffectiveExecutionConfiguration {
                         && java.util.Set.of("connections", "models").contains(path.get(1));
                 boolean headerName = path.size() == 5 && path.get(0).equals("loomspan")
                         && path.get(1).equals("connections") && path.get(3).equals("header-refs");
-                if (DIRECT_CREDENTIAL_FIELDS.contains(parser.currentName()) && !alias && !headerName) {
+                boolean httpTarget = path.size() >= 6 && path.get(0).equals("loomspan")
+                        && path.get(1).equals("executor-config") && path.get(2).equals("default")
+                        && path.get(3).equals("http") && path.get(4).equals("targets");
+                boolean httpHeaders = httpTarget && path.size() == 7 && path.get(6).equals("headers");
+                boolean httpTargetAlias = httpTarget && path.size() == 6;
+                boolean httpHeaderName = httpTarget && ((path.size() == 8 && path.get(6).equals("headers"))
+                        || (path.size() == 9 && path.get(6).equals("auth") && path.get(7).equals("header-refs")));
+                boolean httpInventory = path.equals(List.of("loomspan", "executor-config", "default", "http", "credentials"));
+                if (httpInventory || (DIRECT_CREDENTIAL_FIELDS.contains(parser.currentName())
+                        && !alias && !headerName && !httpTargetAlias && !httpHeaders && !httpHeaderName)) {
                     direct = true;
                     break;
                 }
@@ -97,13 +132,16 @@ public final class EffectiveExecutionConfiguration {
             // quoted or escaped YAML keys). Never persist content we could not inspect.
             throw new IllegalArgumentException("Execution configuration YAML must be syntactically valid before saving");
         }
-        if (direct) throw new IllegalArgumentException("Authored provider credentials must use references");
+        if (direct) throw new IllegalArgumentException("Authored credentials must use managed references");
     }
 
     public Candidate restore(ConfigurationSnapshot snapshot, List<EncryptedCredential> retained) {
-        return assemble(new ManagedConfiguration(snapshot.configuration().skillDocuments(),
-                snapshot.configuration().restRoutesYaml(), snapshot.effectiveExecutionYaml(),
-                snapshot.configuration().credentialIdentifiers()), retained);
+        Candidate candidate = assemble(snapshot.configuration(), retained);
+        // Mapping order is not configuration content; immutable map iteration may
+        // differ across JVMs when generated credential fields are serialized.
+        if (!yaml(candidate.yaml()).equals(yaml(snapshot.effectiveExecutionYaml())))
+            throw new IllegalArgumentException("Stored effective configuration is inconsistent");
+        return candidate;
     }
 
     private static void rejectAuthoredValues(Map<String, Object> loomspan) {

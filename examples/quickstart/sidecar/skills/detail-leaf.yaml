@@ -1,6 +1,11 @@
 name: detailLeaf
 description: Return deterministic local detail.
-rest: true
+executor: http
+config:
+  target: detail-host
+  method: POST
+  path: /callbacks/detail
+  body: {source: input}
 input_schema:
   type: object
   properties:

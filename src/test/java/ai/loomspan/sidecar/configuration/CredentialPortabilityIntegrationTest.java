@@ -1,7 +1,7 @@
 package ai.loomspan.sidecar.configuration;
 
 import ai.loomspan.sidecar.LoomspanSidecarApplication;
-import ai.loomspan.sidecar.bundle.ConfigurationBundleV3;
+import ai.loomspan.sidecar.bundle.ConfigurationBundleV4;
 import ai.loomspan.sidecar.management.*;
 import ai.loomspan.sidecar.storage.*;
 import ai.loomspan.sidecar.support.SidecarApplicationFixture;
@@ -27,10 +27,10 @@ class CredentialPortabilityIntegrationTest {
         }
     }
     @Test void removedImportedProviderRequiresExplicitIdentifierRemovalBeforePublication() throws Exception {
-        var configuration = new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES,
-                "loomspan:\n  connections:\n    primary: {driver: openai, api-key-ref: source.key}\n",
+        var configuration = new ManagedConfiguration(List.of(),
+                "loomspan:\n  executor-config: {default: {http: {}}}\n  connections:\n    primary: {driver: openai, api-key-ref: source.key}\n",
                 List.of("source.key"));
-        Path zip = ConfigurationBundleV3.write(new ConfigurationSnapshot(UUID.randomUUID(), null, 1,
+        Path zip = ConfigurationBundleV4.write(new ConfigurationSnapshot(UUID.randomUUID(), null, 1,
                 configuration, SnapshotStatus.PUBLISHED));
         byte[] archive;
         try { archive = Files.readAllBytes(zip); } finally { Files.delete(zip); }
@@ -39,8 +39,7 @@ class CredentialPortabilityIntegrationTest {
             var grant = operator.editing.acquire(operator.session, operator.user, "destination", false, false);
             var loaded = load(destination, operator, grant, archive, "configuration-only");
             var edited = operator.editing.save(operator.session, operator.user, grant.editingSessionId(), grant.generation(),
-                    loaded.draftId(), loaded.revision(), loaded.baseSnapshotId(), new ManagedConfiguration(List.of(),
-                            ConfigurationSnapshotStore.EMPTY_REST_ROUTES, "loomspan: {}\n"));
+                    loaded.draftId(), loaded.revision(), loaded.baseSnapshotId(), new ManagedConfiguration(List.of(), "loomspan: {executor-config: {default: {http: {}}}}\n"));
             assertThat(operator.editing.validate(operator.session, operator.user, grant.editingSessionId(), grant.generation(),
                     edited.draftId(), edited.revision(), edited.baseSnapshotId()).validation().successful()).isFalse();
             var removed = operator.editing.removeCredential(operator.session, operator.user, grant.editingSessionId(),
@@ -48,8 +47,8 @@ class CredentialPortabilityIntegrationTest {
             var published = publish(operator, grant, removed);
             assertThat(published.configuration().credentialIdentifiers()).isEmpty();
             var capture = destination.getBean(RuntimeConfigurationService.class).captureExport(true, () -> {});
-            Path exported = ConfigurationBundleV3.write(capture.snapshot(), capture.credentials(), true);
-            try { assertThat(ConfigurationBundleV3.read(exported).credentials()).isEmpty(); }
+            Path exported = ConfigurationBundleV4.write(capture.snapshot(), capture.credentials(), true);
+            try { assertThat(ConfigurationBundleV4.read(exported).credentials()).isEmpty(); }
             finally { Files.delete(exported); }
         }
     }
@@ -57,7 +56,7 @@ class CredentialPortabilityIntegrationTest {
     @Test void sameKeyImportsCiphertextAndDifferentKeyRequiresExplicitReplacement() throws Exception {
         try (var provider = new SidecarApplicationFixture()) {
         byte[] archive;
-        String execution = "loomspan:\n  connections:\n    primary:\n      driver: openai\n      base-url: http://127.0.0.1:9/v1\n      api-key-ref: provider.key\n  models:\n    fixture-model: {connection: primary, provider-model: portable-model}\n"
+        String execution = "loomspan:\n  executor-config: {default: {http: {}}}\n  connections:\n    primary:\n      driver: openai\n      base-url: http://127.0.0.1:9/v1\n      api-key-ref: provider.key\n  models:\n    fixture-model: {connection: primary, provider-model: portable-model}\n"
                 .replace("127.0.0.1:9", "127.0.0.1:" + provider.modelPort());
         try (var source = start("source", SidecarApplicationFixture.CREDENTIAL_KEY)) {
             var operator = operator(source);
@@ -65,15 +64,15 @@ class CredentialPortabilityIntegrationTest {
             var draft = operator.editing.save(operator.session, operator.user, grant.editingSessionId(), grant.generation(),
                     grant.draft().draftId(), grant.draft().revision(), grant.draft().baseSnapshotId(),
                     new ManagedConfiguration(List.of(new ai.loomspan.api.SkillDocument("model.yaml", Files.readString(
-                            SidecarApplicationFixture.resourceFile("fixtures/skills/mounted-yaml-skill.yaml")))), ConfigurationSnapshotStore.EMPTY_REST_ROUTES, execution));
+                            SidecarApplicationFixture.resourceFile("fixtures/skills/mounted-yaml-skill.yaml")))), execution));
             draft = operator.editing.replaceCredential(operator.session, operator.user, grant.editingSessionId(), grant.generation(),
                     draft.draftId(), draft.revision(), draft.baseSnapshotId(), "provider.key", "portable-secret");
             var published = publish(operator, grant, draft);
             var runtime = source.getBean(RuntimeConfigurationService.class);
             var capture = runtime.captureExport(true, () -> operator.editing.authorizeExport(operator.session, operator.user, true));
-            Path zip = ConfigurationBundleV3.write(capture.snapshot(), capture.credentials(), true);
+            Path zip = ConfigurationBundleV4.write(capture.snapshot(), capture.credentials(), true);
             archive = Files.readAllBytes(zip); Files.delete(zip);
-            assertThat(ConfigurationBundleV3.read(new java.io.ByteArrayInputStream(archive)).credentials())
+            assertThat(ConfigurationBundleV4.read(new java.io.ByteArrayInputStream(archive)).credentials())
                     .isEqualTo(runtime.retainedCredentials(published));
             assertThat(new JdbcTemplate(source.getBean(javax.sql.DataSource.class)).queryForObject(
                     "SELECT ciphertext FROM configuration_snapshot_credential LIMIT 1", String.class)).doesNotContain("portable-secret");
@@ -82,10 +81,10 @@ class CredentialPortabilityIntegrationTest {
             var operator = operator(destination);
             var grant = operator.editing.acquire(operator.session, operator.user, "destination", false, false);
             var before = destination.getBean(RuntimeConfigurationService.class).inspect().publishedId();
-            var imported = ConfigurationBundleV3.read(new java.io.ByteArrayInputStream(archive));
+            var imported = ConfigurationBundleV4.read(new java.io.ByteArrayInputStream(archive));
             var original = imported.credentials().getFirst();
             var altered = new EncryptedCredential(original.identifier(), "tampered-version", original.ciphertext());
-            var tamperedFile = ConfigurationBundleV3.write(new ConfigurationSnapshot(imported.sourceSnapshotId(), null, 1,
+            var tamperedFile = ConfigurationBundleV4.write(new ConfigurationSnapshot(imported.sourceSnapshotId(), null, 1,
                     imported.configuration(), SnapshotStatus.PUBLISHED), List.of(altered), true);
             byte[] tampered = Files.readAllBytes(tamperedFile); Files.delete(tamperedFile);
             assertThatThrownBy(() -> load(destination, operator, grant, tampered, "included"))

@@ -39,13 +39,13 @@ class ExecutionConfigurationCorrelationIntegrationTest {
             if (scenario.equals("retry")) oldProvider.modelResponses().add("RETRY");
             if (scenario.equals("child")) {
                 oldProvider.modelResponses().add(SidecarApplicationFixture.completion("""
-                        {"capabilityName":"parent","createdAt":"2026-09-27T00:00:00Z","status":"VALID",
+                        {"capabilityName":"default-parent","createdAt":"2026-09-27T00:00:00Z","status":"VALID",
                         "tasks":[{"taskId":"child-task","title":"Call child","status":"PENDING",
-                        "capabilityName":"mountedYamlSkill","intent":"Call child","dependsOn":[],
+                        "capabilityName":"default-mountedYamlSkill","intent":"Call child","dependsOn":[],
                         "expectedOutputs":["result"],"parallelGroup":null,"note":""}]}
                         """));
                 oldProvider.modelResponses().add(SidecarApplicationFixture.completion("""
-                        {"stepAction":"CALL_TOOL","taskId":"child-task","toolName":"mountedYamlSkill","toolArguments":{}}
+                        {"stepAction":"CALL_TOOL","taskId":"child-task","toolName":"default-mountedYamlSkill","toolArguments":{}}
                         """));
                 oldProvider.modelResponses().add(SidecarApplicationFixture.completion("child-provider"));
                 oldProvider.modelResponses().add(SidecarApplicationFixture.completion("""
@@ -67,7 +67,7 @@ class ExecutionConfigurationCorrelationIntegrationTest {
                       - name: mountedYamlSkill
                     """);
             SidecarApplicationFixture.seedDatabase(database, List.of(skill, parent),
-                    ConfigurationSnapshotStore.EMPTY_REST_ROUTES, modelConfiguration(oldProvider.modelPort()), Map.of("fixture.model.key", "local-test-key"));
+                    modelConfiguration(oldProvider.modelPort()), Map.of("fixture.model.key", "local-test-key"));
             try (var context = new SpringApplicationBuilder(LoomspanSidecarApplication.class, SidecarApplicationFixture.Credentials.class)
                     .web(WebApplicationType.NONE).run(
                             "--loomspan-sidecar.storage.database-path=" + database,
@@ -92,8 +92,7 @@ class ExecutionConfigurationCorrelationIntegrationTest {
                     var oldId = coordinator.admit(scenario.equals("child") ? "parent" : "mountedYamlSkill", Map.of(), 2, owner, authentication);
                     assertThat(oldProvider.awaitModelBlock(3, TimeUnit.SECONDS)).isTrue();
                     var draft = new ConfigurationDraft(oldSnapshot);
-                    draft.replaceContent(new ManagedConfiguration(oldSnapshot.configuration().skillDocuments(),
-                            ConfigurationSnapshotStore.EMPTY_REST_ROUTES, modelConfiguration(newProvider.modelPort())
+                    draft.replaceContent(new ManagedConfiguration(oldSnapshot.configuration().skillDocuments(), modelConfiguration(newProvider.modelPort())
                                     .replace("fixture-provider-model", "new-provider-model").replace("max-provider-attempts: 8", "max-provider-attempts: 1")));
                     var newCredentials = SidecarApplicationFixture.encrypt(Map.of("fixture.model.key", "local-test-key-new"));
                     assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(service, draft, newCredentials).successful()).isTrue();
@@ -124,6 +123,7 @@ class ExecutionConfigurationCorrelationIntegrationTest {
     private static String modelConfiguration(int port) {
         return """
                 loomspan:
+                  executor-config: {default: {http: {}}}
                   connections:
                     fixture:
                       driver: openai
@@ -146,8 +146,9 @@ class ExecutionConfigurationCorrelationIntegrationTest {
             Path database = directory.resolve("model-only.db");
             SidecarApplicationFixture.seedDatabase(database,
                     List.of(SidecarApplicationFixture.resourceFile("fixtures/skills/mounted-yaml-skill.yaml")),
-                    ConfigurationSnapshotStore.EMPTY_REST_ROUTES, """
+                    """
                             loomspan:
+                              executor-config: {default: {http: {}}}
                               connections:
                                 fixture:
                                   driver: openai
@@ -179,7 +180,7 @@ class ExecutionConfigurationCorrelationIntegrationTest {
                 assertThat(terminal.configurationSnapshotId()).isEqualTo(a.localId());
                 assertThat(terminal.status()).isEqualTo(ExecutionStatus.COMPLETED);
                 var draft = new ConfigurationDraft(a);
-                draft.replaceContent(new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
+                draft.replaceContent(new ManagedConfiguration(List.of(), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
                 assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(service, draft, List.of()).successful()).isTrue();
                 context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(draft, List.of());
                 assertThat(coordinator.find(id, owner).orElseThrow().configurationSnapshotId()).isEqualTo(a.localId());
@@ -202,15 +203,11 @@ class ExecutionConfigurationCorrelationIntegrationTest {
             Files.writeString(skill, """
                     name: echoRest
                     description: Captured generation fixture.
-                    rest: true
+                    executor: http
+                    config: {target: callback, method: GET, path: /echo}
                     input_schema: {type: object, properties: {}}
                     """);
-            String routes = """
-                    targets:
-                      callback: {base-url: 'http://127.0.0.1:%d', auth: {mode: none}, connect-timeout: 1s, read-timeout: 2s, max-response-size: 1KB}
-                    routes:
-                      echoRest: {target: callback, method: GET, path: /echo}
-                    """.formatted(server.getAddress().getPort());
+            String routes = "loomspan: {executor-config: {default: {http: {targets: {callback: {base-url: 'http://127.0.0.1:%d', auth: {mode: none}}}}}}}\n".formatted(server.getAddress().getPort());
             Path database = directory.resolve("sidecar.db");
             SidecarApplicationFixture.seedDatabase(database, List.of(skill), routes);
             try (var context = new SpringApplicationBuilder(LoomspanSidecarApplication.class, SidecarApplicationFixture.Credentials.class)
@@ -226,7 +223,7 @@ class ExecutionConfigurationCorrelationIntegrationTest {
                 var coordinator = context.getBean(ExecutionCoordinator.class);
                 var a = store.current();
                 var draft = new ConfigurationDraft(a);
-                draft.replaceContent(new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
+                draft.replaceContent(new ManagedConfiguration(List.of(), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
                 assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(service, draft, List.of()).successful()).isTrue();
                 coordinator.afterHandoff(admitted -> context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(draft));
                 var jwt = context.getBean(org.springframework.security.oauth2.jwt.JwtDecoder.class).decode(

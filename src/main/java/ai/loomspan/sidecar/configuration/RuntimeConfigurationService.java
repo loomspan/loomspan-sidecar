@@ -6,8 +6,6 @@ import ai.loomspan.api.SkillReloader;
 import ai.loomspan.api.SkillValidationIssue;
 import ai.loomspan.sidecar.execution.ExecutionCoordinator;
 import ai.loomspan.sidecar.management.ManagementEditingState;
-import ai.loomspan.sidecar.rest.GenerationRestResources;
-import ai.loomspan.sidecar.rest.RestRouteCatalogValidator;
 import ai.loomspan.sidecar.storage.ConfigurationDraftStore;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshot;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshotStore;
@@ -50,16 +48,13 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
 
     private final ConfigurationSnapshotStore store;
     private final SkillReloader reloader;
-    private final GenerationRestResources resources;
-    private final RestRouteCatalogValidator routes;
+    private final ConfigurationGenerationRegistry generations;
     private final ExecutionCoordinator executions;
     private final ManagementEditingState editing;
     private final ConfigurationDraftStore drafts;
     private final EffectiveExecutionConfiguration effective;
     private final ConfigurationMode mode;
     private final ai.loomspan.sidecar.storage.FileConfigurationStartupStore fileStarts;
-    private final org.springframework.core.io.ResourceLoader resourceLoader;
-    private final ai.loomspan.sidecar.config.RestRoutesProperties routeProperties;
     private final org.springframework.core.env.Environment environment;
     private volatile ai.loomspan.sidecar.storage.FileConfigurationStartupStore.Startup fileStartup;
     private final ReentrantLock publication = new ReentrantLock(true);
@@ -72,23 +67,20 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     private volatile Hooks hooks = new Hooks() {};
 
     public RuntimeConfigurationService(ConfigurationSnapshotStore store, SkillReloader reloader,
-            GenerationRestResources resources, RestRouteCatalogValidator routes, ExecutionCoordinator executions,
+            ConfigurationGenerationRegistry generations, ExecutionCoordinator executions,
             ManagementEditingState editing, ConfigurationDraftStore drafts,
             EffectiveExecutionConfiguration effective, ConfigurationMode mode,
             ai.loomspan.sidecar.storage.FileConfigurationStartupStore fileStarts,
-            org.springframework.core.io.ResourceLoader resourceLoader,
-            ai.loomspan.sidecar.config.RestRoutesProperties routeProperties,
             org.springframework.core.env.Environment environment) {
         this.store = store;
         this.reloader = reloader;
-        this.resources = resources;
-        this.routes = routes;
+        this.generations = generations;
         this.executions = executions;
         this.editing = editing;
         this.drafts = drafts;
         this.effective = effective;
-        this.mode = mode; this.fileStarts = fileStarts; this.resourceLoader = resourceLoader;
-        this.routeProperties = routeProperties; this.environment = environment;
+        this.mode = mode; this.fileStarts = fileStarts;
+        this.environment = environment;
     }
 
     void hooks(Hooks hooks) { this.hooks = java.util.Objects.requireNonNull(hooks); }
@@ -98,9 +90,9 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     public void run(ApplicationArguments args) {
         publication.lock();
         try {
-            retirement = reloader.onGenerationRetired(resources::retire);
+            retirement = reloader.onGenerationRetired(generations::retire);
             if (mode == ConfigurationMode.FILE) { startFiles(); return; }
-            if (!reloader.snapshot().skills().isEmpty())
+            if (!reloader.snapshot("default").skills().isEmpty())
                 throw new IllegalStateException("Framework startup catalog must be empty before database activation");
             ConfigurationSnapshot selected = store.current();
             intendedId = selected.localId();
@@ -112,10 +104,8 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                 hooks.beforeStartupActivation();
                 prepared = prepare(selected.configuration().skillDocuments(),
                         effective.restore(selected, store.credentialVersions(selected)));
-                phase = "REST staging";
-                GenerationRestResources.Resources staged = stage(prepared, selected.configuration());
                 generation = prepared.generationId();
-                resources.stage(generation, staged, selected.localId());
+                generations.stage(generation, selected.localId());
                 phase = "framework publication";
                 reloader.publish(prepared);
                 published = selected;
@@ -126,10 +116,9 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                 prune();
                 executions.openAfterActivation();
             } catch (RuntimeException failure) {
-                if (published == null && generation != null) resources.discard(generation);
+                if (published == null && generation != null) generations.discard(generation);
                 ConfigurationValidationIssue issue = switch (phase) {
                     case "skill preparation" -> skillValidationIssue(failure, selected.configuration());
-                    case "REST staging" -> validationIssue(failure);
                     default -> null;
                 };
                 String location = issue == null ? "" : " at " + issue.sourceLabel()
@@ -175,21 +164,12 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
 
     private void startFiles() {
         hooks.beforeStartupActivation();
-        var catalog = reloader.snapshot();
-        GenerationRestResources.Resources staged = null;
+        var catalog = reloader.snapshot("default");
         try {
-            String yaml;
-            try (var input = resourceLoader.getResource(routeProperties.getRestRoutes().getLocation()).getInputStream()) {
-                yaml = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-            }
-            staged = resources.prepare(yaml);
-            routes.validate(staged.routes(), catalog);
             var inspection = new java.util.LinkedHashMap<String, Object>();
             inspection.put("mode", "file");
             inspection.put("skills", catalog.skills().stream().map(skill -> java.util.Map.of(
                     "name", skill.name(), "kind", skill.kind().name())).toList());
-            inspection.put("routes", staged.routes().routes().keySet());
-            inspection.put("targets", staged.routes().targets().keySet());
             var binder = org.springframework.boot.context.properties.bind.Binder.get(environment);
             var connectionValues = binder.bind("loomspan.connections",
                     org.springframework.boot.context.properties.bind.Bindable.mapOf(String.class, Object.class))
@@ -204,12 +184,11 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
             inspection.put("tracePersistence", environment.getProperty("loomspan.execution-trace.persistence", "Framework default"));
             inspection.put("defaults", "Omitted execution settings use framework defaults");
             fileStartup = fileStarts.record(inspection);
-            resources.stage(catalog.generationId(), staged, fileStartup.localId());
+            generations.stage(catalog.generationId(), fileStartup.localId());
             executions.openAfterActivation();
         } catch (Exception failure) {
-            resources.discard(catalog.generationId());
-            if (staged != null) resources.release(staged);
-            throw new IllegalStateException("File configuration startup failed; check skills, execution settings and REST route resource");
+            generations.discard(catalog.generationId());
+            throw new IllegalStateException("File configuration startup failed; check skills and execution settings");
         }
     }
 
@@ -254,11 +233,11 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                             "execution-configuration.yaml", null, null,
                             failure instanceof ProviderCredentialCipher.Failure keyFailure
                                     ? keyFailure.getMessage()
-                                    : "Provider credential preparation failed; check the draft credentials and encryption key"))), null);
+                                    : "Credential preparation failed; check the draft credentials and encryption key"))), null);
         }
         ai.loomspan.api.SkillValidationResult checked;
         try {
-            checked = reloader.validate(configuration.skillDocuments(), new ExecutionConfiguration(candidate.yaml()));
+            checked = reloader.validate("default", configuration.skillDocuments(), new ExecutionConfiguration(candidate.yaml()));
         } catch (RuntimeException failure) {
             return new ValidationAttempt(new ConfigurationValidationResult(false, List.of(new ConfigurationValidationIssue(
                     ConfigurationValidationIssue.Severity.ERROR, "execution-configuration.yaml",
@@ -270,19 +249,12 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                         ? ConfigurationValidationIssue.Severity.WARNING : ConfigurationValidationIssue.Severity.ERROR,
                 issue.sourceName(), issue.skillName(), issue.fieldPath(), issue.message())));
         if (!checked.valid()) return new ValidationAttempt(new ConfigurationValidationResult(false, issues), null);
-        GenerationRestResources.Resources staged = null;
-        boolean frameworkPrepared = false;
         try {
             try (PreparedSkillUpdate ignored = prepare(configuration.skillDocuments(), candidate)) {
                 // Resolve external references and verify provider construction without activation.
             }
-            frameworkPrepared = true;
-            staged = resources.prepare(configuration.restRoutesYaml());
-            routes.validateCandidate(staged.routes(), checked.skills());
         } catch (RuntimeException failure) {
-            issues.add(frameworkPrepared ? validationIssue(failure) : skillValidationIssue(failure, configuration));
-        } finally {
-            if (staged != null) resources.release(staged);
+            issues.add(skillValidationIssue(failure, configuration));
         }
         var result = new ConfigurationValidationResult(issues.stream().noneMatch(issue ->
                 issue.severity() == ConfigurationValidationIssue.Severity.ERROR), issues);
@@ -317,29 +289,21 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
             UUID predecessor, PublicationAdmission admission) {
 
             PreparedSkillUpdate prepared = null;
-            GenerationRestResources.Resources staged;
             try {
                 hooks.beforePreparation();
                 prepared = prepare(configuration.skillDocuments(), admission.validated());
-                staged = stage(prepared, configuration);
             } catch (RuntimeException failure) {
                 if (prepared != null) prepared.close();
                 throw new PublicationFailure("preparation_failed", "Configuration preparation failed before activation");
             }
             String generation = prepared.generationId();
-            try { resources.stage(generation, staged, null); }
-            catch (RuntimeException failure) {
-                resources.release(staged);
-                prepared.close();
-                throw new PublicationFailure("preparation_failed", "Configuration preparation failed before activation");
-            }
             ConfigurationSnapshot submitted;
             try {
                 hooks.beforeCommit();
                 submitted = store.submit(configuration, sourceId, predecessor,
                         admission.validated().yaml(), admission.validated().retained());
             } catch (RuntimeException failure) {
-                resources.discard(generation);
+                generations.discard(generation);
                 prepared.close();
                 pruneAfterAttempt();
                 LOG.warn("Configuration commit failed before framework publication; runtime remains {}", predecessor);
@@ -349,7 +313,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
             intendedStatus = SnapshotStatus.PENDING;
 
             try {
-                resources.bind(generation, submitted.localId());
+                generations.stage(generation, submitted.localId());
                 hooks.beforeFrameworkPublish();
                 transition.lock();
                 try {
@@ -359,7 +323,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                     transition.unlock();
                 }
             } catch (RuntimeException failure) {
-                resources.discard(generation);
+                generations.discard(generation);
                 prepared.close();
                 try {
                     hooks.beforeRevert();
@@ -473,7 +437,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
 
     private PreparedSkillUpdate prepare(List<ai.loomspan.api.SkillDocument> documents,
             EffectiveExecutionConfiguration.Candidate candidate) {
-        return reloader.prepare(documents, new ExecutionConfiguration(candidate.yaml()), candidate.values());
+        return reloader.prepare("default", documents, new ExecutionConfiguration(candidate.yaml()), candidate.values());
     }
 
     private EffectiveExecutionConfiguration.Candidate candidateFor(ManagedConfiguration configuration,
@@ -481,15 +445,14 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
         if (retainedSource && sourceId != null) {
             ConfigurationSnapshot source = store.findByLocalId(sourceId);
             if (source != null && source.configuration().equals(configuration)
-                    && sameVersions(credentials, store.credentialVersions(source)))
+                    && sameCredentials(credentials, store.credentialVersions(source)))
                 return effective.restore(source, store.credentialVersions(source));
         }
         return effective.assemble(configuration, credentials);
     }
 
-    private static boolean sameVersions(List<EncryptedCredential> left, List<EncryptedCredential> right) {
-        return left.stream().map(value -> value.identifier() + "\u0000" + value.version()).sorted().toList()
-                .equals(right.stream().map(value -> value.identifier() + "\u0000" + value.version()).sorted().toList());
+    private static boolean sameCredentials(List<EncryptedCredential> left, List<EncryptedCredential> right) {
+        return new java.util.HashSet<>(left).equals(new java.util.HashSet<>(right));
     }
 
     public List<EncryptedCredential> retainedCredentials(ConfigurationSnapshot snapshot) {
@@ -501,17 +464,6 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                 snapshot.localId(), true).result();
     }
 
-    private GenerationRestResources.Resources stage(PreparedSkillUpdate prepared, ManagedConfiguration configuration) {
-        GenerationRestResources.Resources staged = resources.prepare(configuration.restRoutesYaml());
-        try {
-            routes.validate(staged.routes(), prepared.snapshot());
-            return staged;
-        } catch (RuntimeException failure) {
-            resources.release(staged);
-            throw failure;
-        }
-    }
-
     private void pruneAfterAttempt() {
         try { prune(); }
         catch (RuntimeException failure) {
@@ -521,7 +473,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     }
 
     private void prune() {
-        HashSet<UUID> protectedIds = new HashSet<>(resources.protectedIds());
+        HashSet<UUID> protectedIds = new HashSet<>(generations.protectedIds());
         if (published != null) protectedIds.add(published.localId());
         store.prune(protectedIds);
     }
@@ -549,20 +501,6 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     private void requireHealthy() {
         requireDatabase();
         if (mutationFault != null) throw new IllegalStateException("Configuration mutations are stopped: " + mutationFault);
-    }
-
-    private ConfigurationValidationIssue validationIssue(RuntimeException failure) {
-        if (failure instanceof IllegalStateException && failure.getMessage() != null
-                && failure.getMessage().startsWith("Invalid REST routes at rest-routes.yaml")) {
-            String message = failure.getMessage();
-            int open = message.indexOf('[');
-            int close = message.indexOf(']', open + 1);
-            String location = open >= 0 && close > open ? message.substring(open + 1, close) : null;
-            return new ConfigurationValidationIssue(ConfigurationValidationIssue.Severity.ERROR,
-                    "rest-routes.yaml", null, location, message);
-        }
-        return new ConfigurationValidationIssue(ConfigurationValidationIssue.Severity.ERROR,
-                "rest-routes.yaml", null, null, "REST client staging failed");
     }
 
     private ConfigurationValidationIssue skillValidationIssue(RuntimeException failure, ManagedConfiguration configuration) {

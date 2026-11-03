@@ -24,7 +24,9 @@ deployment, and polling responsibilities that in-process callers do not have.
 Loomspan uses hierarchical task planning: a model-backed parent works within its
 declared child capabilities. Start with one skill when that is enough; add a tree
 when the task needs decomposition and application operations. See the matching
-[Framework mental model](https://github.com/loomspan/loomspan-framework/blob/v1.0.0-beta.8/agent-skills/loomspan-docs/references/skill-authoring/mental-model.md).
+Framework mental model in the matching checkout at
+`agent-skills/loomspan-docs/references/skill-authoring/mental-model.md`.
+See [matching guidance setup](setup.md#equip-your-development-assistant).
 Validation constrains accepted inputs and outputs, but cannot prove a model's
 factual correctness or undo external effects.
 
@@ -69,7 +71,9 @@ installing an Agent Skill nor connecting Console publishes application skills.
 
 One application-owned HTTP client consumes captured skill/executor maps through the
 supported annotated executor. Per-request headers and limits isolate callers and
-targets; Framework owns admitted work and shutdown timing. Startup, restoration and
-management still expect separate route data and cannot activate this runtime. The
-complete application build remains blocked by these callers. See the
-[HTTP contract](http-executor.md) for the usable runtime composition boundary.
+targets; Framework owns admitted work and shutdown timing. File startup and
+complete database publications use skill-owned operations and shared executor
+settings. Durable snapshot correlation is independent of client lifetime.
+HTTP-specific validation runs only on invocation before dispatch; startup and
+management validation do not certify HTTP operational validity. See the
+[HTTP contract](http-executor.md).

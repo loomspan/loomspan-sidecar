@@ -34,9 +34,8 @@ model-backed draft, remove now-unused credential identifiers with
   "draftId": "<draft draftId>",
   "revision": 1,
   "baseSnapshotId": "<current snapshot ID>",
-  "skillDocuments": [{"sourceName": "records.yaml", "yaml": "name: readRecord\ndescription: Read an owned record\nrest: true\n"}],
-  "restRoutesYaml": "targets:\n  records:\n    base-url: https://records.example.test\n    auth: {mode: caller-passthrough}\n    connect-timeout: 5s\n    read-timeout: 30s\n    max-response-size: 1MB\nroutes:\n  readRecord: {target: records, method: GET, path: '/records/{recordId}'}\n",
-  "executionConfigurationYaml": "loomspan: {}\n"
+  "skillDocuments": [{"sourceName": "records.yaml", "yaml": "name: readRecord\ndescription: Read one record owned by the authenticated caller\nexecutor: http\nconfig:\n  target: records\n  method: GET\n  path: /records/{recordId}\n  pathParams: {recordId: /recordId}\nrbac_roles: [RECORD_READER]\ninput_schema:\n  type: object\n  properties:\n    recordId:\n      type: string\n  required: [recordId]\n  additionalProperties: false\n"}],
+  "executionConfigurationYaml": "loomspan:\n  executor-config:\n    default:\n      http:\n        targets:\n          records:\n            base-url: https://records.example.test\n            auth:\n              mode: caller-passthrough\n            connect-timeout: 1s\n            read-timeout: 5s\n            max-response-size: 16KB\n"
 }
 ```
 

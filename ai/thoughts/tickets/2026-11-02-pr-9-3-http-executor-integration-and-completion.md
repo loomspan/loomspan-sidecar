@@ -77,6 +77,13 @@ whether Framework beta.9 needs further changes before its release.
 
 ### Composed behavior and final verification
 
+- Prove invocation-only HTTP domain validation in file and database modes:
+  Framework-valid but HTTP-invalid settings can start, publish and restore without
+  HTTP domain validation or network probes, then fail on invocation before dispatch.
+  Framework structural/reference validation and management authorization/integrity
+  checks remain active. No Framework configuration accessor or validation hook is
+  required; do not recreate the superseded early-validation requirement.
+
 - Prove real Sidecar invocation of executor YAML through public Framework APIs,
   including direct calls and standard model tool calls with deterministic model
   fixtures. Do not use Framework's own passing tests as Sidecar evidence.
@@ -122,6 +129,11 @@ whether Framework beta.9 needs further changes before its release.
   evidence exists. Sidecar's next version/tag remains 1.0.0-beta.4/v1.0.0-beta.4.
 
 ## Acceptance criteria
+
+- [ ] File readiness, management validation/publication and restart restoration
+  do not certify HTTP domain correctness. A Framework-valid HTTP-invalid fixture
+  reaches those boundaries and fails only when invoked, with no outbound request;
+  separate Framework-invalid fixtures still fail Framework validation.
 
 - [ ] The equipment-service and relevant SDK harness/generator paths use the new
   executor architecture; representative local composed calls pass without paid

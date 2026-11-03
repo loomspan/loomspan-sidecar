@@ -26,7 +26,7 @@ usable without an assistant:
 | Contract or workflow | Home |
 | --- | --- |
 | Execution HTTP API, JWTs, REST transport and retention | [Integration reference](../agent-skills/loomspan-sidecar-authoring/references/integration.md) |
-| REST skill design and application authorization | [REST authoring](../agent-skills/loomspan-sidecar-authoring/references/rest-configuration.md) |
+| HTTP skill design and application authorization | [REST authoring](../agent-skills/loomspan-sidecar-authoring/references/rest-configuration.md) |
 | Publishable model and execution settings | [Execution configuration](../agent-skills/loomspan-sidecar-authoring/references/execution-configuration.md) |
 | File/database authority and encryption-key operations | [Configuration modes](../agent-skills/loomspan-sidecar-authoring/references/configuration-modes.md) |
 | Draft, lease, validation and publication API | [Management API](../agent-skills/loomspan-sidecar-authoring/references/management-api.md) |

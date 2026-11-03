@@ -17,10 +17,10 @@ final class SkillCatalogController {
     SkillCatalogController(SkillReloader reloader) { this.reloader = reloader; }
 
     @GetMapping
-    List<SkillDescriptor> skills() { return reloader.snapshot().skills(); }
+    List<SkillDescriptor> skills() { return reloader.snapshot("default").skills(); }
 
     @GetMapping("/{name}")
     SkillDescriptor skill(@PathVariable("name") String name) {
-        return reloader.snapshot().skill(name).orElseThrow(() -> new ResourceNotFoundException("Unknown skill '" + name + "'"));
+        return reloader.snapshot("default").skill(name.contains("-") ? name : "default-" + name).orElseThrow(() -> new ResourceNotFoundException("Unknown skill '" + name + "'"));
     }
 }

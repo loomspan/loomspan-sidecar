@@ -16,8 +16,13 @@ public final class ManagementEditingController {
     public record Capability(UUID editingSessionId, UUID generation) {}
     public record Candidate(UUID editingSessionId, UUID generation, UUID draftId, long revision, UUID baseSnapshotId) {}
     public record Save(UUID editingSessionId, UUID generation, UUID draftId, long revision,
-            UUID baseSnapshotId, List<SkillDocument> skillDocuments, String restRoutesYaml,
-            String executionConfigurationYaml) {}
+            UUID baseSnapshotId, List<SkillDocument> skillDocuments,
+            String executionConfigurationYaml) {
+        @com.fasterxml.jackson.annotation.JsonAnySetter
+        public void rejectUnknown(String name, Object value) {
+            throw new IllegalArgumentException("Unknown editing field");
+        }
+    }
     public record CredentialReplacement(UUID editingSessionId, UUID generation, UUID draftId,
             long revision, UUID baseSnapshotId, String identifier, String value) {}
     public record CredentialRemoval(UUID editingSessionId, UUID generation, UUID draftId,
@@ -109,12 +114,12 @@ public final class ManagementEditingController {
     }
 
     private static ManagedConfiguration content(Save body) {
-        if (body.skillDocuments() == null || body.restRoutesYaml() == null
+        if (body.skillDocuments() == null
                 || body.executionConfigurationYaml() == null)
             throw new IllegalArgumentException("Complete configuration required");
         ai.loomspan.sidecar.configuration.EffectiveExecutionConfiguration
                 .assertNoDirectAuthoredCredentials(body.executionConfigurationYaml());
-        return new ManagedConfiguration(body.skillDocuments(), body.restRoutesYaml(),
+        return new ManagedConfiguration(body.skillDocuments(),
                 body.executionConfigurationYaml(), List.of());
     }
 

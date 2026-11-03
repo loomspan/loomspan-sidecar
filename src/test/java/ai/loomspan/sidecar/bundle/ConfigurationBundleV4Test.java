@@ -23,26 +23,22 @@ import tools.jackson.databind.ObjectMapper;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class ConfigurationBundleV3Test {
+class ConfigurationBundleV4Test {
     private static final ObjectMapper JSON = new ObjectMapper();
-    private static final String REST = "targets: {}\nroutes: {}\n# ${UNRESOLVED} secret-literal\n";
 
     @Test void rejectsSupersededFormatFixture() throws Exception {
-        Path root = Path.of("src/test/resources/fixtures/bundles/v1");
-        byte[] archive = zip(Map.of("manifest.json", Files.readAllBytes(root.resolve("manifest.json")),
-                "rest.json", Files.readAllBytes(root.resolve("rest.json")),
-                "skills/00000.yaml", Files.readAllBytes(root.resolve("skills/00000.yaml"))));
-        rejects(archive);
+        byte[] bytes = execution("loomspan: {executor-config: {default: {http: {}}}}\n");
+        rejects(zip(Map.of("execution.json", bytes, "manifest.json", manifest(3, List.of(item("execution.json", bytes, null))))));
     }
 
     @Test void roundTripsExactAuthoredConfigurationAndEmptyRuntime() throws Exception {
         var configuration = new ManagedConfiguration(List.of(
                 new SkillDocument("../source α.yaml", "name: example\n# secret-literal ${UNRESOLVED}\n"),
-                new SkillDocument("other\\label.yml", "name: second\n")), REST, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
+                new SkillDocument("other\\label.yml", "name: second\n")), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
         var snapshot = snapshot(configuration);
-        Path path = ConfigurationBundleV3.write(snapshot);
+        Path path = ConfigurationBundleV4.write(snapshot);
         try {
-            var bundle = ConfigurationBundleV3.read(path);
+            var bundle = ConfigurationBundleV4.read(path);
             assertThat(bundle.sourceSnapshotId()).isEqualTo(snapshot.localId());
             assertThat(bundle.configuration()).isEqualTo(configuration);
             assertThat(bundle.sidecarVersion()).isNotBlank();
@@ -50,12 +46,13 @@ class ConfigurationBundleV3Test {
             try (var zip = new java.util.zip.ZipFile(path.toFile())) {
                 assertThat(zip.getEntry("../source α.yaml")).isNull();
                 assertThat(zip.getEntry("skills/00000.yaml")).isNotNull();
+                assertThat(zip.getEntry("rest.json")).isNull();
             }
         } finally { Files.deleteIfExists(path); }
 
-        Path empty = ConfigurationBundleV3.write(snapshot(new ManagedConfiguration(List.of(), "targets: {}\nroutes: {}\n", ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION)));
+        Path empty = ConfigurationBundleV4.write(snapshot(new ManagedConfiguration(List.of(), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION)));
         try {
-            assertThat(ConfigurationBundleV3.read(empty).configuration().skillDocuments()).isEmpty();
+            assertThat(ConfigurationBundleV4.read(empty).configuration().skillDocuments()).isEmpty();
         } finally { Files.deleteIfExists(empty); }
     }
 
@@ -63,10 +60,10 @@ class ConfigurationBundleV3Test {
         java.util.Locale original = java.util.Locale.getDefault();
         try {
             java.util.Locale.setDefault(java.util.Locale.forLanguageTag("ar-EG"));
-            Path file = ConfigurationBundleV3.write(snapshot(new ManagedConfiguration(
-                    List.of(new SkillDocument("source", "name: example\n")), REST, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION)));
+            Path file = ConfigurationBundleV4.write(snapshot(new ManagedConfiguration(
+                    List.of(new SkillDocument("source", "name: example\n")), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION)));
             try {
-                assertThat(ConfigurationBundleV3.read(file).configuration().skillDocuments()).hasSize(1);
+                assertThat(ConfigurationBundleV4.read(file).configuration().skillDocuments()).hasSize(1);
                 try (var zip = new java.util.zip.ZipFile(file.toFile())) {
                     assertThat(zip.getEntry("skills/00000.yaml")).isNotNull();
                 }
@@ -75,30 +72,23 @@ class ConfigurationBundleV3Test {
     }
 
     @Test void rejectsUnsupportedIncompleteAmbiguousUnsafeAndCorruptBundles() throws Exception {
-        byte[] rest = JSON.writeValueAsBytes(Map.of("restRoutesYaml", REST));
         byte[] yaml = "name: example\n".getBytes(StandardCharsets.UTF_8);
         var payloads = new ArrayList<Map<String, Object>>();
-        payloads.add(item("rest.json", rest, null));
-        byte[] execution = JSON.writeValueAsBytes(Map.of("executionConfigurationYaml", "loomspan: {}\n",
-                "credentialIdentifiers", List.of()));
+        byte[] execution = execution("loomspan: {executor-config: {default: {http: {}}}}\n");
         payloads.add(item("execution.json", execution, null));
         payloads.add(item("skills/00000.yaml", yaml, "source.yaml"));
         var content = new LinkedHashMap<String, byte[]>();
-        content.put("rest.json", rest);
         content.put("execution.json", execution);
         content.put("skills/00000.yaml", yaml);
-        content.put("manifest.json", manifest(3, payloads));
-        assertThat(ConfigurationBundleV3.read(new ByteArrayInputStream(zip(content))).configuration().skillDocuments()).hasSize(1);
+        content.put("manifest.json", manifest(4, payloads));
+        assertThat(ConfigurationBundleV4.read(new ByteArrayInputStream(zip(content))).configuration().skillDocuments()).hasSize(1);
 
-        content.put("manifest.json", manifest(1, payloads));
-        rejects(zip(content));
         content.put("manifest.json", manifest(3, payloads));
+        rejects(zip(content));
+        content.put("manifest.json", manifest(4, payloads));
         content.remove("execution.json");
         rejects(zip(content));
         content.put("execution.json", execution);
-        content.remove("rest.json");
-        rejects(zip(content));
-        content.put("rest.json", rest);
         content.put("skills/00000.yaml", "name: changed\n".getBytes(StandardCharsets.UTF_8));
         rejects(zip(content));
         content.put("skills/00000.yaml", yaml);
@@ -109,12 +99,12 @@ class ConfigurationBundleV3Test {
         rejects(zip(content));
         content.remove("skills/00001.yaml");
         payloads.add(item("skills/00000.yaml", yaml, "source.yaml"));
-        content.put("manifest.json", manifest(3, payloads));
+        content.put("manifest.json", manifest(4, payloads));
         rejects(zip(content));
         payloads.removeLast();
         content.put("skills/00001.yaml", yaml);
         payloads.add(item("skills/00001.yaml", yaml, "source.yaml"));
-        content.put("manifest.json", manifest(3, payloads));
+        content.put("manifest.json", manifest(4, payloads));
         rejects(zip(content));
         payloads.removeLast();
         content.remove("skills/00001.yaml");
@@ -123,60 +113,59 @@ class ConfigurationBundleV3Test {
     }
 
     @Test void rejectsInvalidStructuresAndDuplicateZipEntries() throws Exception {
-        byte[] invalidRest = JSON.writeValueAsBytes(Map.of("restRoutesYaml", "targets: []\nroutes: {}\n"));
-        var payloads = List.of(item("rest.json", invalidRest, null));
-        rejects(zip(Map.of("rest.json", invalidRest, "manifest.json", manifest(1, payloads))));
+        byte[] invalidRest = execution("[not, a, mapping]");
+        var payloads = List.of(item("execution.json", invalidRest, null));
+        rejects(zip(Map.of("execution.json", invalidRest, "manifest.json", manifest(4, payloads))));
         byte[] malformedYaml = "[not, a, mapping]".getBytes(StandardCharsets.UTF_8);
-        var badPayloads = List.of(item("rest.json", JSON.writeValueAsBytes(Map.of("restRoutesYaml", REST)), null),
+        var badPayloads = List.of(item("execution.json", execution("loomspan: {executor-config: {default: {http: {}}}}\n"), null),
                 item("skills/00000.yaml", malformedYaml, "x"));
-        rejects(zip(Map.of("rest.json", JSON.writeValueAsBytes(Map.of("restRoutesYaml", REST)),
-                "skills/00000.yaml", malformedYaml, "manifest.json", manifest(1, badPayloads))));
+        rejects(zip(Map.of("execution.json", execution("loomspan: {executor-config: {default: {http: {}}}}\n"),
+                "skills/00000.yaml", malformedYaml, "manifest.json", manifest(4, badPayloads))));
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (ZipOutputStream zip = new ZipOutputStream(bytes)) {
-            zip.putNextEntry(new ZipEntry("rest.json")); zip.write(invalidRest); zip.closeEntry();
+            zip.putNextEntry(new ZipEntry("execution.json")); zip.write(invalidRest); zip.closeEntry();
             // ZipOutputStream itself refuses duplicate names; craft an unsafe sibling instead.
-            zip.putNextEntry(new ZipEntry("skills/../rest.json")); zip.write(invalidRest); zip.closeEntry();
+            zip.putNextEntry(new ZipEntry("skills/../execution.json")); zip.write(invalidRest); zip.closeEntry();
         }
         rejects(bytes.toByteArray());
-        byte[] trailing = (new String(JSON.writeValueAsBytes(Map.of("restRoutesYaml", REST)), StandardCharsets.UTF_8)
+        byte[] trailing = (new String(execution("loomspan: {executor-config: {default: {http: {}}}}\n"), StandardCharsets.UTF_8)
                 + " {} ").getBytes(StandardCharsets.UTF_8);
-        rejects(zip(Map.of("rest.json", trailing, "manifest.json",
-                manifest(1, List.of(item("rest.json", trailing, null))))));
-        byte[] multipleYaml = JSON.writeValueAsBytes(Map.of("restRoutesYaml",
-                "targets: {}\nroutes: {}\n---\ntargets: {}\nroutes: {}\n"));
-        rejects(zip(Map.of("rest.json", multipleYaml, "manifest.json",
-                manifest(1, List.of(item("rest.json", multipleYaml, null))))));
+        rejects(zip(Map.of("execution.json", trailing, "manifest.json",
+                manifest(4, List.of(item("execution.json", trailing, null))))));
+        byte[] multipleYaml = execution("loomspan: {executor-config: {default: {http: {}}}}\n---\nloomspan: {executor-config: {default: {http: {}}}}\n");
+        rejects(zip(Map.of("execution.json", multipleYaml, "manifest.json",
+                manifest(4, List.of(item("execution.json", multipleYaml, null))))));
     }
 
     @Test void representativeLargeConfigurationRemainsWithinReaderAndWriterLimits() throws Exception {
         String repeated = "# large authored content ${PLACEHOLDER} secret-literal\n".repeat(120_000);
-        var configuration = new ManagedConfiguration(List.of(new SkillDocument("large.yaml", "name: large\n" + repeated)), REST, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
-        Path path = ConfigurationBundleV3.write(snapshot(configuration));
-        try { assertThat(ConfigurationBundleV3.read(path).configuration()).isEqualTo(configuration); }
+        var configuration = new ManagedConfiguration(List.of(new SkillDocument("large.yaml", "name: large\n" + repeated)), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
+        Path path = ConfigurationBundleV4.write(snapshot(configuration));
+        try { assertThat(ConfigurationBundleV4.read(path).configuration()).isEqualTo(configuration); }
         finally { Files.deleteIfExists(path); }
     }
 
     @Test void inclusiveExpandedAndEntryCountBoundaries() throws Exception {
-        assertThat(ConfigurationBundleV3.checkedTotal(ConfigurationBundleV3.MAX_EXPANDED_BYTES - 1, 1))
-                .isEqualTo(ConfigurationBundleV3.MAX_EXPANDED_BYTES);
-        assertThatThrownBy(() -> ConfigurationBundleV3.checkedTotal(ConfigurationBundleV3.MAX_EXPANDED_BYTES, 1))
-                .isInstanceOf(ConfigurationBundleV3.BundleTooLarge.class);
+        assertThat(ConfigurationBundleV4.checkedTotal(ConfigurationBundleV4.MAX_EXPANDED_BYTES - 1, 1))
+                .isEqualTo(ConfigurationBundleV4.MAX_EXPANDED_BYTES);
+        assertThatThrownBy(() -> ConfigurationBundleV4.checkedTotal(ConfigurationBundleV4.MAX_EXPANDED_BYTES, 1))
+                .isInstanceOf(ConfigurationBundleV4.BundleTooLarge.class);
         var allowed = new ArrayList<SkillDocument>();
-        for (int i = 0; i < ConfigurationBundleV3.MAX_ENTRIES - 3; i++)
+        for (int i = 0; i < ConfigurationBundleV4.MAX_ENTRIES - 2; i++)
             allowed.add(new SkillDocument("source-" + i, "name: example\n"));
-        Path path = ConfigurationBundleV3.write(snapshot(new ManagedConfiguration(allowed, REST, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION)));
-        try { assertThat(ConfigurationBundleV3.read(path).configuration().skillDocuments()).hasSize(allowed.size()); }
+        Path path = ConfigurationBundleV4.write(snapshot(new ManagedConfiguration(allowed, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION)));
+        try { assertThat(ConfigurationBundleV4.read(path).configuration().skillDocuments()).hasSize(allowed.size()); }
         finally { Files.deleteIfExists(path); }
         allowed.add(new SkillDocument("one-too-many", "name: example\n"));
-        assertThatThrownBy(() -> ConfigurationBundleV3.write(snapshot(new ManagedConfiguration(allowed, REST, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION))))
-                .isInstanceOf(ConfigurationBundleV3.BundleTooLarge.class);
+        assertThatThrownBy(() -> ConfigurationBundleV4.write(snapshot(new ManagedConfiguration(allowed, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION))))
+                .isInstanceOf(ConfigurationBundleV4.BundleTooLarge.class);
     }
 
     @Test void compressedInputLimitCountsBytesActuallyRead() {
-        assertThatThrownBy(() -> ConfigurationBundleV3.read(zeroBytes(ConfigurationBundleV3.MAX_ZIP_BYTES)))
-                .isInstanceOf(ConfigurationBundleV3.InvalidBundle.class);
-        assertThatThrownBy(() -> ConfigurationBundleV3.read(zeroBytes(ConfigurationBundleV3.MAX_ZIP_BYTES + 1)))
-                .isInstanceOf(ConfigurationBundleV3.BundleTooLarge.class);
+        assertThatThrownBy(() -> ConfigurationBundleV4.read(zeroBytes(ConfigurationBundleV4.MAX_ZIP_BYTES)))
+                .isInstanceOf(ConfigurationBundleV4.InvalidBundle.class);
+        assertThatThrownBy(() -> ConfigurationBundleV4.read(zeroBytes(ConfigurationBundleV4.MAX_ZIP_BYTES + 1)))
+                .isInstanceOf(ConfigurationBundleV4.BundleTooLarge.class);
     }
 
     private static java.io.InputStream zeroBytes(long size) {
@@ -194,9 +183,9 @@ class ConfigurationBundleV3Test {
     }
 
     @Test void rejectsMisleadingCentralDirectorySizeAndDuplicateEntryNames() throws Exception {
-        byte[] rest = JSON.writeValueAsBytes(Map.of("restRoutesYaml", REST));
-        byte[] archive = zip(Map.of("rest.json", rest,
-                "manifest.json", manifest(1, List.of(item("rest.json", rest, null)))));
+        byte[] rest = execution("loomspan: {executor-config: {default: {http: {}}}}\n");
+        byte[] archive = zip(Map.of("execution.json", rest,
+                "manifest.json", manifest(4, List.of(item("execution.json", rest, null)))));
         byte[] exaggerated = archive.clone();
         for (int i = 0; i < exaggerated.length - 28; i++) {
             if (exaggerated[i] == 0x50 && exaggerated[i + 1] == 0x4b
@@ -219,10 +208,10 @@ class ConfigurationBundleV3Test {
         rejects(archive);
 
         byte[] yaml = "name: example\n".getBytes(StandardCharsets.UTF_8);
-        var payloads = List.of(item("rest.json", rest, null), item("skills/00000.yaml", yaml, "a"),
+        var payloads = List.of(item("execution.json", rest, null), item("skills/00000.yaml", yaml, "a"),
                 item("skills/00001.yaml", yaml, "b"));
-        archive = zip(Map.of("rest.json", rest, "skills/00000.yaml", yaml,
-                "skills/00001.yaml", yaml, "manifest.json", manifest(1, payloads)));
+        archive = zip(Map.of("execution.json", rest, "skills/00000.yaml", yaml,
+                "skills/00001.yaml", yaml, "manifest.json", manifest(4, payloads)));
         byte[] oldName = "skills/00001.yaml".getBytes(StandardCharsets.UTF_8);
         byte[] newName = "skills/00000.yaml".getBytes(StandardCharsets.UTF_8);
         for (int i = 0; i <= archive.length - oldName.length; i++) {
@@ -234,9 +223,9 @@ class ConfigurationBundleV3Test {
     }
 
     @Test void rejectsEncryptedArchiveFlag() throws Exception {
-        byte[] rest = JSON.writeValueAsBytes(Map.of("restRoutesYaml", REST));
-        byte[] archive = zip(Map.of("rest.json", rest,
-                "manifest.json", manifest(1, List.of(item("rest.json", rest, null)))));
+        byte[] rest = execution("loomspan: {executor-config: {default: {http: {}}}}\n");
+        byte[] archive = zip(Map.of("execution.json", rest,
+                "manifest.json", manifest(4, List.of(item("execution.json", rest, null)))));
         for (int i = 0; i < archive.length - 10; i++) {
             if (archive[i] == 0x50 && archive[i + 1] == 0x4b && archive[i + 2] == 3 && archive[i + 3] == 4)
                 archive[i + 6] |= 1;
@@ -247,27 +236,30 @@ class ConfigurationBundleV3Test {
     }
 
     @Test void rejectsManifestMetadataOutsideDocumentedSchema() throws Exception {
-        byte[] rest = JSON.writeValueAsBytes(Map.of("restRoutesYaml", REST));
-        var payloads = List.of(item("rest.json", rest, null));
+        byte[] rest = execution("loomspan: {executor-config: {default: {http: {}}}}\n");
+        var payloads = List.of(item("execution.json", rest, null));
         var manifest = new LinkedHashMap<String, Object>();
-        manifest.put("formatVersion", 1);
+        manifest.put("formatVersion", 4);
         manifest.put("sourceSnapshotId", UUID.randomUUID().toString());
         manifest.put("producer", Map.of("sidecarVersion", "", "frameworkVersion", "test"));
         manifest.put("payloads", payloads);
-        rejects(zip(Map.of("rest.json", rest, "manifest.json", JSON.writeValueAsBytes(manifest))));
+        rejects(zip(Map.of("execution.json", rest, "manifest.json", JSON.writeValueAsBytes(manifest))));
         manifest.put("producer", Map.of("sidecarVersion", "test", "frameworkVersion", "test"));
         manifest.put("sourceSnapshotId", "not-a-uuid");
-        rejects(zip(Map.of("rest.json", rest, "manifest.json", JSON.writeValueAsBytes(manifest))));
+        rejects(zip(Map.of("execution.json", rest, "manifest.json", JSON.writeValueAsBytes(manifest))));
         manifest.put("sourceSnapshotId", "1-1-1-1-1");
-        rejects(zip(Map.of("rest.json", rest, "manifest.json", JSON.writeValueAsBytes(manifest))));
+        rejects(zip(Map.of("execution.json", rest, "manifest.json", JSON.writeValueAsBytes(manifest))));
     }
 
+    private static byte[] execution(String yaml) {
+        return JSON.writeValueAsBytes(Map.of("executionConfigurationYaml", yaml, "credentialIdentifiers", List.of()));
+    }
     private static ConfigurationSnapshot snapshot(ManagedConfiguration configuration) {
         return new ConfigurationSnapshot(UUID.randomUUID(), null, 1, configuration, SnapshotStatus.PUBLISHED);
     }
     private static void rejects(byte[] bytes) {
-        assertThatThrownBy(() -> ConfigurationBundleV3.read(new ByteArrayInputStream(bytes)))
-                .isInstanceOf(ConfigurationBundleV3.InvalidBundle.class);
+        assertThatThrownBy(() -> ConfigurationBundleV4.read(new ByteArrayInputStream(bytes)))
+                .isInstanceOf(ConfigurationBundleV4.InvalidBundle.class);
     }
     private static Map<String, Object> item(String path, byte[] content, String label) throws Exception {
         var item = new LinkedHashMap<String, Object>();

@@ -1,0 +1,12 @@
+loomspan:
+  executor-config:
+    default:
+      http:
+        targets:
+          app:
+            base-url: https://app:8443
+            auth:
+              mode: caller-passthrough
+            connect-timeout: 2s
+            read-timeout: 3s
+            max-response-size: 4KB

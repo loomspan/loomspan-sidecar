@@ -10,9 +10,10 @@ triage brief, then add authorized order and payment lookups when the workflow
 needs evidence from your systems.
 
 The [HTTP executor contract](docs/http-executor.md) defines explicit request mappings,
-shared targets and authentication. Current startup and management integration cannot
-activate this contract; the complete application build is blocked by those callers.
-Do not use the bundled separate-route examples as executable HTTP executor setup.
+shared targets and authentication. Load complete skill and execution configuration
+from files or publish it through management. HTTP-specific validation happens on
+invocation before dispatch; readiness and publication do not certify HTTP validity
+or destination reachability.
 
 ## Why Sidecar?
 

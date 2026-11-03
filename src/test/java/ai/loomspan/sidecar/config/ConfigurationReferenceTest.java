@@ -15,7 +15,6 @@ class ConfigurationReferenceTest {
     @Test
     void configurationReferenceMatchesBoundPropertiesAndExamples() throws Exception {
         Set<String> expected = new LinkedHashSet<>();
-        add(expected, "loomspan-sidecar.", RestRoutesProperties.class);
         add(expected, "loomspan-sidecar.storage.", SidecarStorageProperties.class);
         add(expected, "loomspan-sidecar.snapshots.", SidecarSnapshotProperties.class);
         add(expected, "loomspan-sidecar.management.", SidecarManagementProperties.class);
@@ -36,7 +35,7 @@ class ConfigurationReferenceTest {
         String production = Files.readString(Path.of("examples/production/compose.yaml"));
         String productionEnv = Files.readString(Path.of("examples/production/production.env.example"));
         String dockerfile = Files.readString(Path.of("Dockerfile"));
-        assertThat(defaults).contains("url-variables: []").doesNotContain("port: 9091");
+        assertThat(defaults).doesNotContain("url-variables:").doesNotContain("port: 9091");
         assertThat(defaults).contains("mail.smtp.starttls.required: ${LOOMSPAN_SIDECAR_SMTP_STARTTLS_REQUIRED:false}");
         assertThat(defaults).contains("database-path: /sidecar/data/sidecar.db");
         assertThat(defaults).contains("max-retained: 10");
@@ -57,7 +56,7 @@ class ConfigurationReferenceTest {
                 .doesNotContain("9091:9091", "8080:8080", "JWT_PUBLIC_KEY_FILE", "JWT_ISSUER_URI");
         assertThat(production).contains("LOOMSPAN_SIDECAR_CONFIGURATION_MODE: ${LOOMSPAN_SIDECAR_CONFIGURATION_MODE:-database}");
         assertThat(productionEnv).contains("JWT_KEY_DIRECTORY=", "LOOMSPAN_SIDECAR_CREDENTIAL_KEY=", "LOOMSPAN_SIDECAR_CONFIGURATION_MODE=database", "SMTP_HOST=",
-                "EXTERNAL_BASE_URL=https://", "URL_VARIABLES=TARGET_URL", "TARGET_URL=https://");
+                "EXTERNAL_BASE_URL=https://");
         assertThat(Files.exists(Path.of("examples/kubernetes/deployment.yaml"))).isFalse();
         assertThat(dockerfile).contains("mkdir -p /sidecar/data", "chown loomspan:loomspan /sidecar/data")
                 .doesNotContain("VOLUME [\"/sidecar\"]");
@@ -73,8 +72,7 @@ class ConfigurationReferenceTest {
         });
         var execution = new SidecarExecutionProperties();
         var jwt = new SidecarJwtProperties();
-        assertThat(rows.get("loomspan-sidecar.url-variables"))
-                .contains("Empty", "environment", "restart");
+        assertThat(rows).doesNotContainKey("loomspan-sidecar.url-variables");
         assertThat(rows.get("loomspan-sidecar.storage.database-path"))
                 .contains(new SidecarStorageProperties().getDatabasePath(), "writable", "persistent", "startup");
         assertThat(rows.get("loomspan-sidecar.snapshots.max-retained"))

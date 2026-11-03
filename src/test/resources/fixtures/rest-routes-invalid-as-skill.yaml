@@ -1,4 +1,0 @@
-routes:
-  example:
-    method: POST
-    path: /example

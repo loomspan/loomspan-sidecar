@@ -10,8 +10,7 @@ import java.util.UUID;
 /** Transaction boundary for durable intended selection and snapshot history. */
 public final class ConfigurationSnapshotStore
 {
-    public static final String EMPTY_REST_ROUTES = "targets: {}\nroutes: {}\n";
-    public static final String EMPTY_EXECUTION_CONFIGURATION = "loomspan: {}\n";
+    public static final String EMPTY_EXECUTION_CONFIGURATION = "loomspan: {executor-config: {default: {http: {}}}}\n";
 
     private final ConfigurationSnapshotRepository repository;
     private final TransactionTemplate transactions;
@@ -44,7 +43,7 @@ public final class ConfigurationSnapshotStore
                     throw new IllegalStateException("Uninitialized configuration store contains content");
                 }
                 ConfigurationSnapshot empty = repository.insert(new ManagedConfiguration(java.util.List.of(),
-                        EMPTY_REST_ROUTES, EMPTY_EXECUTION_CONFIGURATION), null);
+                        EMPTY_EXECUTION_CONFIGURATION), null);
                 repository.setInitialCurrent(empty.submissionSequence());
                 return empty;
             }

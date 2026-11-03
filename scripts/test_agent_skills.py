@@ -100,7 +100,9 @@ class SidecarAgentSkillsTest(unittest.TestCase):
         example = BUNDLE / "examples/remote-authoring"
         self.assertFalse((ROOT / "examples/remote-authoring").exists())
         self.assertIn("name: readRecord", (example / "record.yaml").read_text())
-        self.assertIn("  readRecord:", (example / "rest-routes.yaml").read_text())
+        self.assertIn("executor: http", (example / "record.yaml").read_text())
+        self.assertIn("executor-config:", (example / "execution.yaml").read_text())
+        self.assertIn("pathParams: {recordId: /recordId}", (example / "record.yaml").read_text())
 
     def test_execution_authoring_guidance_uses_shared_console_workflow(self):
         skill = (BUNDLE / "SKILL.md").read_text(encoding="utf-8")

@@ -1,0 +1,17 @@
+loomspan:
+  executor-config:
+    default:
+      http:
+        targets:
+          identity-host:
+            base-url: http://127.0.0.1:8081
+            auth: {mode: caller-passthrough}
+            connect-timeout: 2s
+            read-timeout: 10s
+            max-response-size: 16KB
+          detail-host:
+            base-url: http://127.0.0.1:8081
+            auth: {mode: caller-passthrough}
+            connect-timeout: 2s
+            read-timeout: 10s
+            max-response-size: 16KB

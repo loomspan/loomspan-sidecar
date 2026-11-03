@@ -96,9 +96,9 @@ class RemoteAuthoringWorkflowIntegrationTest {
             JsonNode draft = first.path("draft");
             JsonNode current = cli(edit, "current", null).json();
             String valid = Files.readString(EXAMPLE.resolve("record.yaml"));
-            String routes = Files.readString(EXAMPLE.resolve("rest-routes.yaml"))
-                    .replace("${RECORDS_BASE_URL}", app.baseUrl());
-            JsonNode malformed = cli(edit, "save", save(first, draft, current, valid.replace("rest: true", "rest: false"), routes)).json();
+            String routes = Files.readString(EXAMPLE.resolve("execution.yaml"))
+                    .replace("https://records.example.test", app.baseUrl());
+            JsonNode malformed = cli(edit, "save", save(first, draft, current, valid.replace("executor: http", "executor: absent"), routes)).json();
             JsonNode invalid = cli(edit, "validate", candidate(first, malformed)).json();
             assertThat(invalid.path("validation").path("successful").asBoolean()).isFalse();
             assertThat(invalid.path("validation").path("issues").size()).isGreaterThan(0);
@@ -108,12 +108,12 @@ class RemoteAuthoringWorkflowIntegrationTest {
             assertThat(checked.path("validation").path("successful").asBoolean()).as(checked.toPrettyString()).isTrue();
             assertThat(app.allowed.get() + app.denied.get()).isZero(); // validation is advisory
             page.waitForFunction("() => document.getElementById('editor-saved-content')?.textContent.includes('readRecord')");
-            assertThat(page.locator("#editor-rest").isEditable()).isFalse();
+            assertThat(page.locator("#editor-execution").isEditable()).isFalse();
             page.locator("#editor-handoff").click();
             page.waitForFunction("() => document.getElementById('editor-owner')?.textContent.includes('You hold editing control')");
             assertThat(cli(edit, "save", save(first, saved, current, valid, routes)).code()).isNotZero();
             page.locator("#editor-recheck").click();
-            page.waitForFunction("() => document.getElementById('editor-validation-state')?.textContent.includes('Valid')");
+            page.waitForFunction("() => document.getElementById('editor-validation-state')?.textContent.includes('Framework validated')");
             page.locator("#editor-publish").click();
             page.waitForFunction("() => document.getElementById('editor-message')?.textContent.includes('Published configuration')");
             assertThat(cli(edit, "draft", null).code()).isNotZero();
@@ -148,7 +148,7 @@ class RemoteAuthoringWorkflowIntegrationTest {
         String firstToken = issue(firstSession, "publish"), secondToken = issue(secondSession, "publish");
         JsonNode first = cli(firstToken, "acquire", null, "--label", "First agent").json();
         JsonNode initial = cli(firstToken, "current", null).json();
-        String empty = "targets: {}\nroutes: {}\n# first draft\n";
+        String empty = "loomspan: {executor-config: {default: {http: {}}}}\n# first draft\n";
         JsonNode firstSaved = cli(firstToken, "save", save(first, first.path("draft"), initial, "", empty)).json();
         CliResult competing = cli(secondToken, "acquire", null, "--label", "Second agent");
         assertThat(competing.code()).isNotZero();
@@ -157,7 +157,7 @@ class RemoteAuthoringWorkflowIntegrationTest {
 
         JsonNode second = cli(secondToken, "acquire", null, "--label", "Second agent").json();
         JsonNode secondSaved = cli(secondToken, "save", save(second, second.path("draft"), initial,
-                "", "targets: {}\nroutes: {}\n# retained second draft\n")).json();
+                "", "loomspan: {executor-config: {default: {http: {}}}}\n# retained second draft\n")).json();
         cli(secondToken, "release", capability(second)).json();
         JsonNode handed = cli(firstToken, "acquire", null, "--label", "First again").json();
         assertThat(cli(secondToken, "save", save(second, secondSaved, initial, "", empty)).stderr())
@@ -170,10 +170,10 @@ class RemoteAuthoringWorkflowIntegrationTest {
         JsonNode resumed = cli(secondToken, "acquire", null, "--label", "Second resumes").json();
         assertThat(resumed.path("draft").path("stale").asBoolean()).isTrue();
         assertThat(cli(secondToken, "save", save(resumed, resumed.path("draft"), initial,
-                "", "targets: {}\nroutes: {}\n# stale write\n")).stderr()).contains("base_conflict");
+                "", "loomspan: {executor-config: {default: {http: {}}}}\n# stale write\n")).stderr()).contains("base_conflict");
         JsonNode fresh = cli(secondToken, "current", null).json();
         JsonNode reconciled = cli(secondToken, "reconcile", save(resumed, resumed.path("draft"), fresh,
-                "", "targets: {}\nroutes: {}\n# reconciled after reviewing current\n")).json();
+                "", "loomspan: {executor-config: {default: {http: {}}}}\n# reconciled after reviewing current\n")).json();
         assertThat(reconciled.path("stale").asBoolean()).isFalse();
         assertThat(cli(secondToken, "publish", candidate(resumed, reconciled)).stderr()).contains("validation_required");
         assertThat(cli(secondToken, "draft", null).json().path("revision").asLong()).isEqualTo(reconciled.path("revision").asLong());
@@ -209,7 +209,7 @@ class RemoteAuthoringWorkflowIntegrationTest {
             assertThat(terminal.path("result").asText()).contains(record);
             assertThat(app.allowed.get()).isGreaterThan(0);
         } else {
-            assertThat(terminal.path("failure").path("message").asText()).contains("HTTP status 403");
+            assertThat(terminal.path("failure").path("message").asText()).contains("HTTP 403");
             assertThat(app.denied.get()).isGreaterThan(0);
         }
     }
@@ -231,8 +231,7 @@ class RemoteAuthoringWorkflowIntegrationTest {
                 "revision", draft.path("revision").asLong(),
                 "baseSnapshotId", current.path("published").path("localId").asText(),
                 "skillDocuments", skill.isEmpty() ? List.of() : List.of(Map.of("sourceName", "record.yaml", "yaml", skill)),
-                "restRoutesYaml", routes, "executionConfigurationYaml", "loomspan: {}\n",
-                "credentialIdentifiers", List.of()));
+                "executionConfigurationYaml", routes));
     }
 
     private record CliResult(int code, String stdout, String stderr) {

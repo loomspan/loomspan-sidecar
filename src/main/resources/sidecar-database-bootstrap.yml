@@ -1,0 +1,4 @@
+loomspan:
+  executor-config:
+    default:
+      http: {}

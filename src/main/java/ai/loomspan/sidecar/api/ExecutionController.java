@@ -41,7 +41,7 @@ final class ExecutionController {
     @PostMapping("/skills/{name}/executions")
     ResponseEntity<Map<String, UUID>> execute(@PathVariable("name") String name, HttpServletRequest request,
             JwtAuthenticationToken authentication) throws IOException {
-        if (reloader.snapshot().skill(name).isEmpty()) throw new ResourceNotFoundException("Unknown skill '" + name + "'");
+        if (reloader.snapshot("default").skill(name.contains("-") ? name : "default-" + name).isEmpty()) throw new ResourceNotFoundException("Unknown skill '" + name + "'");
         Map<String, Object> input = reader.read(request);
         template.validate(name, input);
         UUID id = coordinator.admit(name, input, reader.measure(input),

@@ -1,7 +1,6 @@
 package ai.loomspan.sidecar;
 
 import ai.loomspan.sidecar.config.SidecarExecutionProperties;
-import ai.loomspan.sidecar.config.RestRoutesProperties;
 import ai.loomspan.sidecar.config.SidecarStorageProperties;
 import ai.loomspan.sidecar.config.SidecarSnapshotProperties;
 import ai.loomspan.sidecar.config.SidecarManagementProperties;
@@ -14,7 +13,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 
 @SpringBootApplication
 @EnableConfigurationProperties({ SidecarExecutionProperties.class, SidecarJwtProperties.class, SidecarTrustProperties.class,
-        RestRoutesProperties.class, SidecarStorageProperties.class, SidecarSnapshotProperties.class,
+        SidecarStorageProperties.class, SidecarSnapshotProperties.class,
         SidecarManagementProperties.class })
 public class LoomspanSidecarApplication
 {

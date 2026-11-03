@@ -13,7 +13,7 @@ import ai.loomspan.sidecar.storage.ConfigurationValidationIssue;
 import ai.loomspan.sidecar.storage.ManagedConfiguration;
 import ai.loomspan.sidecar.storage.SnapshotStatus;
 import ai.loomspan.sidecar.storage.StorageConfiguration;
-import ai.loomspan.sidecar.bundle.ConfigurationBundleV3;
+import ai.loomspan.sidecar.bundle.ConfigurationBundleV4;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.WebApplicationType;
@@ -41,7 +41,7 @@ class RuntimeConfigurationIntegrationTest {
             var store = context.getBean(ConfigurationSnapshotStore.class);
             var service = context.getBean(RuntimeConfigurationService.class);
             var reloader = context.getBean(SkillReloader.class);
-            assertThat(reloader.snapshot().skills()).isEmpty();
+            assertThat(reloader.snapshot("default").skills()).isEmpty();
             assertThat(store.current().status()).isEqualTo(SnapshotStatus.PUBLISHED);
             assertThat(service.inspect().publishedId()).isEqualTo(store.current().localId());
             assertThat(service.inspect().intendedId()).isEqualTo(store.current().localId());
@@ -53,6 +53,7 @@ class RuntimeConfigurationIntegrationTest {
         Path path = directory.resolve("complete.db");
         String execution = """
                 loomspan:
+                  executor-config: {default: {http: {}}}
                   connections:
                     primary:
                       driver: openai
@@ -78,13 +79,13 @@ class RuntimeConfigurationIntegrationTest {
                     description: Local model fixture.
                     model: editor
                     planning_mode: false
-                    """)), ConfigurationSnapshotStore.EMPTY_REST_ROUTES, execution));
+                    """)), execution));
             var credentials = ai.loomspan.sidecar.support.SidecarApplicationFixture.encrypt(Map.of("provider.primary.key", "fixture-only-secret"));
             assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(service, draft, credentials).successful()).isTrue();
             assertThat(service.publishedSnapshot().localId()).isEqualTo(base.localId());
             var published = context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(draft, credentials);
             assertThat(published.configuration().executionConfigurationYaml()).isEqualTo(execution);
-            assertThat(context.getBean(SkillReloader.class).snapshot().skill("modelSkill")).isPresent();
+            assertThat(context.getBean(SkillReloader.class).snapshot("default").skill("default-modelSkill")).isPresent();
             assertThat(service.publishedSnapshot().localId()).isEqualTo(published.localId());
             assertThat(context.getBean(org.springframework.jdbc.core.JdbcTemplate.class)
                     .queryForObject("SELECT execution_configuration_yaml FROM configuration_snapshot "
@@ -94,7 +95,7 @@ class RuntimeConfigurationIntegrationTest {
         try (var restored = startWithProvider(path)) {
             assertThat(restored.getBean(RuntimeConfigurationService.class).publishedSnapshot()
                     .configuration().executionConfigurationYaml()).isEqualTo(execution);
-            assertThat(restored.getBean(SkillReloader.class).snapshot().skill("modelSkill")).isPresent();
+            assertThat(restored.getBean(SkillReloader.class).snapshot("default").skill("default-modelSkill")).isPresent();
         }
     }
 
@@ -105,8 +106,8 @@ class RuntimeConfigurationIntegrationTest {
         try (var context = startWithProvider(path)) {
             var runtime = context.getBean(RuntimeConfigurationService.class);
             var base = runtime.publishedSnapshot();
-            var candidate = new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES,
-                    "loomspan:\n  session:\n    max-depth: 9\n");
+            var candidate = new ManagedConfiguration(List.of(),
+                    "loomspan:\n  executor-config: {default: {http: {}}}\n  session:\n    max-depth: 9\n");
             var validated = runtime.validateWithCandidate(candidate, List.of());
             assertThat(validated.result().successful()).isTrue();
             context.getEnvironment().getPropertySources().addFirst(new org.springframework.core.env.MapPropertySource(
@@ -131,8 +132,9 @@ class RuntimeConfigurationIntegrationTest {
         try (var context = start(directory.resolve("invalid-execution.db"))) {
             var service = context.getBean(RuntimeConfigurationService.class);
             var before = service.publishedSnapshot();
-            var missing = new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES, """
+            var missing = new ManagedConfiguration(List.of(), """
                     loomspan:
+                      executor-config: {default: {http: {}}}
                       connections:
                         primary:
                           driver: openai
@@ -146,7 +148,6 @@ class RuntimeConfigurationIntegrationTest {
                 assertThat(issue.message()).doesNotContain("fixture-only-secret");
             });
             var processSetting = service.validate(new ManagedConfiguration(List.of(),
-                    ConfigurationSnapshotStore.EMPTY_REST_ROUTES,
                     "loomspan:\n  shutdown-timeout: 1s\n"));
             assertThat(processSetting.successful()).isFalse();
             assertThat(service.publishedSnapshot().localId()).isEqualTo(before.localId());
@@ -205,24 +206,24 @@ class RuntimeConfigurationIntegrationTest {
         Path path = directory.resolve("selected.db");
         var store = openStore(path);
         ConfigurationSnapshot empty = store.current();
-        ConfigurationSnapshot selected = store.submit(new ManagedConfiguration(List.of(restDocument("echoRest")), routes("echoRest"), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION),
+        ConfigurationSnapshot selected = store.submit(new ManagedConfiguration(List.of(restDocument("echoRest")), httpExecution()),
                 null, empty.localId());
         try (var context = start(path)) {
             var service = context.getBean(RuntimeConfigurationService.class);
             var reloader = context.getBean(SkillReloader.class);
-            assertThat(reloader.snapshot().skill("echoRest")).isPresent();
+            assertThat(reloader.snapshot("default").skill("default-echoRest")).isPresent();
             assertThat(context.getBean(ConfigurationSnapshotStore.class).current().status()).isEqualTo(SnapshotStatus.PUBLISHED);
             assertThat(service.inspect().publishedId()).isEqualTo(selected.localId());
             var draft = new ConfigurationDraft(context.getBean(ConfigurationSnapshotStore.class).current());
-            draft.replaceContent(new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
+            draft.replaceContent(new ManagedConfiguration(List.of(), httpExecution()));
             assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(service, draft).successful()).isTrue();
             ConfigurationSnapshot replacement = context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(draft);
-            assertThat(reloader.snapshot().skills()).isEmpty();
+            assertThat(reloader.snapshot("default").skills()).isEmpty();
             assertThat(service.inspect().publishedId()).isEqualTo(replacement.localId());
             assertThat(context.getBean(ConfigurationSnapshotStore.class).current().status()).isEqualTo(SnapshotStatus.PUBLISHED);
         }
         try (var restarted = start(path)) {
-            assertThat(restarted.getBean(SkillReloader.class).snapshot().skills()).isEmpty();
+            assertThat(restarted.getBean(SkillReloader.class).snapshot("default").skills()).isEmpty();
             assertThat(restarted.getBean(RuntimeConfigurationService.class).inspect().publishedId())
                     .isEqualTo(openStore(path).current().localId());
         }
@@ -235,42 +236,22 @@ class RuntimeConfigurationIntegrationTest {
             var store = context.getBean(ConfigurationSnapshotStore.class);
             var service = context.getBean(RuntimeConfigurationService.class);
             var before = store.current();
-            String generationBefore = context.getBean(SkillReloader.class).snapshot().generationId();
+            String generationBefore = context.getBean(SkillReloader.class).snapshot("default").generationId();
             int historyBefore = store.history().size();
             var draft = new ConfigurationDraft(before);
-            ManagedConfiguration content = new ManagedConfiguration(List.of(restDocument("echoRest")), routes("echoRest"), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
+            ManagedConfiguration content = new ManagedConfiguration(List.of(restDocument("echoRest")), httpExecution());
             draft.replaceContent(content);
             assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(service, draft).successful()).isTrue();
             assertThat(store.current().localId()).isEqualTo(before.localId());
             assertThat(store.history()).hasSize(historyBefore);
-            assertThat(context.getBean(SkillReloader.class).snapshot().generationId()).isEqualTo(generationBefore);
+            assertThat(context.getBean(SkillReloader.class).snapshot("default").generationId()).isEqualTo(generationBefore);
             draft.replaceContent(content);
             assertThatThrownBy(() -> context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(draft)).hasMessageContaining("requires successful validation");
             assertThat(store.current().localId()).isEqualTo(before.localId());
-            draft.replaceContent(new ManagedConfiguration(List.of(restDocument("echoRest")),
-                    ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
-            var invalid = ai.loomspan.sidecar.support.TestDrafts.validate(service, draft);
-            assertThat(invalid.successful()).isFalse();
-            assertThat(invalid.issues()).singleElement().satisfies(issue -> {
-                assertThat(issue.sourceLabel()).isEqualTo("rest-routes.yaml");
-                assertThat(issue.severity()).isEqualTo(ConfigurationValidationIssue.Severity.ERROR);
-                assertThat(issue.message()).contains("has no route");
-                assertThat(issue.location()).isEqualTo("routes.echoRest");
-            });
+            draft.replaceContent(new ManagedConfiguration(List.of(restDocument("echoRest")), "loomspan: {executor-config: {default: {http: {targets: {}}}}}"));
+            assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(service, draft).successful()).isTrue();
             assertThat(store.current().localId()).isEqualTo(before.localId());
-            draft.replaceContent(new ManagedConfiguration(List.of(restDocument("one"), restDocument("two")),
-                    routes("one"), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
-            var incompleteRoutes = ai.loomspan.sidecar.support.TestDrafts.validate(service, draft);
-            assertThat(incompleteRoutes.successful()).isFalse();
-            assertThat(incompleteRoutes.issues()).singleElement().satisfies(issue ->
-                    assertThat(issue.message()).contains("two", "has no route"));
-            draft.replaceContent(new ManagedConfiguration(List.of(), routes("orphan"), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
-            var orphanRoute = ai.loomspan.sidecar.support.TestDrafts.validate(service, draft);
-            assertThat(orphanRoute.successful()).isFalse();
-            assertThat(orphanRoute.issues()).singleElement().satisfies(issue ->
-                    assertThat(issue.message()).contains("orphan", "unknown skill"));
-            draft.replaceContent(new ManagedConfiguration(List.of(new SkillDocument("bad.yaml", "name: [")),
-                    ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
+            draft.replaceContent(new ManagedConfiguration(List.of(new SkillDocument("bad.yaml", "name: [")), httpExecution()));
             var malformed = ai.loomspan.sidecar.support.TestDrafts.validate(service, draft);
             assertThat(malformed.successful()).isFalse();
             assertThat(malformed.issues()).singleElement().satisfies(issue -> {
@@ -278,56 +259,46 @@ class RuntimeConfigurationIntegrationTest {
                 assertThat(issue.severity()).isEqualTo(ConfigurationValidationIssue.Severity.ERROR);
             });
             draft.replaceContent(new ManagedConfiguration(List.of(new SkillDocument("missing-description.yaml",
-                    "name: missingDescription\nrest: true\n")), ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
+                    "name: missingDescription\nexecutor: http\n")), httpExecution()));
             var missingDescription = ai.loomspan.sidecar.support.TestDrafts.validate(service, draft);
             assertThat(missingDescription.issues()).singleElement().satisfies(issue -> {
                 assertThat(issue.sourceLabel()).isEqualTo("missing-description.yaml");
                 assertThat(issue.location()).isEqualTo("description");
                 assertThat(issue.severity()).isEqualTo(ConfigurationValidationIssue.Severity.ERROR);
             });
-            draft.replaceContent(new ManagedConfiguration(List.of(restDocument("echoRest")),
-                    routes("echoRest").replace("http://127.0.0.1:9", "'${CALLBACK_URL}'"), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
-            var invalidBinding = ai.loomspan.sidecar.support.TestDrafts.validate(service, draft);
-            assertThat(invalidBinding.successful()).isFalse();
-            assertThat(invalidBinding.issues()).singleElement().satisfies(issue -> {
-                assertThat(issue.sourceLabel()).isEqualTo("rest-routes.yaml");
-                assertThat(issue.location()).isEqualTo("targets.callback.base-url");
-            });
             assertThat(store.current().localId()).isEqualTo(before.localId());
         }
     }
 
     @Test
-    void clientStagingFailureReportsRestDocumentWithoutLeakingTheCause() {
+    void preparationFailureReportsSafeDiagnosticWithoutLeakingCause() {
         var store = org.mockito.Mockito.mock(ConfigurationSnapshotStore.class);
         var reloader = org.mockito.Mockito.mock(SkillReloader.class);
         var prepared = org.mockito.Mockito.mock(ai.loomspan.api.PreparedSkillUpdate.class);
-        var resources = org.mockito.Mockito.mock(ai.loomspan.sidecar.rest.GenerationRestResources.class);
+        var resources = new ConfigurationGenerationRegistry();
         var executions = org.mockito.Mockito.mock(ai.loomspan.sidecar.execution.ExecutionCoordinator.class);
-        org.mockito.Mockito.when(reloader.prepare(org.mockito.ArgumentMatchers.anyCollection(),
+        org.mockito.Mockito.when(reloader.prepare(org.mockito.ArgumentMatchers.eq("default"), org.mockito.ArgumentMatchers.anyCollection(),
                 org.mockito.ArgumentMatchers.any(ai.loomspan.api.ExecutionConfiguration.class),
-                org.mockito.ArgumentMatchers.anyMap())).thenReturn(prepared);
-        org.mockito.Mockito.when(reloader.validate(org.mockito.ArgumentMatchers.anyCollection(),
+                org.mockito.ArgumentMatchers.anyMap())).thenThrow(new IllegalStateException("sensitive provider configuration detail"));
+        org.mockito.Mockito.when(reloader.validate(org.mockito.ArgumentMatchers.eq("default"), org.mockito.ArgumentMatchers.anyCollection(),
                 org.mockito.ArgumentMatchers.any(ai.loomspan.api.ExecutionConfiguration.class)))
                 .thenReturn(new ai.loomspan.api.SkillValidationResult(List.of(), List.of()));
-        org.mockito.Mockito.when(resources.prepare(org.mockito.ArgumentMatchers.anyString()))
-                .thenThrow(new IllegalStateException("sensitive SSL configuration detail"));
         var service = new RuntimeConfigurationService(store, reloader, resources,
-                new ai.loomspan.sidecar.rest.RestRouteCatalogValidator(), executions,
+                executions,
                 new ai.loomspan.sidecar.management.ManagementEditingState(),
                 org.mockito.Mockito.mock(ai.loomspan.sidecar.storage.ConfigurationDraftStore.class),
                 new EffectiveExecutionConfiguration(new ProviderCredentialCipher(null)),
-                ConfigurationMode.DATABASE, null, null, null, null);
+                ConfigurationMode.DATABASE, null, null);
         var base = new ConfigurationSnapshot(java.util.UUID.randomUUID(), null, 1,
-                new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), SnapshotStatus.PUBLISHED);
+                new ManagedConfiguration(List.of(), httpExecution()), SnapshotStatus.PUBLISHED);
 
         var result = service.validate(base.configuration());
 
         assertThat(result.successful()).isFalse();
         assertThat(result.issues()).singleElement().satisfies(issue -> {
-            assertThat(issue.sourceLabel()).isEqualTo("rest-routes.yaml");
-            assertThat(issue.message()).isEqualTo("REST client staging failed");
-            assertThat(issue.message()).doesNotContain("sensitive SSL configuration detail");
+            assertThat(issue.sourceLabel()).isEqualTo("candidate");
+            assertThat(issue.message()).isEqualTo("Skill preparation failed");
+            assertThat(issue.message()).doesNotContain("sensitive provider configuration detail");
         });
     }
 
@@ -335,28 +306,24 @@ class RuntimeConfigurationIntegrationTest {
     void warningOnlyFrameworkValidationPreservesIssueAndReleasesTemporaryResources() {
         var store = org.mockito.Mockito.mock(ConfigurationSnapshotStore.class);
         var reloader = org.mockito.Mockito.mock(SkillReloader.class);
-        var resources = org.mockito.Mockito.mock(ai.loomspan.sidecar.rest.GenerationRestResources.class);
-        var staged = org.mockito.Mockito.mock(ai.loomspan.sidecar.rest.GenerationRestResources.Resources.class);
+        var resources = new ConfigurationGenerationRegistry();
         var executions = org.mockito.Mockito.mock(ai.loomspan.sidecar.execution.ExecutionCoordinator.class);
-        org.mockito.Mockito.when(reloader.validate(org.mockito.ArgumentMatchers.anyCollection(),
+        org.mockito.Mockito.when(reloader.validate(org.mockito.ArgumentMatchers.eq("default"), org.mockito.ArgumentMatchers.anyCollection(),
                 org.mockito.ArgumentMatchers.any(ai.loomspan.api.ExecutionConfiguration.class)))
                 .thenReturn(new ai.loomspan.api.SkillValidationResult(List.of(
                         new ai.loomspan.api.SkillValidationIssue(ai.loomspan.api.SkillValidationIssue.Severity.WARNING,
                                 "warning.yaml", "checkedSkill", "description", "Needs review")), List.of()));
-        org.mockito.Mockito.when(reloader.prepare(org.mockito.ArgumentMatchers.anyCollection(),
+        org.mockito.Mockito.when(reloader.prepare(org.mockito.ArgumentMatchers.eq("default"), org.mockito.ArgumentMatchers.anyCollection(),
                 org.mockito.ArgumentMatchers.any(ai.loomspan.api.ExecutionConfiguration.class),
                 org.mockito.ArgumentMatchers.anyMap()))
                 .thenReturn(org.mockito.Mockito.mock(ai.loomspan.api.PreparedSkillUpdate.class));
-        org.mockito.Mockito.when(resources.prepare(org.mockito.ArgumentMatchers.anyString())).thenReturn(staged);
-        org.mockito.Mockito.when(staged.routes()).thenReturn(new ai.loomspan.sidecar.rest.RestRouteConfiguration(
-                "rest-routes.yaml", java.util.Map.of(), java.util.Map.of()));
         var service = new RuntimeConfigurationService(store, reloader, resources,
-                new ai.loomspan.sidecar.rest.RestRouteCatalogValidator(), executions,
+                executions,
                 new ai.loomspan.sidecar.management.ManagementEditingState(),
                 org.mockito.Mockito.mock(ai.loomspan.sidecar.storage.ConfigurationDraftStore.class),
                 new EffectiveExecutionConfiguration(new ProviderCredentialCipher(null)),
-                ConfigurationMode.DATABASE, null, null, null, null);
-        var result = service.validate(new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
+                ConfigurationMode.DATABASE, null, null);
+        var result = service.validate(new ManagedConfiguration(List.of(), httpExecution()));
         assertThat(result.successful()).isTrue();
         assertThat(result.issues()).singleElement().satisfies(issue -> {
             assertThat(issue.severity()).isEqualTo(ConfigurationValidationIssue.Severity.WARNING);
@@ -364,22 +331,21 @@ class RuntimeConfigurationIntegrationTest {
             assertThat(issue.skillName()).isEqualTo("checkedSkill");
             assertThat(issue.location()).isEqualTo("description");
         });
-        org.mockito.Mockito.verify(resources).release(staged);
         org.mockito.Mockito.verify(reloader)
-                .prepare(org.mockito.ArgumentMatchers.anyCollection(),
+                .prepare(org.mockito.ArgumentMatchers.eq("default"), org.mockito.ArgumentMatchers.anyCollection(),
                         org.mockito.ArgumentMatchers.any(ai.loomspan.api.ExecutionConfiguration.class),
                         org.mockito.ArgumentMatchers.anyMap());
     }
 
     @Test
-    void storedRestEnvironmentReferenceRemainsAuthoredText() {
+    void storedExecutorEnvironmentTextRemainsOpaque() {
         Path path = directory.resolve("authored.db");
         var store = openStore(path);
         var a = store.current();
         String authored = routes("echoRest").replace("http://127.0.0.1:9", "${CALLBACK_URL}");
-        var b = store.submit(new ManagedConfiguration(List.of(restDocument("echoRest")), authored, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), null, a.localId());
+        var b = store.submit(new ManagedConfiguration(List.of(restDocument("echoRest")), authored), null, a.localId());
         assertThat(openStore(path).current().localId()).isEqualTo(b.localId());
-        assertThat(openStore(path).current().configuration().restRoutesYaml()).isEqualTo(authored);
+        assertThat(openStore(path).current().configuration().executionConfigurationYaml()).isEqualTo(authored);
     }
 
     @Test
@@ -446,9 +412,9 @@ class RuntimeConfigurationIntegrationTest {
                 var next = validDraft(service, store.current(), "afterExport");
                 context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(next);
                 assertThat(store.findByLocalId(captured.localId())).isNull();
-                Path bundle = ConfigurationBundleV3.write(captured);
+                Path bundle = ConfigurationBundleV4.write(captured);
                 try {
-                    var read = ConfigurationBundleV3.read(bundle);
+                    var read = ConfigurationBundleV4.read(bundle);
                     assertThat(read.sourceSnapshotId()).isEqualTo(captured.localId());
                     assertThat(read.configuration()).isEqualTo(captured.configuration());
                 } finally { java.nio.file.Files.deleteIfExists(bundle); }
@@ -463,10 +429,10 @@ class RuntimeConfigurationIntegrationTest {
         try (var a = start(directory.resolve("import-source.db"))) {
             var runtimeA = a.getBean(RuntimeConfigurationService.class);
             source = a.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(validDraft(runtimeA, runtimeA.publishedSnapshot(), "echoRest"));
-            bundle = ConfigurationBundleV3.write(source);
+            bundle = ConfigurationBundleV4.write(source);
         }
         try {
-            var imported = ConfigurationBundleV3.read(bundle);
+            var imported = ConfigurationBundleV4.read(bundle);
             try (var b = start(directory.resolve("import-destination.db"))) {
                 var runtimeB = b.getBean(RuntimeConfigurationService.class);
                 var storeB = b.getBean(ConfigurationSnapshotStore.class);
@@ -511,7 +477,7 @@ class RuntimeConfigurationIntegrationTest {
             });
             var accepted = workers.submit(() -> service.publish(() -> firstAdmission));
             assertThat(entered.await(3, TimeUnit.SECONDS)).isTrue();
-            first.replaceContent(new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_REST_ROUTES, ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
+            first.replaceContent(new ManagedConfiguration(List.of(), httpExecution()));
             var waiting = workers.submit(() -> {
                 try { service.publish(() -> secondAdmission); return "accepted"; }
                 catch (IllegalStateException failure) { return failure.getMessage(); }
@@ -521,7 +487,7 @@ class RuntimeConfigurationIntegrationTest {
             var b = accepted.get(5, TimeUnit.SECONDS);
             assertThat(b.configuration().skillDocuments().getFirst().yaml()).contains("firstRest");
             assertThat(waiting.get(5, TimeUnit.SECONDS)).contains("stale runtime snapshot");
-            assertThat(context.getBean(SkillReloader.class).snapshot().skill("firstRest")).isPresent();
+            assertThat(context.getBean(SkillReloader.class).snapshot("default").skill("default-firstRest")).isPresent();
         }
     }
 
@@ -535,7 +501,7 @@ class RuntimeConfigurationIntegrationTest {
             var store = context.getBean(ConfigurationSnapshotStore.class);
             var service = context.getBean(RuntimeConfigurationService.class);
             var handoff = context.getBean(ai.loomspan.api.SkillInvocationHandoff.class);
-            var resources = context.getBean(ai.loomspan.sidecar.rest.GenerationRestResources.class);
+            var resources = context.getBean(ai.loomspan.sidecar.configuration.ConfigurationGenerationRegistry.class);
             var a = store.current();
             var admittedA = handoff.handoff("protectedRest", Map.of());
             ai.loomspan.api.AdmittedSkillInvocation admittedB = null;
@@ -574,8 +540,7 @@ class RuntimeConfigurationIntegrationTest {
     private ConfigurationSnapshot publishRouteOnly(org.springframework.context.ConfigurableApplicationContext context, RuntimeConfigurationService service,
             ConfigurationSnapshot base, int port) {
         var draft = new ConfigurationDraft(base);
-        draft.replaceContent(new ManagedConfiguration(base.configuration().skillDocuments(),
-                routes("protectedRest").replace("127.0.0.1:9", "127.0.0.1:" + port), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
+        draft.replaceContent(new ManagedConfiguration(base.configuration().skillDocuments(), httpExecution()));
         assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(service, draft).successful()).isTrue();
         return context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(draft);
     }
@@ -587,7 +552,7 @@ class RuntimeConfigurationIntegrationTest {
 
     private ConfigurationDraft validDraft(RuntimeConfigurationService service, ConfigurationSnapshot base, String name) {
         var draft = new ConfigurationDraft(base);
-        draft.replaceContent(new ManagedConfiguration(List.of(restDocument(name)), routes(name), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
+        draft.replaceContent(new ManagedConfiguration(List.of(restDocument(name)), httpExecution()));
         assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(service, draft).successful()).isTrue();
         return draft;
     }
@@ -656,11 +621,11 @@ class RuntimeConfigurationIntegrationTest {
     }
 
     private SkillDocument restDocument(String name) {
-        return new SkillDocument(name + ".yaml", "name: " + name + "\ndescription: Test REST skill.\nrest: true\n");
+        return new SkillDocument(name + ".yaml", "name: " + name + "\ndescription: Test HTTP skill.\nexecutor: http\nconfig: {target: callback, method: GET, path: /echo}\n");
     }
 
-    private String routes(String name) {
-        return "targets:\n  callback: {base-url: http://127.0.0.1:9, auth: {mode: none}, connect-timeout: 1s, read-timeout: 1s, max-response-size: 1KB}\nroutes:\n  "
-                + name + ": {target: callback, method: GET, path: /echo}\n";
+    private static String httpExecution() {
+        return "loomspan: {executor-config: {default: {http: {targets: {callback: {base-url: 'http://127.0.0.1:9', auth: {mode: none}}}}}}}\n";
     }
+    private String routes(String name) { return httpExecution(); }
 }

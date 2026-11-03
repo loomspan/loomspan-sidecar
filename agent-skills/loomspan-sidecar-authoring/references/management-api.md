@@ -8,10 +8,10 @@ The [Python client](client-usage.md) uses this same API.
 
 The edit page displays the runtime configuration to every management role.
 Editors and admins can acquire the sole editing lease and change complete YAML
-skill documents (with diagnostic source labels), complete REST targets/routes
-YAML and framework execution YAML. Add or remove a skill document with the adjacent controls;
-REST targets and routes remain one text document. URL placeholders such as
-`${REST_BASE_URL}` are kept as authored text. Use the
+skill documents (with diagnostic source labels) and complete execution YAML,
+including shared HTTP targets under `loomspan.executor-config.default.http`.
+HTTP operations belong in their skill documents. Add or remove a skill document
+with the adjacent controls. Use the
 [publishable execution fields](execution-configuration.md) and
 [managed credential references](configuration-modes.md). Save secret values through
 the separate write-only credential form and use their identifiers in YAML.
@@ -24,7 +24,9 @@ retry. Execution YAML must be syntactically readable before saving so every
 provider credential field can be checked; a syntax error preserves the last saved
 draft. Framework semantic validation still happens on the saved revision.
 Validation runs on the exact saved revision and shows labelled issues;
-warnings alone permit publication. Publish becomes available only for the
+warnings alone permit publication. HTTP-specific configuration and input checks
+run only on invocation before dispatch; validation does not certify HTTP validity
+or destination reachability. Publish becomes available only for the
 current saved, successfully validated revision. Successful publication changes
 the runtime without restart, deletes only that user's draft and releases its
 lease. Other users' saved drafts remain readable but stale.
@@ -69,7 +71,7 @@ labels and request identifiers grant no access.
 | `POST /api/management/editing/lease/takeover` | `{"label":"Administrator"}` | Admin only; displace a holder while preserving that user's private draft. |
 | `POST /api/management/editing/lease/renew` | `editingSessionId`, `generation` | Explicitly renew a live lease. |
 | `POST /api/management/editing/lease/release` | `editingSessionId`, `generation` | Release editing control and validation proof, retaining saved content. |
-| `PUT /api/management/editing/draft` | Capability, `draftId`, `revision`, `baseSnapshotId`, complete `skillDocuments`, `restRoutesYaml`, `executionConfigurationYaml` | Replace the saved content at the current base; increment revision and clear validation. |
+| `PUT /api/management/editing/draft` | Capability, `draftId`, `revision`, `baseSnapshotId`, complete `skillDocuments`, `executionConfigurationYaml` | Replace the saved content at the current base; increment revision and clear validation. |
 | `PUT /api/management/editing/draft/credentials` | Capability, draft ID/revision/base ID, credential `identifier` and write-only `value` | Encrypt a replacement in the private draft, increment revision and clear validation; the value is never returned. |
 | `DELETE /api/management/editing/draft/credentials` | Capability, draft ID/revision/base ID and configured or required `identifier` | Remove a credential and its requirement from the private draft, increment revision and clear validation. |
 | `POST /api/management/editing/draft/reconcile` | Same complete body, with the current published `baseSnapshotId` | Explicitly submit a full configuration against the current base after it changes. |
@@ -88,8 +90,8 @@ saved content. Malformed requests receive 400, missing/invalid credentials 401,
 and role, token-preset, or browser CSRF denial 403.
 
 There is one saved draft per account in SQLite. It survives logout, credential
-expiry, account changes and restart, including ordered skill documents, REST
-YAML, execution YAML, provider source, and encrypted credentials. A new authorized client may read its owner's draft but must acquire a new lease and
+expiry, account changes and restart, including ordered skill documents,
+execution YAML, source provenance, and encrypted credentials. A new authorized client may read its owner's draft but must acquire a new lease and
 validate again. Validation and lease state are memory-only. The application
 lease defaults to 15 minutes and the login idle limit to 30 minutes. Polling,
 reads, saves, validation and model work do not renew either deadline. Only
@@ -111,7 +113,7 @@ reconciliation.
 Management viewers, editors and admins can inspect authored snapshot
 content and masked provider-credential identifiers, including pending or failed
 submissions. Provider secret values are never returned; ciphertext is returned
-only by the explicit encrypted-export option requiring Edit authority. REST
+only by the explicit encrypted-export option requiring Edit authority. Authored
 YAML may contain literal sensitive values, so protect viewer accounts accordingly.
 Every response is private and `Cache-Control:
 no-store`; an execution JWT does not grant access. Browser mutations require a
@@ -120,7 +122,7 @@ management session and CSRF token; scoped bearer tokens use the same API.
 | Method and path | Request | Result |
 | --- | --- | --- |
 | `GET /api/management/configuration/current` | None | `published` full runtime snapshot, `intendedId`, `intendedStatus`, and `mutationFault`. |
-| `GET /api/management/configuration/export` | None | Format 3 ZIP of the captured runtime-published configuration; authenticated viewer, editor, or admin. 413 when bundle size limits are exceeded; 503 when runtime state is unavailable. |
+| `GET /api/management/configuration/export` | None | Format 4 ZIP of the captured runtime-published configuration; authenticated viewer, editor, or admin. 413 when bundle size limits are exceeded; 503 when runtime state is unavailable. |
 | `GET /api/management/configuration/history` | None | Retained full submitted snapshots in ascending `submissionSequence`. |
 | `GET /api/management/configuration/history/{localId}` | None | Full retained snapshot or 404 after pruning. |
 | `GET /api/management/configuration/file-startups` | None; Read or higher token or management session | Redacted retained file-startup metadata in file mode; empty list in database mode. |
@@ -129,10 +131,10 @@ management session and CSRF token; scoped bearer tokens use the same API.
 | `POST /api/management/configuration/publish` | Capability, draft ID/revision/base ID | Publish only the exact successfully validated saved revision, then return the full snapshot. |
 
 A full snapshot contains `localId`, nullable `sourceId`, `submissionSequence`,
-`status`, and `configuration` with authored `skillDocuments`, `restRoutesYaml`
+`status`, and `configuration` with authored `skillDocuments`,
 `executionConfigurationYaml`, and configured credential
-identifiers. `effectiveExecutionYaml` contains references and the retained
-provider settings, never resolved values.
+identifiers. Captured effective execution YAML remains internal and is omitted
+from inspection responses; it can contain encrypted HTTP credential records.
 The framework's validation returns `successful` and issues with `severity`
 (`ERROR` or `WARNING`), `sourceLabel`, optional `skillName` and `location`, and
 `message`. Warning-only results can be published; an error cannot. Every save, including identical content, advances the revision and clears validation.
@@ -148,7 +150,7 @@ authoritative oldest-first submission order and shows each durable local UUID,
 optional source UUID, submission sequence, recorded status, and whether its
 UUID matches the separately inspected runtime-published snapshot. Selecting a
 row loads that exact UUID through the detail API before displaying complete
-skill and REST YAML. Authored placeholders, markup-like text, and literal
+skill and execution YAML. Authored placeholders, markup-like text, and literal
 sensitive values are preserved and rendered as text; protect all management
 accounts accordingly.
 

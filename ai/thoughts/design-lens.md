@@ -64,7 +64,7 @@ and remove obsolete recipes and tracking language as part of the same change.
 
 The Framework owns skill validation, authorization, nested execution and execution
 lifetime. Sidecar owns transport, admission and retained results. Use supported
-public APIs and the authorized REST handler extension. Do not duplicate Framework
+public APIs and the supported annotated `@SkillExecutor` bean method. Do not duplicate Framework
 rules, replace internal beans or depend on internal types in application or test
 code. A missing public capability requires explicit Framework planning.
 
@@ -195,8 +195,13 @@ changes by restart and blocks management changes. Database mode restores the sel
 publication without falling back to files or environment values for missing managed
 settings or credentials. Process settings still require restart.
 
-Validate and publish the complete skill, REST route and execution configuration
-through the public Framework reload API. Immediately before committing, recheck
+Publish complete skill and execution configuration, including executor data,
+through the public Framework reload API. Framework validates its own contracts;
+executor-specific configuration validation occurs only during invocation, before
+external dispatch. Startup/readiness and management validation/publication,
+import, rollback and restoration do not certify HTTP operational correctness or
+run HTTP domain validators. Preserve management authorization and storage,
+bundle and credential-record integrity checks. Immediately before committing, recheck
 permissions, ownership and the exact validated candidate against the current
 configuration. Keep the previous configuration and its resources available to
 work already admitted under it. Draft validation must not activate or execute skills.

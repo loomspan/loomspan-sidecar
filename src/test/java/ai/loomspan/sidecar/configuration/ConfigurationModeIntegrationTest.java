@@ -25,7 +25,7 @@ class ConfigurationModeIntegrationTest {
                     "--loomspan-sidecar.trust.mode=file",
                     "--loomspan-sidecar.auth.jwt.audience=sidecar",
                     "--loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json")) {
-            assertThat(context.getBean(SkillReloader.class).snapshot().skills()).isEmpty();
+            assertThat(context.getBean(SkillReloader.class).snapshot("default").skills()).isEmpty();
             assertThat(context.getBean(ConfigurationSnapshotStore.class).current()
                     .configuration().skillDocuments()).isEmpty();
         }
@@ -45,29 +45,29 @@ class ConfigurationModeIntegrationTest {
 
     @Test void fileStartupDoesNotInitializeDatabaseSelectionAndRecordsDurableIdentity() throws Exception {
         var skill = directory.resolve("file-skill.yaml");
-        java.nio.file.Files.writeString(skill, "name: fileRest\ndescription: File fixture\nrest: true\n");
+        java.nio.file.Files.writeString(skill, "name: fileRest\ndescription: File fixture\nexecutor: http\nconfig: {target: local, method: GET, path: /echo}\n");
         var routes = directory.resolve("routes.yaml");
-        java.nio.file.Files.writeString(routes, "targets:\n  local: {base-url: 'http://127.0.0.1:9', auth: {mode: none}, connect-timeout: 1s, read-timeout: 1s, max-response-size: 1KB}\nroutes:\n  fileRest: {target: local, method: GET, path: /echo}\n");
+        java.nio.file.Files.writeString(routes, "loomspan: {executor-config: {default: {http: {targets: {local: {base-url: 'http://127.0.0.1:9', auth: {mode: none}}}}}}}\n");
         try (var context = start("file.db", "--loomspan-sidecar.configuration.mode=file",
-                "--loomspan.skills.locations=" + skill.toUri(), "--loomspan-sidecar.rest-routes.location=" + routes.toUri())) {
+                "--loomspan.skills.locations=" + skill.toUri(), "--spring.config.additional-location=" + routes.toUri())) {
             var runtime = context.getBean(RuntimeConfigurationService.class);
-            var catalog = context.getBean(SkillReloader.class).snapshot();
-            assertThat(catalog.skill("fileRest")).isPresent();
+            var catalog = context.getBean(SkillReloader.class).snapshot("default");
+            assertThat(catalog.skill("default-fileRest")).isPresent();
             assertThat(runtime.current().readOnly()).isTrue();
             var id = runtime.current().fileStartup().localId();
-            assertThat(context.getBean(ai.loomspan.sidecar.rest.GenerationRestResources.class)
+            assertThat(context.getBean(ai.loomspan.sidecar.configuration.ConfigurationGenerationRegistry.class)
                     .snapshotId(catalog.generationId())).isEqualTo(id);
             var jdbc = new org.springframework.jdbc.core.JdbcTemplate(context.getBean(javax.sql.DataSource.class));
             assertThat(jdbc.queryForObject("SELECT initialized FROM configuration_store_state", Integer.class)).isZero();
             assertThat(jdbc.queryForObject("SELECT local_id FROM configuration_file_startup", String.class)).isEqualTo(id.toString());
             java.nio.file.Files.writeString(skill, "invalid changed file");
-            assertThat(context.getBean(SkillReloader.class).snapshot().skill("fileRest")).isPresent();
+            assertThat(context.getBean(SkillReloader.class).snapshot("default").skill("default-fileRest")).isPresent();
             assertThatThrownBy(() -> runtime.validate(new ai.loomspan.sidecar.storage.ManagedConfiguration(
-                    java.util.List.of(), "targets: {}\nroutes: {}\n", "loomspan: {}\n")))
+                    java.util.List.of(), "loomspan: {executor-config: {default: {http: {}}}}\n")))
                     .isInstanceOf(ai.loomspan.sidecar.management.ManagementEditingService.Conflict.class);
         }
         assertThatThrownBy(() -> start("file.db", "--loomspan-sidecar.configuration.mode=file",
-                "--loomspan.skills.locations=" + skill.toUri(), "--loomspan-sidecar.rest-routes.location=" + routes.toUri()))
+                "--loomspan.skills.locations=" + skill.toUri(), "--spring.config.additional-location=" + routes.toUri()))
                 .isInstanceOf(RuntimeException.class);
         try (var restored = start("file.db")) {
             assertThat(restored.getBean(ConfigurationSnapshotStore.class).current().configuration().skillDocuments()).isEmpty();
@@ -94,7 +94,7 @@ class ConfigurationModeIntegrationTest {
         }
         try (var provider = new ai.loomspan.sidecar.support.SidecarApplicationFixture()) {
             var settings = directory.resolve("file-settings.yaml");
-            String yaml = "loomspan:\n  connections:\n    fixture:\n      driver: openai\n      base-url: http://127.0.0.1:"
+            String yaml = "loomspan:\n  executor-config: {default: {http: {}}}\n  connections:\n    fixture:\n      driver: openai\n      base-url: http://127.0.0.1:"
                     + provider.modelPort() + "/v1\n      api-key: literal-file-one\n  models:\n    fixture-model:\n      connection: fixture\n      provider-model: fixture-provider-model\n  session:\n    max-depth: 8\n";
             java.nio.file.Files.writeString(settings, yaml);
             String[] options = {"--loomspan-sidecar.configuration.mode=file",
@@ -117,11 +117,11 @@ class ConfigurationModeIntegrationTest {
         }
         try (var context = start("populated.db")) {
             assertThat(context.getBean(RuntimeConfigurationService.class).publishedSnapshot().localId()).isEqualTo(selected);
-            assertThat(context.getBean(SkillReloader.class).snapshot().skills()).isEmpty();
+            assertThat(context.getBean(SkillReloader.class).snapshot("default").skills()).isEmpty();
         }
     }
 
-    @Test void fileRestRoutesRemainCapturedUntilRestart() throws Exception {
+    @Test void fileHttpConfigurationRemainsCapturedUntilRestart() throws Exception {
         var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
         for (String value : java.util.List.of("first", "second")) server.createContext("/" + value, exchange -> {
             byte[] bytes = value.getBytes(java.nio.charset.StandardCharsets.UTF_8);
@@ -132,17 +132,17 @@ class ConfigurationModeIntegrationTest {
         server.start();
         try {
             var skill = directory.resolve("rest.yaml");
-            java.nio.file.Files.writeString(skill, "name: fileRest\ndescription: File route fixture\nrest: true\n");
-            var routes = directory.resolve("rest-routes.yaml");
-            String yaml = "targets:\n  local: {base-url: 'http://127.0.0.1:" + server.getAddress().getPort()
-                    + "', auth: {mode: none}, connect-timeout: 1s, read-timeout: 1s, max-response-size: 1KB}\n"
-                    + "routes:\n  fileRest: {target: local, method: GET, path: /first}\n";
+            String operation = "name: fileRest\ndescription: File HTTP fixture\nexecutor: http\nconfig: {target: local, method: GET, path: /first}\n";
+            java.nio.file.Files.writeString(skill, operation);
+            var routes = directory.resolve("execution.yml");
+            String yaml = "loomspan: {executor-config: {default: {http: {targets: {local: {base-url: 'http://127.0.0.1:" + server.getAddress().getPort()
+                    + "', auth: {mode: none}}}}}}}\n";
             java.nio.file.Files.writeString(routes, yaml);
             String[] options = {"--loomspan-sidecar.configuration.mode=file", "--loomspan.skills.locations=" + skill.toUri(),
-                    "--loomspan-sidecar.rest-routes.location=" + routes.toUri()};
+                    "--spring.config.additional-location=" + routes.toUri()};
             try (var context = start("rest.db", options)) {
                 runSkill(context, "fileRest", "first");
-                java.nio.file.Files.writeString(routes, yaml.replace("/first", "/second"));
+                java.nio.file.Files.writeString(skill, operation.replace("/first", "/second"));
                 runSkill(context, "fileRest", "first");
             }
             try (var context = start("rest.db", options)) { runSkill(context, "fileRest", "second"); }

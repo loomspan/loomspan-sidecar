@@ -12,14 +12,16 @@ versioned at `0.1.0-SNAPSHOT`; its presence here does not imply a published rele
 
 Select an exact Sidecar release and use that revision's documentation and POM.
 The POM in this checkout declares Sidecar `1.0.0-beta.4-SNAPSHOT` and Framework
-`1.0.0-beta.8`. This is source metadata, not verification that a corresponding
+`1.0.0-beta.9-SNAPSHOT`. This is source metadata, not verification that a corresponding
 image or release download is published. Check the
 [Sidecar releases](https://github.com/loomspan/loomspan-sidecar/releases) for
 available artifacts and checksums. Do not infer compatibility from equal numbers.
 
 For a source evaluation, use Java 21, the included Maven wrapper, Docker with
 Compose, and Python 3.9+ for the quickstart's portable commands. Maven resolves
-the pinned Framework artifact; Sidecar does not build Framework source.
+the pinned Framework artifact; this development snapshot must already be installed
+in your local Maven repository from the matching Framework checkout. Sidecar does
+not build Framework source.
 From the Sidecar repository root:
 
 ```powershell
@@ -35,8 +37,8 @@ its runtime. Follow the [quickstart](quickstart.md) for a complete first executi
 
 | Mode | Where application configuration lives | Apply a change |
 | --- | --- | --- |
-| Database (default) | Complete skills, routes, execution settings and encrypted provider credentials in SQLite | Save a private draft, validate, publish through management UI/API |
-| File | Mounted skill/route files and deployment execution configuration | Deploy the complete files and restart |
+| Database (default) | Complete skill and execution YAML, including HTTP targets, and encrypted credentials in SQLite | Save a private draft, validate, publish through management UI/API |
+| File | Mounted skill YAML and complete deployment execution configuration | Deploy the complete files and restart |
 
 A new database is empty. Environment model settings do not seed or supplement a
 database publication. The mode is selected at startup, with no fallback on load
@@ -46,7 +48,8 @@ for exact file locations, key provisioning, and rotation. The process-key table
 lives in [operations](operations.md#sidecar-configuration-reference).
 
 Framework supports OpenAI, Anthropic, Gemini and Ollama connections; use its
-matching [connection reference](https://github.com/loomspan/loomspan-framework/blob/v1.0.0-beta.8/agent-skills/loomspan-docs/references/skill-authoring/model-selection-and-connections.md)
+matching connection reference in your Framework checkout at
+`agent-skills/loomspan-docs/references/skill-authoring/model-selection-and-connections.md`
 for driver-specific settings. For real model access, choose a connection and a model your
 account can use. Model aliases referenced by skills belong in the same complete
 configuration. Database mode uses write-only credential controls and an external
@@ -66,14 +69,15 @@ Protect and back up SQLite and the external credential key separately.
 
 ## Equip your development assistant
 
-Follow Framework's [loomspan-install workflow](https://github.com/loomspan/loomspan-framework/blob/v1.0.0-beta.8/agent-skills/loomspan-install/SKILL.md)
+Follow Framework's `agent-skills/loomspan-install/SKILL.md` workflow from the matching checkout
 through your assistant host. It resolves the exact Sidecar revision, reads its
 Framework dependency, verifies complete source bundles, and uses the host's
 supported skill manager. It does not require your application to have a POM or a
 running Sidecar instance. Project scope is the default where supported.
 
 For this checkout, Sidecar authoring guidance is beta.4-SNAPSHOT; `loomspan`,
-`loomspan-docs`, and `loomspan-console` guidance match Framework beta.8. An older
+`loomspan-docs`, and `loomspan-console` guidance must match the installed Framework
+beta.9-SNAPSHOT checkout. An older
 release may lack a required skill; report that limitation instead of substituting
 latest guidance. Install complete folders, including references and the bundled
 client. Guidance installation does not change runtime dependencies or configure MCP.

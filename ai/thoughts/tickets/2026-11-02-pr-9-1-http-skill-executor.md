@@ -96,10 +96,16 @@ durable management and browser authoring follow in PR 9.2.
   defaults during planning; 5s/60s/1MB were examples, not required defaults.
 - `recoverableStatuses` is optional and defaults to none; only 4xx statuses other
   than 401/403 may be designated. Actual error handling is included below.
-- Provide reusable Sidecar-owned configuration and actual-input validation for
-  startup, management and invocation consumers. Configuration errors do not
-  require network calls; input-dependent errors are caught before dispatch.
-  Do not duplicate Framework skill/schema/RBAC validation or add Framework hooks.
+- Perform HTTP configuration and actual-input validation only inside executor
+  invocation, before dispatch, using the captured maps. Do not call these domain
+  validators from startup/readiness, management validation/publication, import,
+  rollback or restoration. Framework retains its structural/reference/schema/RBAC
+  checks; management retains authorization and storage/credential integrity checks.
+  HTTP-invalid but Framework-valid configuration may be published and report ready;
+  invocation fails clearly before sending its request. No new Framework accessor,
+  validation hook or independent configuration re-parsing is needed. This decision
+  supersedes the original early-validation requirement; unit tests may still call
+  domain validators directly.
 - Final header syntax/conflict rules, defaults and credential-reference spelling
   are planning details, not permission to add features. The earlier proposed
   reserved-header list was not accepted as a product requirement. Resolve routine

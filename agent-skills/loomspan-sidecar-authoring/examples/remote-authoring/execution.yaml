@@ -1,0 +1,12 @@
+loomspan:
+  executor-config:
+    default:
+      http:
+        targets:
+          records:
+            base-url: https://records.example.test
+            auth:
+              mode: caller-passthrough
+            connect-timeout: 1s
+            read-timeout: 5s
+            max-response-size: 16KB

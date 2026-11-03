@@ -4,14 +4,15 @@ Select `loomspan-sidecar.configuration.mode=file|database` at startup, or use
 `LOOMSPAN_SIDECAR_CONFIGURATION_MODE`. The default is `database`; invalid values
 fail startup. Mode never changes live, and load failures never select a fallback.
 
-In **file** mode, framework `loomspan.skills.locations`, connections, models,
-session settings and trace persistence come from deployment files. Sidecar reads
-`loomspan-sidecar.rest-routes.location` once; its default is the bundled empty
-routes resource. For example, set skill locations to `file:/sidecar/skills/*.yaml`
-and routes location to `file:/sidecar/rest-routes.yaml`. Missing or invalid configured
-resources fail startup. Deploy Git-managed changes, then restart; deploy earlier
-files and restart to roll back. Literal provider credentials and external references
-are supported. Prefer secret stores or environment provisioning for secrets.
+In **file** mode, Framework `loomspan.skills.locations`, connections, models,
+executor configuration, session settings and trace persistence come from deployment
+files. Set skill locations, for example, to `file:/sidecar/skills/*.yaml`, and load
+execution YAML through ordinary Spring Boot Config Data. HTTP settings live under
+`loomspan.executor-config.default.http`; operations belong in each skill YAML.
+Framework structural/reference errors fail startup; HTTP domain errors first fail
+on invocation before dispatch. Deploy changes and restart to apply them. Literal
+provider credentials and external references follow Framework's file-mode contract.
+
 The Console displays redacted startup inspection and retained startup metadata;
 configuration mutations return `409 configuration_read_only`. Accounts, tokens and
 execution retain their normal permissions. File startup does not initialize or
@@ -19,8 +20,8 @@ change the selected database publication, decrypt its credentials, or alter draf
 Its separate durable startup UUID correlates executions; metadata retention uses
 `loomspan-sidecar.snapshots.max-retained` and is not a recovery source.
 
-In **database** mode, all authored skills, routes and execution settings and encrypted
-provider credentials form one complete candidate. New databases start empty.
+In **database** mode, all authored skills and execution settings and encrypted
+provider and HTTP service credentials form one complete candidate. New databases start empty.
 Deployment provider/model/session values do not seed or merge into that candidate,
 including at framework bootstrap. No provider credential is resolved from deployment
 files or the environment. Save or replace each referenced credential with
@@ -49,7 +50,7 @@ normal deployment secret handling. It is never stored alongside ciphertext in SQ
 or bundles. Back it up separately and keep it stable across provider-key rotations.
 Missing/wrong material fails explicitly without plaintext fallback or ciphertext loss.
 Restore the original key and a consistent database backup; losing the key makes retained
-credentials unrecoverable. File mode does not require or inspect this encryption key.
+credentials unrecoverable. File mode requires this key when invoking fixed HTTP authentication using encrypted records; unused database credentials are not decrypted.
 Encryption-key/environment changes require restart. There is no automatic key rotation.
 
 Default exports carry configuration and required identifiers. Select **Include

@@ -143,8 +143,7 @@ Credential replacement and configuration publication need no restart. Same-key
 destinations can import an optional encrypted export; different-key destinations
 choose configuration-only import and replace the required credentials explicitly.
 For file-managed deployments, select `LOOMSPAN_SIDECAR_CONFIGURATION_MODE=file`,
-mount documented framework configuration and skills plus
-`loomspan-sidecar.rest-routes.location`; apply every change by restart. See the
+mount documented Framework configuration with `loomspan.executor-config` and skills; apply every change by restart. See the
 [mode and credential guide](../../agent-skills/loomspan-sidecar-authoring/references/configuration-modes.md).
 For first administrator setup,
 generate `SETUP_TOKEN` with the packaged image using the
@@ -158,10 +157,9 @@ plaintext. Set `SMTP_STARTTLS=false` and `SMTP_AUTH=false` only for a trusted
 plaintext relay without SMTP credentials. Email delivery and a correct trusted
 HTTPS origin are required for invitations and emailed password recovery. Automated tests
 use `.test` recipients and an isolated capture fixture; production uses the
-customer SMTP service. To use a REST `base-url: ${TARGET_URL}`, list `TARGET_URL`
-in `URL_VARIABLES` and supply its absolute HTTP(S) value as `TARGET_URL`.
-Only declared names resolve from the process environment, and changes require
-a restart. Remove unused names and values.
+customer SMTP service. Author explicit HTTP target URLs in the complete execution
+configuration. Database publications do not inherit process values; file mode
+uses ordinary Boot configuration and applies changes through restart.
 
 Create and prepare the key directory before starting. For the example shared
 UID/GID on POSIX, use `install -d -m 700 -o 10001 -g 10001
@@ -219,11 +217,11 @@ operator env, PEM files, and JWT trust material separately protected and backed
 up. Do not place multiple Sidecar instances or network filesystem replicas on
 one database. Kubernetes single-pod Local deployment guidance is available in the [trust guide](../../docs/operations.md#local-deployment); no Kubernetes manifest or runtime test is shipped.
 
-Configuration ZIP export/import transfers authored YAML and route text between
-installations, with destination-specific allowlisted URL values supplied by
-each process. It creates a new local snapshot and does not transfer accounts or
+Configuration ZIP export/import transfers authored skill and execution YAML,
+including shared HTTP targets, between installations. Publication creates a new
+local snapshot and does not transfer accounts or
 source history. Retained-history rollback validates and publishes a new local
-snapshot from a source still present in the same installation. Review the destination's URL bindings and saved draft before loading: import and
+snapshot from a source still present in the same installation. Review the destination's complete target settings and saved draft before loading: import and
 rollback replace only your draft, then require validation and explicit publication. Neither operation replaces the full stopped database recovery
 procedure.
 
