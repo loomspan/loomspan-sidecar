@@ -151,7 +151,8 @@ public final class SidecarClient implements AutoCloseable {
     private JsonNode request(String method, String path, byte[] body, CredentialSnapshot credential,
             UUID id, ExecutionSnapshot last, long waitDeadline, boolean submission) {
         validate(credential);
-        if (Thread.currentThread().isInterrupted()) throw new WaitTerminatedException(id, last);
+        Thread caller = Thread.currentThread();
+        checkDispatchInterrupt(caller, submission, id, last);
         long now = System.nanoTime();
         long budget = waitDeadline == 0 ? responseNanos : Math.min(responseNanos, waitDeadline - now);
         if (budget <= 0) throw new WaitTerminatedException(id, last);
@@ -163,7 +164,6 @@ public final class SidecarClient implements AutoCloseable {
                 .setConnectionRequestTimeout(Timeout.of(Math.min(connectNanos, budget), TimeUnit.NANOSECONDS))
                 .setResponseTimeout(Timeout.of(budget, TimeUnit.NANOSECONDS)).build());
         if (body != null) request.setEntity(new ByteArrayEntity(body, ContentType.APPLICATION_JSON));
-        Thread caller = Thread.currentThread();
         java.util.concurrent.ScheduledFuture<?> abort;
         try {
             abort = timer.scheduleAtFixedRate(() -> {
@@ -175,13 +175,13 @@ public final class SidecarClient implements AutoCloseable {
         CloseableHttpResponse response = null;
         int observedStatus = 0;
         try {
+            checkDispatchInterrupt(caller, submission, id, last);
             response = http.execute(request);
-            int status = response.getCode();
-            observedStatus = status;
+            observedStatus = response.getCode();
             var entity = response.getEntity();
             byte[] bytes = new byte[0];
             if (entity != null) {
-                if (entity.getContentLength() > limit) throw new ProtocolException(id, last);
+                if (entity.getContentLength() > limit) throw responseFailure(observedStatus, submission, id, last);
                 InputStream stream = entity.getContent();
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
                 byte[] buffer = new byte[8192];
@@ -189,44 +189,54 @@ public final class SidecarClient implements AutoCloseable {
                 while ((count = stream.read(buffer, 0, (int) Math.min(buffer.length, limit + 1 - out.size()))) != -1) {
                     if (deadline - System.nanoTime() <= 0 || caller.isInterrupted()) throw new IOException();
                     out.write(buffer, 0, count);
-                    if (out.size() > limit) throw new ProtocolException(id, last);
+                    if (out.size() > limit) throw responseFailure(observedStatus, submission, id, last);
                 }
                 bytes = out.toByteArray();
             }
             if (deadline - System.nanoTime() <= 0 || caller.isInterrupted()) throw new IOException();
-            if (status < 200 || status >= 300) {
+            if (isHttpFailure(observedStatus)) {
                 JsonNode problem = null;
                 try {
                     JsonNode parsed = json.readTree(bytes);
                     if (parsed != null && parsed.isObject()) problem = redact(parsed, credential);
                 } catch (RuntimeException ignored) { /* A non-problem error body is never exposed. */ }
-                throw new HttpFailureException(status, problem, id, last);
+                throw new HttpFailureException(observedStatus, problem, id, last);
             }
-            if (status != (submission ? 202 : 200)) {
-                if (submission) throw new AcceptanceUnknownException(null, null);
-                throw new ProtocolException(id, last);
-            }
+            if (observedStatus != (submission ? 202 : 200)) throw responseFailure(observedStatus, submission, id, last);
             try {
                 JsonNode node = json.readTree(bytes);
                 if (node == null || node.isMissingNode() || node.isNull()) throw new IllegalArgumentException();
                 return node;
             } catch (RuntimeException invalid) {
-                if (submission) throw new AcceptanceUnknownException(null, null);
-                throw new ProtocolException(id, last);
+                throw responseFailure(observedStatus, submission, id, last);
             }
         } catch (IOException | IllegalStateException failure) {
-            if (caller.isInterrupted() || (waitDeadline != 0 && waitDeadline - System.nanoTime() <= 0))
+            if (!submission && (caller.isInterrupted() || (waitDeadline != 0 && waitDeadline - System.nanoTime() <= 0)))
                 throw new WaitTerminatedException(id, last);
-            if (observedStatus != 0 && (observedStatus < 200 || observedStatus >= 300))
-                throw new HttpFailureException(observedStatus, null, id, last);
-            if (submission) throw new AcceptanceUnknownException(null, null);
-            throw new ProtocolException(id, last);
+            throw responseFailure(observedStatus, submission, id, last);
         } finally {
             abort.cancel(false);
             // Cancel before closing: an incomplete body must never be drained for reuse.
             request.cancel();
             if (response != null) response.close(CloseMode.IMMEDIATE);
         }
+    }
+
+    private static void checkDispatchInterrupt(Thread caller, boolean submission, UUID id, ExecutionSnapshot last) {
+        if (caller.isInterrupted()) {
+            if (submission) throw new LocalFailureException("Submission interrupted before dispatch");
+            throw new WaitTerminatedException(id, last);
+        }
+    }
+
+    private static boolean isHttpFailure(int observedStatus) {
+        return observedStatus != 0 && (observedStatus < 200 || observedStatus >= 300);
+    }
+
+    private static SidecarException responseFailure(int observedStatus, boolean submission, UUID id, ExecutionSnapshot last) {
+        if (isHttpFailure(observedStatus)) return new HttpFailureException(observedStatus, null, id, last);
+        if (submission) return new AcceptanceUnknownException(null, null);
+        return new ProtocolException(id, last);
     }
 
     private void validate(CredentialSnapshot credential) {

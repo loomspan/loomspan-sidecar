@@ -49,8 +49,12 @@ class SidecarClientEdgeTest {
         public void close() { server.stop(0); executor.shutdownNow(); }
     }
     static void reply(HttpExchange ex, int status, String body) throws IOException {
+        reply(ex, status, body, false);
+    }
+    static void reply(HttpExchange ex, int status, String body, boolean chunked) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        ex.sendResponseHeaders(status, bytes.length == 0 ? -1 : bytes.length);
+        long length = bytes.length == 0 ? -1 : bytes.length;
+        ex.sendResponseHeaders(status, chunked ? 0 : length);
         if (bytes.length != 0) ex.getResponseBody().write(bytes);
     }
 
@@ -260,9 +264,156 @@ class SidecarClientEdgeTest {
             assertEquals("echo",c.getSkill("echo",CREDENTIAL).name());
             for(int i=0;i<15;i++) {
                 mode.set(1+i%5);
-                if(mode.get()==4)assertThrows(ProtocolException.class,()->c.submit("echo",JSON.createObjectNode(),CREDENTIAL));
+                if(mode.get()==4)assertNull(assertThrows(AcceptanceUnknownException.class,
+                        ()->c.submit("echo",JSON.createObjectNode(),CREDENTIAL)).executionId());
                 else assertThrows(ProtocolException.class,()->c.getSkill("echo",CREDENTIAL));
                 mode.set(0);assertEquals("echo",c.getSkill("echo",CREDENTIAL).name());
+            }
+        }
+    }
+
+    @Test void oversizedSubmissionResponsesLeaveAcceptanceUnknown() throws Exception {
+        int limit = 128;
+        String response = JSON.createObjectNode().put("id", ID.toString()) + " ".repeat(limit);
+        for (boolean chunked : List.of(false, true)) {
+            try (var fixture = new Fixture(ex -> {
+                if (ex.getRequestMethod().equals("POST")) {
+                    ex.getResponseHeaders().set("Location", "/v1/executions/" + ID);
+                    reply(ex, 202, response, chunked);
+                } else {
+                    reply(ex, 200, SKILL);
+                }
+            }); var client = SidecarClient.builder().baseUrl(fixture.uri()).maxResponseSize(limit).build()) {
+                var failure = assertThrows(AcceptanceUnknownException.class,
+                        () -> client.submit("echo", JSON.createObjectNode(), CREDENTIAL));
+                assertNull(failure.executionId());
+                assertNull(failure.lastSnapshot());
+                assertEquals(1, fixture.attempts.get());
+                assertEquals("echo", client.getSkill("echo", CREDENTIAL).name());
+                assertEquals(2, fixture.attempts.get());
+            }
+        }
+    }
+
+    @Test void interruptionBeforeSubmissionDispatchFailsLocally() throws Exception {
+        try (var fixture = new Fixture(ex -> reply(ex, 200, SKILL)); var client = fixture.client()) {
+            Thread.currentThread().interrupt();
+            try {
+                assertThrows(LocalFailureException.class, () -> client.submit("echo", JSON.createObjectNode(), CREDENTIAL));
+                assertTrue(Thread.currentThread().isInterrupted());
+                assertEquals(0, fixture.attempts.get());
+            } finally {
+                Thread.interrupted();
+            }
+            assertEquals("echo", client.getSkill("echo", CREDENTIAL).name());
+            assertEquals(1, fixture.attempts.get());
+        }
+    }
+
+    @Test void interruptionAfterSubmissionDispatchLeavesAcceptanceUnknownAndReleasesConnections() throws Exception {
+        var received = new Semaphore(0);
+        var release = new CountDownLatch(1);
+        try (var fixture = new Fixture(ex -> {
+            if (ex.getRequestMethod().equals("POST")) {
+                received.release();
+                release.await(30, TimeUnit.SECONDS);
+            } else {
+                reply(ex, 200, SKILL);
+            }
+        }); var client = SidecarClient.builder().baseUrl(fixture.uri()).responseTimeout(Duration.ofSeconds(30)).build()) {
+            try {
+                // Exceed the connection pool's default capacity of five connections per route.
+                for (int attempt = 1; attempt <= 6; attempt++) {
+                    var error = new AtomicReference<SidecarException>();
+                    var interrupted = new AtomicBoolean();
+                    var caller = new Thread(() -> {
+                        try {
+                            client.submit("echo", JSON.createObjectNode(), CREDENTIAL);
+                        } catch (SidecarException failure) {
+                            error.set(failure);
+                            interrupted.set(Thread.currentThread().isInterrupted());
+                        }
+                    });
+                    caller.setDaemon(true);
+                    caller.start();
+                    try {
+                        assertTrue(received.tryAcquire(2, TimeUnit.SECONDS), "POST reached the server");
+                        caller.interrupt();
+                        caller.join(2_000);
+                        assertFalse(caller.isAlive(), "caller exits while the server still holds the response");
+                        var failure = assertInstanceOf(AcceptanceUnknownException.class, error.get());
+                        assertTrue(interrupted.get());
+                        assertNull(failure.executionId());
+                        assertNull(failure.lastSnapshot());
+                        assertEquals(attempt, fixture.attempts.get());
+                    } finally {
+                        if (caller.isAlive()) {
+                            release.countDown();
+                            caller.interrupt();
+                            caller.join(2_000);
+                        }
+                    }
+                }
+                assertEquals("echo", client.getSkill("echo", CREDENTIAL).name());
+                assertEquals(7, fixture.attempts.get());
+            } finally {
+                release.countDown();
+            }
+        }
+    }
+
+    @Test void httpErrorsKeepStatusWithoutUnsafeProblemDetails() throws Exception {
+        int limit = 128;
+        String oversized = "{\"detail\":\"diagnostic-sentinel jwt-secret-sentinel\"}" + " ".repeat(limit);
+        for (boolean chunked : List.of(false, true)) {
+            assertHttpFailureWithoutProblem(429, oversized, chunked, limit);
+        }
+        assertHttpFailureWithoutProblem(503, "{broken", false, limit);
+        assertHttpFailureWithoutProblem(403, "[]", false, limit);
+    }
+
+    private static void assertHttpFailureWithoutProblem(int status, String body, boolean chunked, int limit) throws Exception {
+        try (var fixture = new Fixture(ex -> {
+            if (ex.getRequestMethod().equals("POST")) reply(ex, status, body, chunked);
+            else reply(ex, 200, SKILL);
+        }); var client = SidecarClient.builder().baseUrl(fixture.uri()).maxResponseSize(limit).build()) {
+            var input = JSON.createObjectNode().put("input", "business-sentinel");
+            var failure = assertThrows(HttpFailureException.class, () -> client.submit("echo", input, CREDENTIAL));
+            assertEquals(status, failure.status());
+            assertNull(failure.problem());
+            assertNull(failure.executionId());
+            assertNull(failure.lastSnapshot());
+            assertNull(failure.getCause());
+            var diagnostic = new StringWriter();
+            failure.printStackTrace(new PrintWriter(diagnostic));
+            for (String sentinel : List.of("diagnostic-sentinel", "jwt-secret-sentinel", "business-sentinel"))
+                assertFalse(diagnostic.toString().contains(sentinel));
+            assertEquals(1, fixture.attempts.get());
+            assertEquals("echo", client.getSkill("echo", CREDENTIAL).name());
+            assertEquals(2, fixture.attempts.get());
+        }
+    }
+
+    @Test void statusOverflowPreservesWaitContext() throws Exception {
+        int limit = 256;
+        String running = envelope("RUNNING").toString();
+        var options = new WaitOptions(Duration.ofSeconds(2), Duration.ofMillis(1));
+        for (int status : List.of(200, 503)) {
+            var polls = new AtomicInteger();
+            try (var fixture = new Fixture(ex -> {
+                if (polls.incrementAndGet() == 1) reply(ex, 200, running);
+                else reply(ex, status, running + " ".repeat(limit));
+            }); var client = SidecarClient.builder().baseUrl(fixture.uri()).maxResponseSize(limit).build()) {
+                Class<? extends SidecarException> expected = status == 200 ? ProtocolException.class : HttpFailureException.class;
+                var failure = assertThrows(expected, () -> client.await(ID, CREDENTIAL, options));
+                assertEquals(ID, failure.executionId());
+                assertEquals(ID, failure.lastSnapshot().id());
+                assertEquals(ExecutionStatus.RUNNING, failure.lastSnapshot().status());
+                if (failure instanceof HttpFailureException httpFailure) {
+                    assertEquals(503, httpFailure.status());
+                    assertNull(httpFailure.problem());
+                }
+                assertEquals(2, fixture.attempts.get());
             }
         }
     }

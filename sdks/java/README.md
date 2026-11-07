@@ -63,24 +63,25 @@ slashes, backslashes, percent signs and the names `.` and `..` fail locally.
 
 | Observation | Outcome |
 | --- | --- |
-| Invalid local input, credential or closed client | `LocalFailureException`; no request sent |
-| Server/proxy HTTP error | `HttpFailureException` with status and available problem details; work may have occurred |
-| Unusable or lost submission response after possible send | `AcceptanceUnknownException`; work may be running; no resubmission |
-| Invalid status envelope, mismatched ID or response size overflow | `ProtocolException`; no silent truncation |
-| Wait timeout or interruption | `WaitTerminatedException`; local waiting ends; server work may continue |
-| Server status `FAILED` | Terminal snapshot with original primary failure; no inferred rollback |
+| Invalid local input or credential, closed client, or interrupt detected before submission dispatch | `LocalFailureException`. The client sends no request. |
+| Server or proxy HTTP error | `HttpFailureException` with the observed status, even if the body is oversized or unusable. Server work may have had effects. |
+| After possible dispatch, submission is interrupted or its response is lost, invalid or oversized, with no observed HTTP error | `AcceptanceUnknownException`. Server work may be running. |
+| Invalid or oversized successful discovery or status response, including a mismatched execution ID | `ProtocolException`. |
+| Wait timeout or interrupted status read or wait | `WaitTerminatedException`. The local wait ends and server work may continue. |
+| Server status `FAILED` | Terminal snapshot with the original primary failure. |
 
 Exceptions for status reads retain the requested execution ID. During `await`,
 errors also retain the last valid snapshot through `executionId()` and
-`lastSnapshot()`. An acceptance ID is available only after a complete reliable
-acceptance response; partial bodies and arbitrary headers are never ID sources.
-HTTP errors do not prove rejection or absence of effects. Do not automatically
-resubmit after an uncertain outcome.
+`lastSnapshot()`. The client obtains the acceptance ID from a complete, valid
+`202` response body. `HttpFailureException` exposes optional problem details
+from a complete JSON object within the response limit after credential redaction.
+Avoid automatically resubmitting after an uncertain outcome.
 
 `WaitOptions.defaults()` sets a 60-second total timeout and 250-millisecond poll
 interval. Use `new WaitOptions(timeout, pollInterval)` to change them. The client
 polls successful `QUEUED`/`RUNNING` reads within the remaining total deadline and
-stops on the first read failure. Thread interruption restores the interrupt flag.
+stops on the first read failure. Submission, status reads and waits preserve
+the thread interrupt flag.
 Wait expiration, HTTP 401/403/404, interruption and client close never cancel
 server work. Closing releases the owned connection pool, is idempotent and rejects
 new operations. Use try-with-resources or let Spring manage the bean lifecycle.
