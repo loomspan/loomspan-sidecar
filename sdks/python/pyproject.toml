@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "loomspan-sdk"
+version = "0.1.0.dev0"
+description = "Python client for discovering and executing Loomspan Sidecar skills"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+dependencies = ["h11>=0.16,<0.17"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/loomspan_sdk"]
