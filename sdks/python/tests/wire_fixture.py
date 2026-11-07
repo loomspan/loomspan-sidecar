@@ -148,3 +148,14 @@ def read_until_peer_closed(conn: socket.socket) -> int:
     except (ConnectionResetError, ConnectionAbortedError):
         pass
     return count
+
+
+def verified_tls_contexts() -> tuple[ssl.SSLContext, ssl.SSLContext]:
+    import trustme
+
+    ca = trustme.CA()
+    server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ca.issue_cert("127.0.0.1").configure_cert(server)
+    client = ssl.create_default_context()
+    ca.configure_trust(client)
+    return server, client

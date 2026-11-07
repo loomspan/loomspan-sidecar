@@ -1,5 +1,6 @@
 """Client and models for the Loomspan Sidecar execution API."""
 
+from ._async_client import AsyncSidecarClient
 from ._client import SidecarClient
 from ._credential import CredentialSnapshot
 from ._errors import (
@@ -24,6 +25,7 @@ from ._models import (
 __all__ = [
     "AcceptanceUnknown",
     "AcceptedExecution",
+    "AsyncSidecarClient",
     "CredentialSnapshot",
     "ExecutionEvent",
     "ExecutionFailure",

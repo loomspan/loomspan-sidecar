@@ -9,18 +9,28 @@ from uuid import UUID
 
 from ._credential import CredentialSnapshot
 from ._errors import LocalFailure, WaitTerminated
-from ._models import AcceptedExecution, ExecutionSnapshot, SkillDescriptor, WaitOptions, _duration
+from ._http import (
+    _CONNECT_TIMEOUT,
+    _MAX_RESPONSE_SIZE,
+    _RESPONSE_TIMEOUT,
+    _TLS_CONTEXT_ERROR,
+    _client_options,
+    _verified_context,
+)
+from ._models import AcceptedExecution, ExecutionSnapshot, SkillDescriptor, WaitOptions
 from ._protocol import (
+    _check_credential,
+    _execution_path,
+    _skill_path,
+    _wait_deadline,
     decode_response,
     encode_input,
     parse_acceptance,
     parse_catalog,
-    parse_origin,
     parse_skill,
     parse_snapshot,
-    skill_segment,
 )
-from ._sync_transport import _SyncTransport, _verified_context
+from ._sync_transport import _SyncTransport
 from ._types import JsonValue
 
 
@@ -31,32 +41,24 @@ class SidecarClient:
         self,
         base_url: str,
         *,
-        connect_timeout: float = 2.0,
-        response_timeout: float = 10.0,
-        max_response_size: int = 8 * 1024 * 1024,
+        connect_timeout: float = _CONNECT_TIMEOUT,
+        response_timeout: float = _RESPONSE_TIMEOUT,
+        max_response_size: int = _MAX_RESPONSE_SIZE,
         ssl_context: ssl.SSLContext | None = None,
     ) -> None:
-        origin = parse_origin(base_url)
-        connect_timeout = _duration(connect_timeout)
-        response_timeout = _duration(response_timeout)
-        if type(max_response_size) is not int or not 0 < max_response_size <= 2**31 - 9:
-            raise LocalFailure("Invalid response size limit")
-        if ssl_context is not None and not isinstance(ssl_context, ssl.SSLContext):
-            raise LocalFailure("Invalid SSL context")
-        if origin.scheme == "https":
-            if ssl_context is None:
-                try:
-                    ssl_context = ssl.create_default_context()
-                except OSError:
-                    pass
+        origin, connect_timeout, response_timeout = _client_options(
+            base_url, connect_timeout, response_timeout, max_response_size, ssl_context
+        )
+        if origin.scheme == "https" and ssl_context is None:
+            try:
+                ssl_context = ssl.create_default_context()
+            except OSError:
+                pass
             if ssl_context is None or not _verified_context(ssl_context):
-                raise LocalFailure(
-                    "HTTPS requires a client SSL context with certificate, hostname, and TLS closure validation"
-                )
-        else:
-            ssl_context = None
+                raise LocalFailure(_TLS_CONTEXT_ERROR)
         self._transport = _SyncTransport(
-            origin, connect_timeout, response_timeout, max_response_size, ssl_context
+            origin, connect_timeout, response_timeout, max_response_size,
+            ssl_context if origin.scheme == "https" else None,
         )
 
     def __enter__(self) -> Self:
@@ -79,12 +81,12 @@ class SidecarClient:
         return self._request("/v1/skills", credential, parse_catalog)
 
     def get_skill(self, name: str, credential: CredentialSnapshot) -> SkillDescriptor:
-        return self._request("/v1/skills/" + skill_segment(name), credential, parse_skill)
+        return self._request(_skill_path(name), credential, parse_skill)
 
     def submit[T](
         self, name: str, input: dict[str, T], credential: CredentialSnapshot
     ) -> AcceptedExecution:
-        path = "/v1/skills/" + skill_segment(name) + "/executions"
+        path = _skill_path(name) + "/executions"
         return self._request(path, credential, parse_acceptance, body=encode_input(input))
 
     def get_execution(self, execution_id: UUID, credential: CredentialSnapshot) -> ExecutionSnapshot:
@@ -96,11 +98,7 @@ class SidecarClient:
         credential: CredentialSnapshot,
         options: WaitOptions = WaitOptions(),
     ) -> ExecutionSnapshot:
-        if not isinstance(execution_id, UUID):
-            raise LocalFailure("Invalid execution ID")
-        if not isinstance(options, WaitOptions):
-            raise LocalFailure("Invalid wait options", execution_id)
-        deadline = monotonic() + options.timeout
+        deadline = _wait_deadline(execution_id, options)
         last = None
         while True:
             last = self._read(execution_id, credential, last, deadline)
@@ -118,10 +116,8 @@ class SidecarClient:
         last: ExecutionSnapshot | None = None,
         deadline: float | None = None,
     ) -> ExecutionSnapshot:
-        if not isinstance(execution_id, UUID):
-            raise LocalFailure("Invalid execution ID")
         return self._request(
-            f"/v1/executions/{execution_id}",
+            _execution_path(execution_id),
             credential,
             lambda value: parse_snapshot(value, execution_id),
             execution_id=execution_id,
@@ -140,8 +136,7 @@ class SidecarClient:
         last_snapshot: ExecutionSnapshot | None = None,
         deadline: float | None = None,
     ) -> T:
-        if type(credential) is not CredentialSnapshot:
-            raise LocalFailure("Missing or invalid execution credential", execution_id, last_snapshot)
+        _check_credential(credential, execution_id, last_snapshot)
         submission = body is not None
         response = self._transport.exchange(
             "POST" if submission else "GET", path, body, credential, deadline

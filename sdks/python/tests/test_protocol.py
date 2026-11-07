@@ -9,6 +9,7 @@ import pytest
 
 from loomspan_sdk import (
     AcceptanceUnknown,
+    AsyncSidecarClient,
     CredentialSnapshot,
     ExecutionEvent,
     ExecutionStatus,
@@ -71,6 +72,7 @@ def test_public_api_and_defaults() -> None:
     assert WaitOptions().timeout == 60.0
     assert WaitOptions().poll_interval == 0.25
     options = signature(SidecarClient).parameters
+    assert signature(AsyncSidecarClient).parameters == options
     assert options["connect_timeout"].default == 2.0
     assert options["response_timeout"].default == 10.0
     assert options["max_response_size"].default == 8 * 1024 * 1024
@@ -109,9 +111,10 @@ def test_credential_is_opaque_and_not_serializable() -> None:
     "http://example.com/%x1", "http://example.com/\ud800",
 ])
 def test_invalid_base_urls(base) -> None:
-    with pytest.raises(LocalFailure) as error:
-        SidecarClient(base)
-    assert error.value.__context__ is None
+    for client in (SidecarClient, AsyncSidecarClient):
+        with pytest.raises(LocalFailure) as error:
+            client(base)
+        assert error.value.__context__ is None
 
 
 def test_base_and_skill_path_encoding() -> None:
@@ -136,8 +139,9 @@ def test_invalid_skill_names(name) -> None:
 @pytest.mark.parametrize("value", [None, True, 0, -1, float("nan"), float("inf"), 10**300])
 def test_invalid_limits(value) -> None:
     for name in ("connect_timeout", "response_timeout", "max_response_size"):
-        with pytest.raises(LocalFailure):
-            SidecarClient("http://localhost", **{name: value})
+        for client in (SidecarClient, AsyncSidecarClient):
+            with pytest.raises(LocalFailure):
+                client("http://localhost", **{name: value})
     for name in ("timeout", "poll_interval"):
         with pytest.raises(LocalFailure):
             WaitOptions(**{name: value})

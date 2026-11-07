@@ -30,17 +30,20 @@ assert installed.is_relative_to(pathlib.Path(sys.prefix).resolve()), installed
 dist = metadata.distribution("loomspan-sdk")
 assert dist.version == "0.1.0.dev0"
 assert dist.metadata["Requires-Python"] == ">=3.12"
-assert len(dist.requires) == 1
-assert dist.requires[0].split("<", 1)[0] == "h11"
-assert set(dist.requires[0][3:].split(",")) == {"<0.17", ">=0.16"}
+requirements = {
+    name: set(bounds.split(","))
+    for name, bounds in (requirement.split("<", 1) for requirement in dist.requires)
+}
+assert requirements == {"h11": {"0.17", ">=0.16"}, "anyio": {"5", ">=4.16"}}
 assert installed.with_name("py.typed").is_file()
 assert installed.with_name("py.typed").is_relative_to(pathlib.Path(sys.prefix).resolve())
 for name in ("fastapi", "starlette", "uvicorn", "cryptography", "jwt"):
     assert importlib.util.find_spec(name) is None, name
 assert importlib.util.find_spec("loomspan_sdk._signing") is None
 assert "CredentialSnapshot" in loomspan_sdk.__all__
+assert "AsyncSidecarClient" in loomspan_sdk.__all__
 print(platform.python_implementation(), platform.python_version(), platform.system(),
-      platform.machine(), "h11", metadata.version("h11"))
+      platform.machine(), "h11", metadata.version("h11"), "anyio", metadata.version("anyio"))
 """
 
 
@@ -90,20 +93,22 @@ def verify() -> None:
         (wheel,) = output.glob("*.whl")
         (sdist,) = output.glob("*.tar.gz")
         print(f"Built {wheel.name} and {sdist.name}")
-        example = external / "existing_credential.py"
-        shutil.copyfile(PROJECT / "examples" / example.name, example)
+        examples = [external / name for name in ("existing_credential.py", "existing_credential_async.py")]
+        for example in examples:
+            shutil.copyfile(PROJECT / "examples" / example.name, example)
         for kind, artifact in (("wheel", wheel), ("sdist", sdist)):
             environment = external / kind
             run("uv", "venv", "--python", sys.executable, str(environment))
             python = str(environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
             run("uv", "pip", "install", "--python", python, str(artifact))
             print(f"{kind}: {run(python, '-I', '-c', CHECK_INSTALL)}")
-            with WirePeer(serve_example) as peer:
-                summary = run(python, "-I", str(example), peer.url, "echo", "hello",
-                              input_text=TOKEN + "\n")
-                assert "Discovered 1 skill(s)." in summary and "RUNNING -> COMPLETED" in summary
-                assert str(EXECUTION_ID) in summary
-            assert len(peer.requests) == 5
+            for example in examples:
+                with WirePeer(serve_example) as peer:
+                    summary = run(python, "-I", str(example), peer.url, "echo", "hello",
+                                  input_text=TOKEN + "\n")
+                    assert "Discovered 1 skill(s)." in summary and "RUNNING -> COMPLETED" in summary
+                    assert str(EXECUTION_ID) in summary
+                assert len(peer.requests) == 5
 
         type_environment = external / "types"
         run("uv", "venv", "--python", sys.executable, str(type_environment))
@@ -113,7 +118,7 @@ def verify() -> None:
             if requirement.startswith("mypy==")
         )
         run("uv", "pip", "install", "--python", python, str(wheel), mypy)
-        print(run(python, "-I", "-m", "mypy", "--strict", str(example)))
+        print(run(python, "-I", "-m", "mypy", "--strict", *(str(example) for example in examples)))
 
 
 if __name__ == "__main__":

@@ -1,8 +1,9 @@
 # Loomspan Python SDK
 
-`loomspan-sdk` is a typed, synchronous client for the Sidecar execution HTTP API.
-It requires CPython 3.12 or newer and an existing Sidecar execution credential
-from your application. Its only runtime dependency is h11.
+`loomspan-sdk` provides typed synchronous and asynchronous clients for the Sidecar
+execution HTTP API. It requires CPython 3.12 or newer and an existing Sidecar
+execution credential from your application. Its direct runtime dependencies are
+h11 and AnyIO.
 
 From the repository root, install into your application's virtual environment.
 You can also install a wheel or source distribution of the SDK into that
@@ -24,8 +25,31 @@ with SidecarClient("https://sidecar.example.com/") as client:
     terminal = client.wait_for_completion(accepted.id, credential)
 ```
 
-The [runnable example](examples/existing_credential.py) prompts for the
-credential and shows discovery, submission, status and waiting.
+An async application can keep one `AsyncSidecarClient` open for its lifespan and
+share it across tasks in the same runtime. Supply each caller's credential on
+each operation. Use `async with` or await `client.aclose()` at shutdown to
+release local connections and reject further calls.
+
+```python
+from loomspan_sdk import AsyncSidecarClient, CredentialSnapshot
+
+async def execute(client: AsyncSidecarClient, execution_jwt: str):
+    credential = CredentialSnapshot(execution_jwt)
+    catalog = await client.list_skills(credential)
+    skill = await client.get_skill("summarize", credential)
+    accepted = await client.submit(skill.name, {"text": "Hello"}, credential)
+    current = await client.get_execution(accepted.id, credential)
+    terminal = await client.wait_for_completion(accepted.id, credential)
+    return terminal
+
+async def run(base_url: str, execution_jwt: str):
+    async with AsyncSidecarClient(base_url) as client:
+        return await execute(client, execution_jwt)
+```
+
+The runnable [sync example](examples/existing_credential.py) and
+[async example](examples/existing_credential_async.py) prompt for the credential
+and show discovery, submission, status and waiting.
 
 Discovery preserves descriptor names, descriptions, kinds and schema strings.
 Submission takes a Python dictionary representing a JSON object. The accepted
@@ -47,10 +71,14 @@ problem details that would overflow a float is represented by `decimal.Decimal`.
 
 By default, the client allows 2 seconds for connection setup and 10 seconds
 for the complete HTTP exchange, including the body, with an 8 MiB response
-body limit. Set `connect_timeout`, `response_timeout` and `max_response_size`
-on `SidecarClient` to change these limits. System hostname resolution consumes
-the deadline, but the operating system's synchronous resolver can itself run
-past it. If resolution expires the budget, the SDK sends no request.
+body limit. Both clients accept `connect_timeout`, `response_timeout` and
+`max_response_size` to change these limits. System hostname resolution consumes
+the deadline. The synchronous client's resolver call can itself run past it.
+The async client bounds its await for resolution and initial system TLS trust
+loading. An OS lookup or trust load already in progress can finish later.
+If a trust load outlives its caller, new HTTPS calls can fail during connection
+setup while that load is pending. The client reuses a successful load.
+Expired connection setup prevents request dispatch.
 
 `WaitOptions(timeout=60.0, poll_interval=0.25)` gives the default wait in seconds.
 The wait shares its remaining budget with every status read, polls only after
@@ -65,11 +93,17 @@ successful `QUEUED` or `RUNNING` reads and stops on the first failure.
 | `WaitTerminated` | The local wait reached its deadline. |
 
 SDK status and wait errors expose `execution_id`. Wait errors also expose
-`last_snapshot`, which can be `None`. Native `KeyboardInterrupt` propagates
-with local cleanup. If interruption occurs after submission starts, Sidecar
-may accept the work even when the caller receives no ID. Ending a wait or
-closing the client leaves remote work running. Use a context manager to release
-local connections.
+`last_snapshot`, which can be `None`. Native `KeyboardInterrupt` in the sync
+client and native task cancellation in the async client propagate after local
+cleanup. An outer `asyncio.timeout()` keeps its own `TimeoutError` behavior.
+Only the SDK's wait budget produces `WaitTerminated` with execution context.
+
+If a submission is interrupted or cancelled after possible dispatch, Sidecar
+may already have accepted the work even if the caller receives no execution ID.
+Cancellation carries only its native exception. Avoid replaying an uncertain
+submission. Ending a wait or closing the client leaves remote work running.
+If you already have an accepted execution ID, you can explicitly read status
+later with an open client and the appropriate credential.
 
 ## Transport and credentials
 

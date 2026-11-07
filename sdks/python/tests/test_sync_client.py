@@ -28,7 +28,7 @@ from loomspan_sdk import (
 )
 
 from test_protocol import EXECUTION_ID, descriptor, snapshot
-from wire_fixture import WirePeer, read_until_peer_closed, reply, reply_json
+from wire_fixture import WirePeer, read_until_peer_closed, reply, reply_json, verified_tls_contexts
 
 TOKEN = "distinct-synthetic-bearer"
 CREDENTIAL = CredentialSnapshot(TOKEN)
@@ -455,21 +455,12 @@ def test_close_aborts_active_read_and_rejects_new_calls() -> None:
     assert len(peer.requests) == 1 and peer.requests[0].method == "GET"
 
 
-def _verified_tls_contexts() -> tuple[ssl.SSLContext, ssl.SSLContext]:
-    ca = trustme.CA()
-    server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    ca.issue_cert("127.0.0.1").configure_cert(server)
-    client = ssl.create_default_context()
-    ca.configure_trust(client)
-    return server, client
-
-
 @pytest.mark.parametrize("tls", [False, True])
 def test_close_aborts_pending_message_instead_of_delimiting_it(monkeypatch, tls) -> None:
     ready, resume, released = Event(), Event(), Event()
     response = b"HTTP/1.1 202 Accepted\r\nConnection: close\r\n\r\n"
     response += json.dumps({"id": str(EXECUTION_ID)}).encode()
-    server_context, client_context = _verified_tls_contexts() if tls else (None, None)
+    server_context, client_context = verified_tls_contexts() if tls else (None, None)
     socket_type = ssl.SSLSocket if tls else socket.socket
     original_recv = socket_type.recv
     read = 0
@@ -517,7 +508,7 @@ def test_close_aborts_pending_message_instead_of_delimiting_it(monkeypatch, tls)
     (202, True, False), (202, False, True), (202, False, False), (503, False, False),
 ])
 def test_https_requires_authenticated_eof_for_close_delimited_body(status, length_framed, notify) -> None:
-    server_context, client_context = _verified_tls_contexts()
+    server_context, client_context = verified_tls_contexts()
     body = json.dumps({"id": str(EXECUTION_ID)} if status == 202 else {"title": "Try again"}).encode()
 
     def respond(conn, *_):

@@ -23,6 +23,7 @@ from ._models import (
     ExecutionSnapshot,
     ExecutionStatus,
     SkillDescriptor,
+    WaitOptions,
 )
 from ._types import JsonObject, JsonValue
 
@@ -53,7 +54,37 @@ class _Origin:
 class _Response:
     status: int | None = None
     body: bytes | None = field(default=None, repr=False)
-    closed_before_dispatch: bool = False
+    local_error: str | None = None
+
+
+_CLIENT_CLOSED = "Client is closed"
+
+
+def _execution_path(execution_id: UUID) -> str:
+    if not isinstance(execution_id, UUID):
+        raise LocalFailure("Invalid execution ID")
+    return f"/v1/executions/{execution_id}"
+
+
+def _skill_path(name: str) -> str:
+    return "/v1/skills/" + skill_segment(name)
+
+
+def _check_credential(
+    credential: CredentialSnapshot,
+    execution_id: UUID | None,
+    last_snapshot: ExecutionSnapshot | None,
+) -> None:
+    if type(credential) is not CredentialSnapshot:
+        raise LocalFailure("Missing or invalid execution credential", execution_id, last_snapshot)
+
+
+def _wait_deadline(execution_id: UUID, options: WaitOptions) -> float:
+    if not isinstance(execution_id, UUID):
+        raise LocalFailure("Invalid execution ID")
+    if not isinstance(options, WaitOptions):
+        raise LocalFailure("Invalid wait options", execution_id)
+    return monotonic() + options.timeout
 
 
 def _control(ch: str) -> bool:
@@ -347,8 +378,8 @@ def decode_response[T](
     last_snapshot: ExecutionSnapshot | None = None,
     wait_deadline: float | None = None,
 ) -> T:
-    if response.closed_before_dispatch:
-        raise LocalFailure("Client is closed", execution_id, last_snapshot)
+    if response.local_error is not None:
+        raise LocalFailure(response.local_error, execution_id, last_snapshot)
     status = response.status
     if status is not None and not 200 <= status < 300:
         error = HttpFailure(status, execution_id=execution_id, last_snapshot=last_snapshot)
