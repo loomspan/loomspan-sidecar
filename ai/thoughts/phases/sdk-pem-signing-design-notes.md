@@ -1,9 +1,10 @@
 # Shared SDK PEM signing design
 
-Date: 2026-11-06. Status: agreed design direction; implementation pending.
-Applies to the Java SDK change, Python SDK implementation, and future Go/.NET
-SDKs. This document is the authoritative design record for signing-material
-simplification. It does not claim that the current Java implementation has changed.
+Date: 2026-11-06. Status updated: 2026-11-07. Agreed signing contract;
+Java implementation is present in the current checkout; Python implementation is
+pending. Applies to Java, Python and future Go/.NET SDKs. This is the authoritative
+design record for signing-material simplification. The status refresh is based on
+source inspection, not a fresh build or integration verification run.
 
 **Development policy: replace superseded contracts, code and schemas directly.
 Do not add compatibility shims, legacy adapters, dual APIs or migration machinery
@@ -18,8 +19,8 @@ incidentally. Planning does not authorize deleting data or modifying deployed ke
 
 ## Problem and outcome
 
-Java's provided signer accepts JKS, PKCS12 and PEM, with aliases, password
-references and optional signing certificates. Reproducing these options across
+Before this change, Java's provided signer accepted JKS, PKCS12 and PEM, with
+aliases, password references and optional signing certificates. Reproducing these options across
 Python, Go and .NET adds dependency and interoperability work without improving
 the execution-token protocol. Python research exposed JKS installation costs and
 PKCS12 alias-selection limitations in candidate libraries.
@@ -122,23 +123,24 @@ a separate Java client correction, not a PEM protocol change.
 
 Keep the existing callback own-key plus optional overlap-file model. The earlier
 greenfield proposal for a single complete callback trust file was exploratory and
-is not part of this change. Retain the agreed follow-up: invalid configured initial
+is not part of this change. Retain the implemented Java behavior: invalid configured initial
 overlap fails security/application startup; runtime invalidity withdraws all trust
 until recovery, with safe state-transition diagnostics.
 
 Restart-driven colocated key changes may disrupt in-flight callbacks. No restart
 cancellation/recovery coordinator is introduced. Credential expiry governs callback
 admission, not cancellation of already-admitted work. Independent credential
-lifetime and the provisional 15-minute default are separate decisions.
+lifetime is separate from signing format. Python now retains Java's independent
+15-minute default under the agreed parity baseline; see the Python design notes.
 
 No namespace isolation or new multi-issuer authorization contract is introduced.
 Applications sharing a Sidecar remain within its existing trusted-group model.
 
 ## Delivery and verification
 
-Create dated implementation tickets through Sidecar's existing workflow after
-planning the affected scope. Java must remove obsolete code/configuration/tests
-and update its README and recipes; Python implements this contract directly.
+Create Python implementation tickets through Sidecar's existing workflow. Java
+has removed obsolete signing contracts; Python implements this contract directly.
+Use current code and tests as evidence rather than the original pending-work status.
 Future Go/.NET SDKs use it as their input contract, without requiring those SDKs
 to be built as part of this change.
 
@@ -161,27 +163,20 @@ Reuse fixed synthetic public test vectors and protected test-only private fixtur
 never include operator keys. Go/.NET verification is required when implementing
 those SDKs, not claimed from Java/Python evidence.
 
-## Remaining work
+## Current status and remaining work
 
-Pipeline-ready Java tickets:
-[PEM signing](../tickets/PR-11.1-java-sdk-pem-signing.md),
-[submission uncertainty](../tickets/PR-11.2-java-sdk-submission-uncertainty.md),
-and [callback trust startup](../tickets/PR-11.3-java-sdk-callback-trust-startup.md).
-The developer allows temporary broken builds between tickets and will sync after
-the series. Track temporary breaks and pending verification explicitly; final
-combined checks and required reviews remain mandatory. Do not preserve obsolete
-APIs merely to keep intermediate builds green.
+The current checkout contains Java PEM signing (`3571bb8`), submission uncertainty
+(`487f26e`) and callback trust startup/diagnostics (`6a790f9`). Earlier ticket links
+and intermediate-build sequencing are historical and no longer prerequisites for
+Python. Current source/test anchors below remain available; this update does not
+claim a fresh test run or re-certify maintained-suite integration.
 
-Signing scope, minimal settings and strict PEM input behavior are agreed. Inventory
-affected consumers/fixtures and create implementation tickets with focused
-acceptance checks. Use the Full 5-Step Pipeline for the Java PEM work because it
-changes supported public/configuration contracts. Research should establish scope,
-then implementation planning and test planning produce reviewable artifacts before
-implementation. Keep unrelated Java submission and callback-startup corrections
-in separate bounded tickets so their evidence and completion remain explicit. Dependency
-versions and platform-specific atomic-file behavior need implementation evidence.
-SDK API ergonomics, total HTTP deadlines and async cancellation belong to the
-Python design effort rather than this signing-format change.
+Python implementation and its own Java/Sidecar interoperability evidence remain.
+Follow the [Python design notes](python-sdk-design-notes.md) for accepted API,
+lifecycle, cancellation, packaging and support scope. Library selection and
+platform-specific atomic-file behavior require implementation evidence. No new
+signing option, legacy adapter, multiworker export coordinator or future-language
+SDK is required for Python v1.
 
 ## Related evidence
 

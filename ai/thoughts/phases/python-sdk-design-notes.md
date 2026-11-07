@@ -1,181 +1,8 @@
 # Python SDK with Java SDK parity
 
-Date: 2026-11-02. Status: design proposal for future planning; no Python SDK is
-implemented or published by this document. API names and examples below are
-proposed, not supported interfaces.
-
-Discussion updated: 2026-11-06. Keep questions, findings and decisions here as
-the SDK design conversation proceeds; distinguish proposals from agreed scope.
-
-## Design discussion: scope and baseline
-
-### Context handoff (2026-11-06)
-
-The primary v1 audience is the general Python/FastAPI developer. Build toward
-the revised common SDK contract, not literal parity with Java's obsolete key
-formats. The [shared PEM design](sdk-pem-signing-design-notes.md) is authoritative
-for signing; historical research below explains rejected alternatives only.
-
-Three Java tickets are ready; none has been implemented or run through the
-pipeline in this discussion:
-
-1. [PEM signing](../tickets/PR-11.1-java-sdk-pem-signing.md).
-2. [Submission uncertainty](../tickets/PR-11.2-java-sdk-submission-uncertainty.md).
-3. [Callback trust startup](../tickets/PR-11.3-java-sdk-callback-trust-startup.md).
-
-Keep these as three cohesive units. PEM is the largest and spans core, starter,
-documentation and maintained consumers; split into smaller work items only if
-pipeline research uncovers a materially larger scope, not merely along file/module
-boundaries. Recommended execution order is PEM, submission correction, then
-callback startup, with shared checks against the final combined state. This is
-sequencing guidance, not a hard functional dependency.
-
-The developer explicitly permits intermediate broken builds between tickets and
-will sync only after the series. Do not add compatibility code to keep intermediate
-states green. Record each temporary break and the ticket that resolves it; do not
-claim blocked checks passed. Final combined build, affected SDK/Sidecar/suite
-verification and required independent reviews must pass before the series is
-reported complete/ready to sync. Unrelated behavior remains outside scope.
-
-Completed in this chat: design/document updates, Java README explicit-subject
-example, source/test review, dependency research and limited synthetic Python
-probes. No production implementation, commit, publication, live provider calls or
-full SDK integration tests were performed. Local documentation/tickets remain
-workspace changes; inspect current git status on resumption rather than assuming
-they were committed. Model intended for implementation: Sol 6.1; ticket sizing
-is based on cohesive outcomes, not an assumed model capacity.
-
-Next Python work: review a concrete FastAPI quickstart/API sketch (explicit
-lifespan, async client, trusted identity dependency and prefix-wide callbacks),
-then settle package/import names, supported Python/library ranges, sync total
-deadline implementation and cancellation/last-snapshot ergonomics. HTTPX, PyJWT,
-cryptography and AnyIO are candidates, not a tested final dependency selection.
-JKS/PKCS12 feasibility and encrypted PEM are no longer active work. The 15-minute
-credential default remains provisional; do not reopen settled authentication,
-expiry-at-admission, rotation or namespace policy without new evidence. The test
-suite is a customer and must not dictate SDK contracts. Do not build Python as an
-incidental part of the Java tickets.
-
-### Current decisions
-
-- **Agreed scope, revised 2026-11-06:** align both SDKs on PEM-only provided
-  signing while retaining ephemeral colocated generation. This supersedes the
-  earlier requirement to reproduce Java's JKS/PKCS12 support in Python. Java must
-  change; Python implements the revised contract. Go and .NET are future consumers
-  of the same contract. Provided keys will be unencrypted PKCS#8 PEM for now;
-  encrypted PEM is out of scope. Signing certificates are removed from the target
-  contract. The [shared PEM signing design](sdk-pem-signing-design-notes.md) owns
-  these cross-SDK requirements;
-  implementation is not authorized merely by recording the design direction.
-  Minimal configuration and strict PEM input rules were adopted on 2026-11-06
-  in that shared document. Sidecar needs verification against the resulting
-  public JWKS/tokens, with no production protocol change identified; SDK callback
-  startup changes must not be applied to Sidecar's colocated trust startup.
-- **Agreed signing scope:** retain both colocated and provided signing modes.
-  **Agreed colocated behavior:** retain ephemeral keys regenerated on SDK startup;
-  Sidecar's public-trust reload makes independent restarts workable. Source inspection
-  confirms Java currently generates a fresh in-memory private key on every SDK
-  startup and replaces only the public `jwks.json`; it does not load or persist a
-  private key. The developer expected possible generate-only-if-missing behavior
-  and raised independent-restart continuity as a concern. Sidecar reloads the
-  public trust file, so it can adopt the new key without restarting, but old
-  credentials lose trust as the old public key disappears. SDK callback trust
-  also starts with the new signer key unless explicit overlap trust is supplied.
-  Restarting only Sidecar does not rotate the application's signing key.
-  Provided signing reuses operator-owned private material across restarts.
-  The developer accepts disruption to in-flight realtime work when the SDK
-  application restarts; persistent generated private-key storage is not needed.
-  This preserves the existing design-lens policy. Clarification: restart/key
-  replacement is not cancellation, rollback or guaranteed disposal of Sidecar
-  work. Already-admitted execution may continue and effects may already have
-  occurred; subsequent callbacks using the old credential can fail. Do not
-  describe in-flight work as guaranteed dead or automatically replay it.
-  **Agreed scope boundary:** from the restarting application's perspective,
-  losing its in-flight realtime interaction is acceptable. Do not add restart
-  detection, coordinated cancellation, draining, recovery or execution-tracking
-  machinery to manage Sidecar work across SDK-host restarts. The benefit does
-  not justify the complexity for this use case. This does not change ordinary
-  resource cleanup or the existing execution/shutdown contracts.
-- **Java is reviewable:** existing Java decisions are open to improvement. Both
-  SDKs should target the deliberately agreed contract rather than reproduce
-  behavior that we already expect to replace.
-- **Agreed rotation ownership:** retain the option for planned signing-key
-  rotation with overlapping public trust. Operators provision and protect private
-  keys, assemble and distribute overlap trust, coordinate signer restarts, and
-  remove old verification keys when the transition is complete. The SDK loads
-  and validates its private signer at startup, atomically exports its public
-  JWKS, and observes configured callback overlap trust. Sidecar independently
-  observes its configured public trust. Private-key changes require application
-  restart; missing or invalid provided material fails startup without generating
-  a replacement. Do not add an automatic rotation manager or automatic overlap
-  retirement. Public export contains the startup signer's public material; it
-  does not automatically assemble an operator's old/new overlap set.
-- **Agreed: retain fail-closed callback trust.** With
-  no overlap file configured, trust the startup signer's public key. If an overlap
-  file is explicitly configured but becomes missing, unreadable, malformed or
-  empty, withdraw all callback trust, including the own key, until a valid file
-  is observed. This treats configured trust as one required security configuration
-  rather than introducing stale-key grace periods or partial fallback behavior.
-  The availability cost is explicit: a file delivery error blocks new callbacks
-  even from the own signer. Operators should replace complete files atomically,
-  keep a valid nonempty trust set at the configured path, and restore valid content
-  to recover. Removing an overlap key means publishing a valid set without that
-  key, not deleting/emptying the configured file. Already-admitted callbacks may
-  finish. Clear safe diagnostics and documented recovery are needed; no new
-  rotation controller or historical trust state is proposed. Own-key-only fallback
-  is a possible alternative, not inherently insecure, but is not recommended here.
-- **The suite is an early customer, not a reference design.** Its Python
-  integration was created opportunistically by an LLM without a specific mandate
-  or a deliberate design discussion. Its choices have no normative authority.
-  Use it for adoption and interoperability evidence, not to derive requirements.
-- **Identity intent:** leave authentication to the application (including LDAP,
-  database authentication and Keycloak). An original login token is not required.
-  Java captures Spring's authenticated name and authorities, issues a separate
-  application-signed execution JWT with allowlisted authorities, and establishes
-  a new Spring JWT authentication on callbacks. It does not wrap the original
-  credential or restore its session, custom principal or provider-specific claims.
-- **Current recommendation, not a new implementation decision:** retain an
-  independent execution-credential lifetime. Source-login expiry is not a
-  universal authentication concept, and an expiry cap does not itself implement
-  logout, account revocation or live permission checks. The suite's cap is not
-  an approved policy that SDK adoption must preserve.
-- **Open question: default lifetime.** Java's 15-minute default originated as an
-  assistant suggestion, not an established workload requirement. There is no
-  evidence yet that it is wrong or that another number would be better. Recommend
-  retaining it provisionally while checking the required interval from issuance
-  through queueing and the last authenticated callback/status request. This is a
-  credential validity window, not an execution timeout or cancellation promise.
-  Longer validity extends bearer-token exposure and authority-snapshot staleness;
-  shorter validity can interrupt later authenticated interactions. No default
-  change has been agreed. Review long-running work expectations before finalizing.
-- **Finding: workflow duration cannot be predicted by the SDK.** Users choose
-  model latency/thinking settings and workflow depth; valid executions may be
-  very short or very long. No fixed default can promise coverage of every
-  workflow. Lifetime therefore remains an application-owned configuration choice,
-  not a duration inferred by the SDK from models or skill trees.
-  The current recommendation remains a provisional 15-minute default, with clear
-  expiry consequences and guidance to budget for queueing and later authenticated
-  interactions. This is not user approval of that default. Do not add automatic
-  refresh or unbounded validity to hide the limitation. Still to settle: whether
-  applications must explicitly configure lifetime or may accept a documented
-  default.
-- **Agreed recommendation: expiry governs callback admission, not cancellation.**
-  Check credential validity when authenticating a new callback. A callback already
-  authenticated and admitted may finish after token expiry; expiry itself must
-  not interrupt its business code. This does not override ordinary request
-  deadlines, shutdown or application failures. Beginning an execution before
-  expiry does not authorize new callbacks indefinitely: Sidecar still requires
-  an unexpired credential before forwarding, and callback receivers independently
-  validate it. The existing documented 60-second receiver timestamp skew is a
-  separate validation tolerance, not an execution-lifetime extension.
-  Applications must choose a credential lifetime suitable for their workflows,
-  including queueing and later callbacks. Unpredictably long executions can reach
-  a callback after their credential expires; document that limitation explicitly.
-  Do not accept expired bearer credentials merely because work may have started
-  earlier, or add automatic refresh. A future execution-scoped grant would need
-  its own explicit design for verifiable execution association and termination;
-  it is not part of this recommendation. Verify admission/finish behavior in each
-  SDK's own tests rather than treating this decision as implementation evidence.
+Date: 2026-11-02. Updated: 2026-11-07. Status: design baseline for implementation
+planning; no Python SDK is implemented or published by this document. Python API
+names and examples remain illustrative until implementation planning.
 
 **Development policy: replace superseded contracts, code and schemas directly.
 Do not introduce compatibility shims, legacy adapters, dual APIs or migration
@@ -185,6 +12,70 @@ complete implementation and justify additional dependencies and abstractions by
 their concrete benefit. No development-data reset is required by this proposal;
 later adoption must preserve existing credentials, operational data and reference
 packs. Planning does not authorize deleting them.
+
+## Governing baseline and current handoff
+
+**Use current Java SDK observable behavior and defaults as the Python baseline
+unless a concrete reason justifies a difference.** This is the developer's
+2026-11-07 direction. Use Python conventions for APIs and lifecycle; do not reopen
+settled protocol, security or timeout choices merely because the language changes.
+Any proposed behavioral divergence must identify the Java behavior, the concrete
+reason, the consumer impact, and whether both SDKs should change. A dependency's
+defaults are not justification for silently weakening the contract.
+
+The [shared PEM design](sdk-pem-signing-design-notes.md) remains authoritative for
+signing. Its earlier implementation-pending status and the old Python handoff are
+historical: the current checkout includes Java PEM signing (`3571bb8`), submission
+uncertainty (`487f26e`) and callback trust startup/diagnostics (`6a790f9`). These are
+now the baseline, not three outstanding Java prerequisites.
+
+This refresh inspected Java source, README and focused test assertions on branch
+`main` at `6a790f91a10aaf5e50e41fbfe42dfb72eb98a067`. It is a source/test review,
+not a fresh execution of tests or certification of Python interoperability. Existing
+working-tree deletions of older tickets/research/plans/reviews were left untouched;
+this note uses surviving source/test links rather than those removed artifacts.
+
+### Settled scope
+
+- The primary v1 audience is the general Python/FastAPI developer. Provide sync
+  and async clients with equivalent observable outcomes; lead examples with async
+  FastAPI. Core works without a web framework or a private signing key when given
+  an already-issued credential. Java core already supports that separation.
+- Retain Java's independent execution-credential lifetime and **15-minute default**,
+  configurable to a positive representable duration, with a warning above one hour
+  and no policy maximum. Under the parity direction, this replaces the earlier
+  provisional-default question; it does not claim separate earlier approval of
+  that number. No source-login expiry cap or mandatory lifetime setting is added.
+  Applications must budget for queueing and later callbacks/status requests; no
+  fixed default promises to cover arbitrary workflows.
+- Retain explicit colocated/provided modes, ephemeral colocated keys and strict
+  unencrypted PKCS#8 RSA provided keys. No JKS/PKCS12, encrypted PEM, signing
+  certificates, automatic conversion, private-key persistence or rotation manager.
+- Operators own rotation and public overlap trust. Retain own-key-plus-optional-
+  overlap callback trust: invalid configured initial overlap fails startup;
+  runtime invalidity withdraws all trust until recovery with safe transition logs.
+- Authentication belongs to the application. Capture its trusted subject and exact
+  authorities once; issuance intersects authorities with an allowlist. No original
+  login token, provider-specific claims, account lookup or session reconstruction
+  is needed. Callbacks authenticate independently; applications authorize records.
+- Expiry governs new callback admission, not cancellation of admitted business code.
+  The 60-second callback validation skew is separate from Sidecar's strict expiry
+  check before forwarding. No automatic refresh, replay or execution-scoped grant.
+- Colocated restarts may disrupt in-flight interaction. Do not add restart detection,
+  recovery, draining or cancellation coordination. Sidecar work/effects may continue.
+- Applications sharing a Sidecar remain a fully trusted group with one issuer and
+  common identity/role semantics. Multiple keys or namespaces provide no new
+  application isolation. The earlier topology question is closed for this scope.
+- The maintained suite is an early customer, not the reference design. Its incidental
+  source-expiry cap, fixed key IDs and request-time trust reads do not define parity.
+  Java starter client-only activation remains deferred without a demonstrated need.
+
+The FastAPI integration, cancellation/wait-context, and packaging/support decisions
+were agreed on 2026-11-07 and are recorded below. No product-design question
+currently blocks implementation tickets. Remaining feasibility work belongs in
+the tickets' Full Pipeline research and planning, before committing implementation
+details; see [Ticket readiness](#ticket-readiness). Do not build Python as
+incidental follow-up work to the completed Java changes.
 
 ## Purpose and usability outcome
 
@@ -204,170 +95,101 @@ This is a client SDK, not a Python Framework implementation, management client,
 skill executor plugin or replacement identity provider. It must have no runtime
 dependency on Framework/Sidecar implementation code or repository checkouts.
 
+## V1 completeness and simplicity review (2026-11-07)
+
+V1 retains all agreed Java-equivalent capabilities: discovery, submission/status/
+waiting, sync and async clients, opaque credentials, issuance in both signing modes,
+public export, callback authentication and reload, verified TLS, typed results and
+safe errors. Simplicity does not mean dropping sync support, overlap trust, required
+security checks, diagnostics fidelity or the agreed platform targets.
+
+Keep the implementation proportional:
+
+- Share protocol/model validation between sync and async clients. Use internal
+  helpers where useful, not a public transport plugin system or extensible backend
+  registry. Select dependencies through the bounded feasibility work below.
+- Use ordinary typed Python configuration and response objects. Do not introduce
+  SDK environment/YAML loaders, Spring-style configuration binding, generated
+  business models or business-schema validation. Applications can use their own
+  settings/Pydantic models. Unsupported constructor/configuration fields can fail
+  through ordinary strict validation; Python needs no legacy-settings detector.
+- Keep FastAPI integration to the agreed lifecycle, middleware and dependencies.
+  Use normal application authorization checks; `require_authority` in the sketch
+  is application code, not a promised SDK authorization subsystem. Reuse core
+  issuance/client logic rather than maintaining a second FastAPI protocol path.
+- No `WaitState`, execution handles, hidden background polling, automatic refresh,
+  resubmission, restart recovery, key/certificate management or worker coordinator.
+  Only explicitly owned client resources and callback trust refresh need lifecycle
+  management. Do not add caches, health endpoints or telemetry frameworks without
+  a demonstrated requirement.
+- Preserve precision and strict input handling with standard/library facilities.
+  If parity would require substantial custom time types, parsers or transport
+  machinery, bring back the concrete tradeoff before building it. Do not silently
+  weaken the contract or assume complexity is justified merely by literal Java
+  implementation similarity.
+- Test each required behavior at the smallest useful boundary, then prove the
+  representative composed flows. Reuse synthetic fixtures; do not multiply every
+  security case across every OS, dependency version, signing mode and deployment.
+  Keep the agreed platform/version coverage and fresh cross-language evidence.
+
+The remaining engineering risks are total HTTP deadlines, precise temporal/PEM
+interoperability and ASGI boundary/lifecycle correctness. These belong in focused
+research/planning within the four tickets, not new product subsystems. No capability
+was dropped or new product decision opened by this review.
+
 ## What the integration work established
 
-### Agreed SDK requirements and Java follow-up
+### Current Java source and test review (2026-11-07)
 
-Python is not yet implemented: agreed behavior is a Python implementation
-requirement, not a Python fix. Track corrections to existing Java separately.
-Create dated implementation tickets through the repository workflow after this
-design review; this section is the decision record, not implementation evidence.
+The following is the implementation baseline. Test references identify assertions
+read during this review; they are not new test-run results. Python must supply its
+own tests and composed Sidecar evidence.
 
-**Agreed requirement: preserve submission uncertainty.** If a submission may
-have been sent and no reliable acceptance response is available, expose acceptance
-uncertainty rather than implying that execution did not start. Oversized success
-responses are included. Failures detected before sending remain distinguishable;
-known HTTP error responses retain their status without implying absence of effects.
-Never automatically resubmit. Python must preserve normal async cancellation and
-document possible acceptance when cancellation occurs after sending.
+| Area | Current Java behavior to preserve | Source and executable evidence |
+| --- | --- | --- |
+| Client and outcomes | List/get skills, submit, status and wait; 2 s connect, 10 s total response, 8 MiB body limit; 60 s wait with 250 ms polling. Exact result strings and normal terminal FAILED snapshots. | [SidecarClient](../../../sdks/java/core/src/main/java/ai/loomspan/sdk/SidecarClient.java), [WaitOptions](../../../sdks/java/core/src/main/java/ai/loomspan/sdk/WaitOptions.java), [client edge tests](../../../sdks/java/core/src/test/java/ai/loomspan/sdk/SidecarClientEdgeTest.java) |
+| Submission and wait errors | Pre-dispatch interruption is local failure; possible-dispatch loss, interruption or unusable success body is acceptance-unknown. Observed non-2xx status survives an unusable body. No inferred ID or replay. Status/wait failures carry requested ID and last valid snapshot where available. | `SidecarClient.request`, `responseFailure`, `await`; edge tests `oversizedSubmissionResponsesLeaveAcceptanceUnknown`, `interruptionBeforeSubmissionDispatchFailsLocally`, `interruptionAfterSubmissionDispatchLeavesAcceptanceUnknownAndReleasesConnections`, `httpErrorsKeepStatusWithoutUnsafeProblemDetails`, `statusOverflowPreservesWaitContext` |
+| Identity and issuance | Explicit credential per call; application-selected subject; exact allowlisted roles; independent 15-minute default, fractional timestamps, unique jti, issuer/audience defaults. | [IssuanceSettings](../../../sdks/java/core/src/main/java/ai/loomspan/sdk/IssuanceSettings.java), [issuer](../../../sdks/java/core/src/main/java/ai/loomspan/sdk/ExecutionTokenIssuer.java), [issuer tests](../../../sdks/java/core/src/test/java/ai/loomspan/sdk/ExecutionTokenIssuerTest.java), [Spring adapter](../../../sdks/java/spring-boot-starter/src/main/java/ai/loomspan/sdk/spring/SpringExecutionTokenIssuer.java) |
+| Signing | Explicit modes; strict PEM-only provided signing; atomic public-only export, stable provided identity, ephemeral colocated identity, no fallback or input/output overlap. | [SigningKeys](../../../sdks/java/core/src/main/java/ai/loomspan/sdk/SigningKeys.java), [SigningSettings](../../../sdks/java/core/src/main/java/ai/loomspan/sdk/SigningSettings.java), [signing tests](../../../sdks/java/core/src/test/java/ai/loomspan/sdk/SigningKeysTest.java), [configuration tests](../../../sdks/java/spring-boot-starter/src/test/java/ai/loomspan/sdk/spring/ExecutionTokenAutoConfigurationTest.java) |
+| Callback trust lifecycle | Own key plus optional complete validated overlap; initial invalidity fails before polling starts; runtime loss withdraws own and overlap keys; valid replacement restores trust; category transitions log safely without repeated polling noise. | [CallbackJwtTrust](../../../sdks/java/spring-boot-starter/src/main/java/ai/loomspan/sdk/spring/CallbackJwtTrust.java), [trust tests](../../../sdks/java/spring-boot-starter/src/test/java/ai/loomspan/sdk/spring/CallbackJwtTrustTest.java), [security integration tests](../../../sdks/java/spring-boot-starter/src/test/java/ai/loomspan/sdk/spring/CallbackSecurityAutoConfigurationTest.java) |
+| Callback authentication | Whole-prefix stateless bearer protection, exact issuer/roles, receiver audience, 60 s timestamp skew, no session authentication or body consumption; application authorization remains separate. | [security configuration](../../../sdks/java/spring-boot-starter/src/main/java/ai/loomspan/sdk/spring/CallbackSecurityAutoConfiguration.java), [decoder](../../../sdks/java/spring-boot-starter/src/main/java/ai/loomspan/sdk/spring/CallbackJwtDecoder.java), [decoder tests](../../../sdks/java/spring-boot-starter/src/test/java/ai/loomspan/sdk/spring/CallbackJwtDecoderTest.java) |
 
-**Required Java fix — agreed, not implemented:** correct oversized submission
-response classification and interruption after possible submission in
-`SidecarClient.request`. Preserve the interrupt flag and the distinction between
-pre-send interruption and uncertain submission. Retain observed HTTP error status
-when its body exceeds the response bound. Update the test that currently expects
-`ProtocolException` for an oversized 202 response. Verify fixed-length and streamed
-overflow, interruption before/after possible send, retained HTTP status, and one
-request attempt with no inferred execution ID. Status-read failures must retain
-their existing requested-ID/last-snapshot context.
+Important translation details from the source review:
 
-**Completed Java documentation:** the README now explains the existing explicit
-subject option; no identity API change is required.
+- Java disables retries, redirects, cookie management, authentication rechallenge
+  and automatic content compression. Its JSON reader rejects duplicate fields and
+  trailing JSON tokens. Python must not accidentally enable these behaviors through
+  transport/parser defaults. Preserve additive envelope fields and exact business
+  result strings without treating a result string as another JSON document.
+- Error problem details are optional: Java exposes only a complete bounded JSON
+  object, redacting the submitted credential from keys and values. Invalid or
+  oversized error bodies do not replace a known HTTP status or leak raw parser/body
+  diagnostics. Business result/failure/event contents are not generally sanitized.
+- Issuance and callback acceptance are different contracts. Java issues `iat` and
+  unique `jti`; the callback decoder requires `exp` but accepts absent `iat`, `nbf`
+  and `jti`. If present, time claims must be numeric and representable, and `jti`
+  must be a string. Audience may be a matching string or a string array. Do not
+  tighten Python validation simply by requiring every claim the issuer emits.
+- Java preserves fractional NumericDate values up to nanosecond resolution and
+  tests a one-nanosecond issuance lifetime. Python time/model representation must
+  be checked against those fixtures; integer-second coercion is not parity.
+- PEM parity includes complete input consumption, line endings, Base64 boundaries,
+  valid optional PKCS#8 attributes and a matching optional embedded public key.
+  Reuse the Java synthetic fixtures and rejection cases rather than assuming a
+  successful permissive library load proves the full input contract.
+- Java callback tests cover runtime trust withdrawal while an already-admitted
+  request finishes with its original identity. This does not replace Python tests
+  for that behavior or separately prove every expiry-during-callback scenario.
+- Spring-specific bean activation, filter chains and thread interrupt flags are not
+  Python APIs. Explicit FastAPI lifespan and normal Python cancellation are the
+  established adaptations; preserve authentication boundaries and error context.
+  Java's servlet firewall can reject malformed paths/TRACE before authentication.
+  Document actual ASGI/server rejection behavior rather than promising identical
+  container-specific status codes.
 
-**Deferred Java consideration:** client-only Spring starter activation awaits a
-demonstrated consumer need. It is not an agreed implementation task.
-
-**Agreed requirement: initialize callback trust before serving requests.** If an
-explicitly configured overlap-JWKS file is missing, unreadable, malformed or empty
-at security initialization, fail initialization with a clear, safe diagnostic.
-Without an overlap file configured, use the startup signer's public key; no
-overlap file is required. After successful startup, an unusable configured file
-withdraws all callback trust, including the own key, until valid trust returns.
-Keep the application running and let already-admitted callbacks finish. Report
-trust-state transitions with safe unavailable/invalid/restored diagnostics; do
-not log token/key contents, raw parser exceptions or repeated polling failures.
-
-**Required Java fix — agreed, not implemented:** make invalid configured initial
-overlap trust fail Spring startup, rather than starting with an empty trust set.
-Add safe state-transition diagnostics to callback trust reload. Preserve runtime
-withdrawal and automatic recovery. Verify startup failures for missing,
-unreadable, malformed and empty files; successful own-key-only startup when no
-file is configured; runtime withdrawal/recovery; and non-repetitive diagnostics
-without sensitive content. Ensure failed initialization leaves no polling task.
-
-**FastAPI implementation requirement:** initialize signing and callback security
-through an explicit managed lifecycle composed with the application's existing
-FastAPI lifespan. Propagate initialization failure to fail application startup
-before serving requests. Own trust-refresh work and cleanup through that lifecycle,
-including partial initialization failure. Do not attach overlap-file validation
-to the standalone HTTP client constructor: the client transports credentials,
-while callback security owns verification trust. Protect the configured callback
-prefix as a whole. Exact installation API remains to be designed; avoid implicit
-Spring-style autoconfiguration or replacing application lifespan hooks.
-
-### Java baseline review for Python design (2026-11-03)
-
-Discussion approach agreed by the developer: review Java for concrete weaknesses
-and discuss exceptions, rather than repeat the original design questionnaire.
-Retain settled behavior unless evidence warrants reopening it. The following is
-a source-and-test review, not a new runtime verification pass or authorization to
-change Java. No production code was changed. Decision status is recorded in the
-section above and in each item's discussion notes.
-
-1. **Separate client use from issuance/security activation.** The Spring starter's
-   `ExecutionTokenAutoConfiguration` unconditionally creates signing and issuance
-   beans, and the servlet integration installs callback security. Its tests
-   explicitly require startup failure when signing mode is absent, even with a
-   supplied client bean. An application using already-issued credentials therefore
-   cannot use the ordinary starter configuration as a client-only integration
-   without exclusions or bypassing it. Java core already supports this use case.
-   Recommend independently usable client and explicitly activated security setup;
-   keep the complete security setup convenient, and fail on invalid configuration
-   once activated. Do not require private signing keys merely to call Sidecar.
-   Python should not inherit this coupling. Decide whether to simplify Java's
-   starter activation in parallel; no general plugin system is needed.
-   **Discussion decision:** defer Java starter activation changes until actual
-   client needs justify them. Potential beneficiaries are workers receiving
-   already-issued credentials or apps using a separate issuer, not the main
-   authenticate/issue/callback application flow. Java core already supports
-   credential-only client use. This is a convenience tradeoff, not a demonstrated
-   defect requiring immediate change.
-2. **Make stable subject selection explicit.** `SpringExecutionTokenIssuer`
-   uses `Authentication.getName()` as `sub`. That is an application-defined name,
-   not a guarantee of immutable account identity. For applications whose names
-   can be changed or reassigned, issuer-plus-subject ownership can split one
-   person's identity or conflate successive owners of a name. This is conditional
-   on the application's identity semantics, not a universal Spring defect.
-   Recommend a clear contract and example for selecting a stable, non-reassigned
-   application account ID. Java's existing core `AuthenticatedIdentity` already
-   provides the escape hatch; determine whether documentation suffices before
-   adding any adapter API. Python's explicit trusted adapter should select the
-   subject deliberately. This requires no LDAP/DB/provider lookup by the SDK.
-   **Discussion clarification:** the SDK cannot determine whether an application's
-   authentication name is stable or unique in its issuer namespace. A username
-   rename can break continuity; reassignment can make a new account appear to own
-   records associated with the former account's issuer/subject. Neither occurs
-   merely because `getName()` is used: applications guaranteeing suitable names
-   can keep the existing adapter. Prefer an immutable account identifier when
-   names are mutable/reusable; it need not be a UUID. The callback authentication
-   name becomes that chosen subject, so applications expecting a display/login
-   name must account for that deliberately. First assess whether existing Spring
-   principal configuration or direct core issuance is sufficient before adding
-   SDK customization machinery. No identity API change is agreed yet.
-   **Agreed direction and scope correction:** improve subject-contract guidance,
-   retain the existing adapter, and show direct `AuthenticatedIdentity` use where
-   needed. The developer correctly notes that in-flight identity is a snapshot
-   in ordinary Spring applications too. A rename during execution is not a new
-   Sidecar-specific identity defect, and the SDK should not reconcile live account
-   changes. Sidecar does use issuer/subject for execution ownership, in addition
-   to forwarding the credential, but this does not justify a new identity model.
-   The earlier recycled-name example concerns applications using names as durable
-   ownership identifiers; it is not evidence of a flaw in the intended round-trip
-   flow. Treat this as modest documentation clarification, not an SDK redesign
-   or a requirement to replace otherwise suitable application usernames.
-   **Documentation completed:** added a short example to `sdks/java/README.md`
-   explaining explicit core issuance with an application-selected subject and
-   its callback authentication-name consequence. No Java API change was needed.
-3. **Correct submission error classification before using it as parity evidence.**
-   `SidecarClient.request` throws `ProtocolException` directly on body-size overflow
-   even after a 202 submission response. `SidecarClientEdgeTest` explicitly expects
-   this behavior. The operation may have been accepted but has no reliable ID;
-   it belongs to the documented acceptance-unknown outcome. Interruption after
-   possible submission instead takes the generic `WaitTerminatedException` branch,
-   even though no wait operation was requested. Recommend preserving uncertainty
-   consistently for Java submission failures and distinguishing pre-send failure
-   from possible-send outcomes. Also retain a known HTTP error status when an
-   error body exceeds the limit. Python cancellation must still propagate normally;
-   document possible acceptance rather than replacing cancellation with a Java-style
-   exception or replaying the request. These are corrections/translation work,
-   not reasons to reconsider the single-attempt execution contract.
-4. **Make fail-closed trust failures diagnosable.** `CallbackJwtTrust.reload`
-   silently replaces trust with an empty map on unreadable/invalid configured
-   overlap. Its snapshot exposes keys but no failure reason, and the normal callback
-   path returns generic invalid-credential responses. A bad overlap file at startup
-   also leaves the application running with empty trust rather than failing startup.
-   This implements denial correctly but makes operator recovery harder than needed.
-   Recommend safe state-transition diagnostics (unavailable/invalid/restored, no
-   token/key contents, no once-per-second log flood). Decide explicitly whether
-   invalid initial overlap fails startup or starts with callbacks unavailable;
-   the Python notes currently promise startup failure while Java does the latter.
-   **Decision:** initial invalid overlap now must fail security/application startup,
-   with Java fixes and FastAPI requirements recorded above. Keep the runtime
-   fail-closed/recovery rule; do not introduce stale-key fallback
-   or an elaborate health/rotation subsystem to solve an observability gap.
-
-Source anchors: `SidecarClient.java` body bounds and exception handling;
-`SidecarClientEdgeTest.boundsResponsesReleasesResourcesAndClosesIdempotently`;
-`ExecutionTokenAutoConfiguration` and its missing-mode tests;
-`SpringExecutionTokenIssuer.issueCurrent`; `CallbackJwtTrust.reload` and its
-withdrawal/recovery tests, all under `sdks/java`.
-
-No concrete reason was found in this review to reopen the agreed key modes,
-operator-managed rotation, exact role intersection, result fidelity, no automatic
-replay, or application-owned authentication. JKS support was subsequently removed
-from the target by the shared PEM decision. Python sync/async
-lifecycle and cancellation are language adaptations, not flaws in Java's blocking
-API. The 15-minute default remains provisional, not a demonstrated defect.
+Earlier Java follow-ups for submission uncertainty and callback startup are
+implemented in this checkout. Explicit-subject documentation also exists. No new
+Java change was identified as necessary to proceed with Python planning.
 
 The neighboring `loomspan-sidecar-test-suite` is a concrete consumer and a useful
 acceptance environment, not the definition of the public product contract.
@@ -413,7 +235,7 @@ colocated/provided signing, and has an explicit callback overlap-trust lifecycle
 | TLS | Standard Python SSL context; verified certificates/hostnames | Provision trust and optional client identity at the correct hop |
 | Lifecycle | Context-managed clients and application-managed security startup/shutdown | Integrate with application lifespan and deployment topology |
 
-Recommend one independently versioned distribution under `sdks/python`, with a
+Use one independently versioned distribution under `sdks/python`, with a
 core import surface and optional FastAPI integration extra. Core must import and
 run without FastAPI, Starlette or an ASGI server. A sync client gives ordinary
 Python users Java-equivalent blocking behavior; an async client is required for
@@ -423,7 +245,7 @@ do not run a private event loop inside the synchronous API.
 The suite already uses HTTPX, PyJWT and cryptography. They are implementation
 candidates, not decisions that this document establishes as compatible versions.
 Implementation planning must verify supported Python/library versions, packaging,
-transport retry behavior and cryptographic/keystore capabilities. Declare direct
+transport retry behavior and strict PEM/cryptographic capabilities. Declare direct
 dependencies explicitly rather than relying on transitive availability.
 
 ## Client contract
@@ -431,13 +253,25 @@ dependencies explicitly rather than relying on transitive availability.
 Proposed operations are `list_skills`, `get_skill`, `submit`, `get_execution` and
 `wait_for_completion`. Offer sync/async variants with equivalent outcomes and
 typed immutable response objects. Preserve public optional fields and tolerate
-additive fields while rejecting malformed required envelopes.
+additive fields while rejecting malformed required envelopes, duplicate JSON
+fields and trailing JSON tokens.
+
+Carry the complete Java public model: descriptor name/description/kind and schema
+strings; execution ID, skill name, status, creation/completion timestamps, result,
+primary failure with issues, optional configuration ID and optional events with
+timestamp/level/type/details/frame ID/route. Preserve absent event history versus
+an empty list. Terminal snapshots require completion time, and FAILED requires its
+primary failure. Copy mutable nested data at boundaries so consumers cannot mutate
+retained snapshots or problem details. This needs small typed models and defensive
+copies, not a general immutable-JSON library.
 
 Match the Java defaults: 2-second connection timeout, 10-second response timeout,
 8 MiB response bound, and a per-wait 60-second total budget with 250 ms polling.
 Validate positive finite limits. A response deadline covers body consumption;
-waiting bounds each read by the remaining total budget. Bound streamed and
-decompressed response data rather than trusting Content-Length.
+waiting bounds each read by the remaining total budget. Bound streamed response
+bytes rather than trusting Content-Length. Match Java by disabling automatic
+compression negotiation/decompression; do not introduce
+compressed-response support as an incidental transport-library behavior.
 
 Require an absolute HTTP(S) base URL without userinfo/query/fragment and preserve
 its base path. Encode accepted skill names as one path segment; reject blank,
@@ -445,7 +279,8 @@ control, slash, backslash, percent and dot-segment names consistently with Java.
 Build status URLs from the configured origin and accepted UUID, never `Location`.
 Validate status IDs against the requested execution ID.
 
-Submission accepts a JSON object and returns an acceptance UUID. It does not
+Submission accepts a JSON object and returns an acceptance UUID from a complete,
+valid HTTP 202 body. Reads require HTTP 200, matching Java. It does not
 validate business schemas or wait implicitly. Preserve result text exactly after
 JSON envelope decoding: null, empty, Unicode, non-JSON and malformed-JSON-looking
 strings remain distinct. A server `FAILED` status is a terminal snapshot with the
@@ -455,9 +290,9 @@ configuration identity are optional; do not invent missing diagnostics.
 | Condition | Proposed Python outcome |
 | --- | --- |
 | Invalid input/credential or closed client before send | `LocalFailure`; no request |
-| HTTP error response | `HttpFailure`, status and available public problem details |
+| HTTP error response | `HttpFailure`, observed status even with an oversized/unusable body; optional bounded, credential-redacted problem object |
 | Lost/unusable submission response after possible send | `AcceptanceUnknown`; never infer an ID or resubmit |
-| Malformed/mismatched/oversized status response | `ProtocolFailure` |
+| Malformed/mismatched/oversized successful discovery or status response | `ProtocolFailure`; retain requested execution ID for status reads |
 | Wait deadline ends | `WaitTerminated`, execution ID and last valid snapshot |
 | Server execution fails | Normal terminal snapshot containing original failure |
 
@@ -466,13 +301,46 @@ authentication rechallenge replay and cookie persistence. Do not attach user
 Authorization to shared client defaults. Concurrent users must have isolated
 request credentials. HTTP failure does not prove that work had no effect.
 
+Clients own their connection resources. Sync `close` and async `aclose` (or their
+context-manager exits) release resources idempotently and reject subsequent calls.
+Release incomplete responses after failure/cancellation; do not drain an unbounded
+body for connection reuse. Ordinary SDK exception messages and displayed exception
+chains must not expose raw transport credentials, private material or parser input.
+Structured business details remain available deliberately; arbitrary introspection
+or third-party wire logging is not something the SDK can make secret-safe.
+
 Polling repeats only successful nonterminal reads and stops on the first failed
-read. Neither stopping a wait nor closing the client cancels server work. For
-async callers, preserve normal cancellation propagation; cancellation of submit
-after sending can leave acceptance unknown. Document that explicitly and do not
-swallow cancellation or automatically repeat the operation. Planning should
-settle how a cancelled wait exposes its last snapshot without violating Python
-cancellation conventions.
+read. Neither stopping a wait nor closing the client cancels server work.
+
+### Agreed cancellation and wait context (2026-11-07)
+
+Keep the Java-style context on SDK exceptions and let native Python cancellation
+propagate normally. Do not introduce a `WaitState` object, cancellation-specific
+state holder, background polling handle or recovery mechanism.
+
+- SDK wait-budget expiry raises `WaitTerminated` with the execution ID and last
+  valid snapshot, or no snapshot if no status read succeeded.
+- SDK HTTP/protocol failures during waiting retain their error category, requested
+  execution ID and last valid snapshot. A standalone status-read failure retains
+  the requested ID; there is no earlier snapshot to invent.
+- External async cancellation propagates as the runtime's native cancellation
+  exception after local resource cleanup. Do not wrap it in an SDK exception,
+  attach snapshot state to it, swallow it or translate it into an SDK wait timeout.
+  An enclosing application timeout may apply its own normal exception semantics.
+- Synchronous `KeyboardInterrupt` likewise propagates normally after cleanup;
+  do not emulate Java thread interruption with a new Python cancellation API.
+- Native cancellation/interruption carries no SDK guarantee of a last snapshot.
+  Callers already holding an accepted execution ID may explicitly fetch current
+  status or begin another wait. The prior snapshot on an SDK exception is only
+  the last observed state and may be stale; it is not restored execution state.
+- Cancellation/interruption of submission after possible dispatch can leave
+  acceptance unknown without a reliable execution ID. Preserve native propagation,
+  document possible server effects and never automatically resubmit or infer an ID.
+
+This is the deliberate Python adaptation of Java interruption behavior. Preserve
+Java's SDK error context without adding machinery solely to recover progress from
+native cancellation. Test SDK timeout/error context, cancellation propagation and
+cleanup during polling/sleep/body reads, and no replay or remote cancellation.
 
 Use normal certificate and hostname validation; no insecure convenience switch.
 Allow explicit standard SSL contexts for private CA trust and client identity
@@ -505,11 +373,14 @@ Match Java's issuance profile:
 - Default issuer `loomspan-app`, lifetime 15 minutes, audiences containing
   `loomspan-sidecar` plus the issuer and deduplicated additional audiences.
 - Roles are the exact intersection of verified authorities and the configured
-  allowlist, deduplicated; an empty list is valid. Never add or strip `ROLE_`.
-- Positive lifetime with a warning above one hour, matching Java's current
-  behavior. Roles are snapshots, not live authorization-account lookups.
+  allowlist, deduplicated; an empty list is valid. The allowlist defaults to empty,
+  so no roles are granted by default. Reject blank/non-string authority names;
+  never add or strip `ROLE_`.
+- Positive representable lifetime with a warning above one hour and no policy
+  maximum, matching Java's current behavior. Roles are snapshots, not live
+  authorization-account lookups.
 
-### Source-login expiry is an explicit design decision
+### Independent lifetime follows Java
 
 The suite caps issuance to `min(login expiry, now + 600 seconds)`. Java's current
 `AuthenticatedIdentity` contains only subject/authorities, and its issuer uses
@@ -518,9 +389,9 @@ Do not incorrectly describe the suite policy as existing Java parity.
 
 The suite's cap is an incidental implementation choice, not an approved SDK
 requirement. Removing it would be a behavioral change, not automatically a defect
-or security regression. The current recommendation is Java-equivalent independent
-configured lifetime, with no Python-only `expires_at` extension unless a concrete
-requirement is established. If revisited, consider both SDKs together. Do not
+or security regression. The baseline is Java-equivalent independent configured
+lifetime with the 15-minute default, with no Python-only `expires_at` extension
+unless a concrete requirement is established. If revisited, consider both SDKs together. Do not
 invent a source-token expiry for LDAP, database or session authentication.
 Neither independent expiry nor a source-expiry cap automatically propagates
 logout, account revocation or authority changes to already-issued credentials.
@@ -534,20 +405,20 @@ material is missing or invalid.
 at startup; atomically publish only its public JWKS into an existing directory.
 Restart changes the signing identity. One process owns the export path. FastAPI
 multiworker deployments cannot each run colocated signing against one file;
-use provided shared identity for multiple workers/replicas. Do not silently turn
-colocated mode into persistent private-key storage.
+use provided shared identity for multiple workers/replicas, with one writer per
+public export path in either mode. Do not silently turn colocated mode into
+persistent private-key storage.
 
 **Provided:** load operator-owned RSA material once at startup, validate strength
 and format, and atomically export public JWKS.
-Java currently supports PKCS12, JKS and unencrypted PKCS#8 PEM. The revised
-cross-SDK target is PEM-only provided signing, retaining colocated generation.
-Remove obsolete keystore-specific contracts directly in the planned Java change;
-do not add custom parsers or compatibility paths. Accept unencrypted PKCS#8 only
+Current Java implements PEM-only provided signing, retaining colocated generation.
+Python implements that contract directly; do not add obsolete keystore settings,
+custom parsers or compatibility paths. Accept unencrypted PKCS#8 only
 and remove signing-certificate inputs/export, following the
 [shared PEM signing design](sdk-pem-signing-design-notes.md).
 
-Remove obsolete signing format, alias, password and certificate settings. Reject
-obsolete configuration clearly and reject output paths overlapping private input.
+Expose no signing format, alias, password or certificate settings. Reject
+unsupported configuration clearly and reject output paths overlapping private input.
 Export parents must already exist. Atomic export failure aborts startup; there
 is no non-atomic fallback. Private keys never enter JWKS, diagnostics or bundles.
 Provided-key changes take effect by restart. TLS certificate configuration remains
@@ -557,9 +428,21 @@ Callback trust is distinct from Sidecar's trust configuration. Match Java's own
 startup public key plus optional local overlap-JWKS file, loaded at startup,
 polled every second, and refreshed on unknown `kid` at most once per second.
 Validate complete public RSA key sets before atomic replacement. A configured
-missing/unreadable/malformed/empty overlap file withdraws all callback trust,
-including the own key, until valid trust returns. No stale-key fallback or private
-signer reload. Withdrawal affects new authentication, not already admitted work.
+missing/unreadable/malformed/empty overlap file fails security/application startup.
+After successful startup, detecting such a file withdraws all callback trust,
+including the own key, until valid trust returns. Log safe state transitions
+without token/key/parser content or repeated polling noise; initial failure must
+leave no refresh task. No stale-key fallback or private signer reload. Withdrawal
+affects new authentication, not already admitted work.
+
+Match Java's whole-set validation: valid UTF-8 JWKS with a nonempty key array,
+public RSA keys of at least 2048 bits with valid modulus/exponent, unique nonblank
+kids, no private members, and compatible `use`/`alg` when present. A conflicting kid
+between own and overlap keys invalidates the set; an identical own key is allowed.
+Do not silently skip invalid entries. No overlap file means no polling/file reads.
+Unknown-kid refresh is throttled across requests for that trust instance, not per
+attacker-supplied kid. Use the current Java validator and fixtures as the detailed
+baseline; this is not remote JWKS discovery or a historical key cache.
 
 This is deliberately different from copying the suite's request-by-request file
 read verbatim. Keep file I/O and cryptographic startup work off the async request
@@ -570,13 +453,22 @@ event loop, and manage background trust-refresh work through application lifespa
 Provide a small explicit installation API that protects an entire configured
 callback prefix, plus a typed dependency exposing the verified principal to
 handlers. Default prefix: `/loomspan/callbacks`, including its descendants but
-not similarly named siblings. A bare per-handler dependency is insufficient as
+not similarly named siblings. Match Java's configurable literal, absolute non-root
+prefix: normalize a trailing slash and reject wildcards, query/fragment, whitespace,
+controls, encoding/parameter markers, backslash and empty/dot segments. Reject blank
+explicit audience/overlap settings. There is one issuance issuer; no separate
+callback issuer or dynamic per-route trust configuration is needed.
+
+A bare per-handler dependency is insufficient as
 the only guard: forgetting it on a new route must not expose the callback area.
 
-Recommended shape: prefix-scoped ASGI authentication enforcement with an
+Agreed shape: prefix-scoped ASGI authentication enforcement with an
 `APIRouter` integration and a request-scoped principal dependency. Compose with
 the application's existing lifespan; do not replace its startup/shutdown hooks.
-Security initialization failure must fail application startup. Document middleware
+Security initialization failure must fail application startup. Callback trust
+validation belongs to security initialization, not the standalone client constructor.
+Initialize mounted callback security through the owning application lifespan and
+clean up partial initialization as well as normal shutdown. Document middleware
 ordering and mounted-app/root-path behavior and test the protected routing boundary.
 
 Match Java's externally visible security rules:
@@ -590,7 +482,7 @@ Match Java's externally visible security rules:
   roles and audience shapes, trusted signature and timestamps. Use the issuance
   issuer, with audience defaulting to that issuer and an explicit override.
 - Match Java's 60-second callback timestamp skew; Sidecar still enforces strict
-  credential expiry before forwarding. Source-expiry bounding is a separate policy.
+  credential expiry before forwarding. Issuance retains independent lifetime.
 - GET and POST are allowed after authentication. Authenticated other methods return
   403, including automatic HEAD/OPTIONS behavior unless an explicit future product
   decision changes both contracts. Without authentication they return 401.
@@ -612,40 +504,166 @@ boundary under application control. Callback isolation must not disable CSRF or
 change authentication behavior on unrelated routes. Clear request-local identity
 after each request, including errors and cancellations.
 
-## Proposed developer experience
+## Agreed FastAPI API and lifecycle approach (2026-11-07)
 
-Illustrative API sketch only; names and installation mechanics need implementation
-planning. Settings and resources are initialized once by application lifespan.
+The developer accepted a small FastAPI integration object providing lifespan
+management and typed dependencies, backed by independently usable core clients and
+issuance classes. Use ordinary `FastAPI`, `APIRouter`, `Depends` and `async with`.
+The architecture below is agreed; exact Python names remain illustrative and no
+Python implementation or runnable quickstart is claimed yet.
+
+### Explicit construction and application-owned lifetime
+
+Constructing typed settings and the integration object may validate configuration
+but performs no file access, key generation, network access or background work.
+Entering its async lifespan initializes the signer, exports public JWKS, validates
+callback trust, starts owned trust-refresh work and opens the reusable async client.
+Initialization failure prevents startup and cleans up partially initialized
+resources. Exiting cleans up owned resources without cancelling remote executions.
+Compose this lifecycle explicitly with the application's existing lifespan; do not
+replace hooks or depend on automatic lifespan execution for mounted applications.
+Runtime resources belong to the application instance. There is no global current
+user, shared per-user credential or implicit request identity propagation.
+
+Illustrative setup (proposed SDK imports):
 
 ```python
-# public_user is supplied by the app's existing verified login dependency.
-async def start_assessment(body, public_user, sdk):
-    identity = AuthenticatedIdentity(
-        subject=public_user.subject,
-        authorities=public_user.authorities,
-    )
-    credential = sdk.issuer.issue(identity)
-    return await sdk.client.submit("assessEquipment", body, credential)
+from contextlib import asynccontextmanager
+from pathlib import Path
 
-# callbacks belongs to the prefix protected when SDK security is installed.
-@callbacks.post("/equipment/{asset_id}")
-async def equipment_callback(
-    asset_id: str,
-    principal=Depends(sdk.callback_principal),
-):
-    require_authority(principal, "ASSESS_EQUIPMENT")
-    equipment.require_owner(asset_id, principal.issuer, principal.subject)
-    return equipment.lookup(asset_id)
+from fastapi import FastAPI
+
+from loomspan_sdk import IssuanceSettings, ProvidedSigning
+from loomspan_sdk.fastapi import Loomspan, CallbackMiddleware
+
+loomspan = Loomspan(
+    base_url="http://localhost:8080",
+    signing=ProvidedSigning(
+        key_location=Path("/run/secrets/signer.pem"),
+        jwks_export=Path("/run/public/jwks.json"),
+    ),
+    issuance=IssuanceSettings(roles=["ASSESS_EQUIPMENT"]),
+)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with loomspan.lifespan(app):
+        # Compose the application's other managed resources here.
+        yield
+
+
+app = FastAPI(lifespan=lifespan)
+app.add_middleware(CallbackMiddleware, loomspan=loomspan)
 ```
 
-The real quickstart must include imports, lifespan and configuration, a protected
-router and a runnable local example. The SDK must not guess Keycloak claim names.
-Provide a short application adapter example and explain exact role mapping at the
-login boundary. Secrets must not appear in generated OpenAPI examples or errors.
+Keep public export ownership explicit: one writer per export path even when
+multiple provided-key workers share signing identity. The example is one process;
+production worker configuration must respect that rule. A provided-key replica
+recipe can use the same private identity with a separate export path/directory per
+process. Operators choose/distribute the corresponding public trust. Do not add
+leader election, locks or a shared export service to make multiple processes own
+one export path. Verify the recipe in planning instead of presenting a generic
+multiworker command as sufficient configuration.
 
-Usability acceptance: a developer can replace the suite's custom JWT implementation
-with SDK configuration and a small trusted identity adapter; ordinary submit/poll
-code and business callbacks do not manipulate token claims, files or signatures.
+### Typed dependencies and explicit issuance
+
+Expose dependencies for client, issuer and callback principal (illustratively
+`loomspan.client`, `loomspan.issuer`, `loomspan.principal`). Support ordinary FastAPI
+dependency overrides for application tests. The integration resolves resources
+from the initialized application; it must not lazily initialize them per request.
+
+The application supplies its existing verified user dependency. It constructs
+`AuthenticatedIdentity` explicitly and passes issued credentials per client call;
+repeated mapping can be factored into an application dependency. No SDK identity-
+provider registry, claim guessing or required login-token format is introduced.
+
+```python
+from typing import Annotated
+from fastapi import APIRouter, Depends
+from loomspan_sdk import (
+    AsyncSidecarClient, AuthenticatedIdentity, ExecutionTokenIssuer,
+)
+from loomspan_sdk.fastapi import CallbackPrincipal
+
+# AssessmentInput, User, current_user, require_authority and equipment are
+# application-owned business models, authentication and authorization code.
+@app.post("/assessments")
+async def start_assessment(
+    body: AssessmentInput,
+    user: Annotated[User, Depends(current_user)],
+    issuer: Annotated[ExecutionTokenIssuer, Depends(loomspan.issuer)],
+    client: Annotated[AsyncSidecarClient, Depends(loomspan.client)],
+):
+    identity = AuthenticatedIdentity(
+        subject=user.account_id,
+        authorities=user.authorities,
+    )
+    credential = issuer.issue(identity)
+    accepted = await client.submit(
+        "assessEquipment", body.model_dump(), credential=credential,
+    )
+    return {"execution_id": str(accepted.id)}
+
+
+callbacks = APIRouter(prefix=loomspan.callback_prefix)
+
+
+@callbacks.get("/equipment/{asset_id}")
+async def equipment_callback(
+    asset_id: str,
+    principal: Annotated[CallbackPrincipal, Depends(loomspan.principal)],
+):
+    require_authority(principal, "ASSESS_EQUIPMENT")
+    return equipment.lookup_for_owner(
+        asset_id, principal.issuer, principal.subject,
+    )
+
+
+app.include_router(callbacks)
+```
+
+### Prefix-wide enforcement with ordinary routers
+
+One pure ASGI middleware protects the entire configured prefix, including routes
+that omit the principal dependency. The dependency retrieves verified request-local
+identity; it is not the authentication boundary. Do not require a custom router
+class or callback decorator. Inspect raw headers and leave bodies untouched.
+
+Document and test ordering with browser authentication/redirect middleware and
+CORS handling so application middleware cannot bypass or change the callback
+security contract. Installation without initialized security must fail closed;
+it must never serve an unprotected callback. Keep unrelated route authentication
+and CSRF behavior under application control. Test mounts/root paths, startup failure,
+cleanup, omitted principal dependencies and concurrent-user isolation.
+
+### Core remains independently usable
+
+Client-only scripts/workers can use an already-issued credential without the
+FastAPI integration, private signer or callback configuration, matching Java core:
+
+```python
+async with AsyncSidecarClient(base_url=url) as client:
+    accepted = await client.submit(
+        "assessEquipment", payload, credential=credential,
+    )
+```
+
+The initial integration surface is one integration object, one middleware and
+three dependencies, with ordinary routers. Exact naming, resource storage and
+middleware mechanics are implementation details to prove with the complete
+quickstart and tests, not new architecture decisions. Do not require a settings
+framework, ASGI server or web dependencies in core.
+
+The delivered quickstart must include actual imports, runnable local configuration,
+a small trusted identity adapter and business authorization examples. Secrets must
+not appear in generated OpenAPI examples or errors. Usability acceptance remains
+replacement of the suite's custom JWT logic without business handlers manipulating
+token claims, files or signatures.
+
+References for the selected framework conventions:
+[FastAPI lifespan](https://fastapi.tiangolo.com/advanced/events/) and
+[Starlette pure ASGI middleware](https://starlette.dev/middleware/).
 
 ## Adoption in the maintained suite
 
@@ -668,10 +686,13 @@ review. Add no client-specific Sidecar behavior and no new Framework extension.
 
 ## Verification and delivery outline
 
-Create separate dated implementation tickets through Sidecar's pipeline after
-settling the decisions below. Each unit owns its tests and documentation.
+Create separate dated implementation tickets through Sidecar's pipeline using
+the settled decisions in this note. Public API, security and lifecycle
+implementation requires the Full 5-Step Pipeline; this documentation refresh does
+not authorize production implementation. Each unit owns its tests and documentation.
 
-1. **Core transport and public models:** sync/async clients, credentials, errors,
+1. **Package foundation, core transport and public models:** independent packaging,
+   typed core imports without web dependencies, sync/async clients, credentials, errors,
    bounded reads, lifecycle and plain-Python examples. Test exact result fidelity,
    malformed envelopes, IDs/paths, concurrent users, timeout/cancellation and one
    attempt on lost submission responses. Core import tests exclude FastAPI.
@@ -705,314 +726,141 @@ for this unimplemented SDK. Default verification uses local fixtures with provid
 access disabled. Paid calls, publication and operational data changes need their
 own explicit scope; this writeup authorizes none of them.
 
-## Decisions to settle during implementation planning
+## Agreed packaging and support commitments (2026-11-07)
 
-### Greenfield security alternative for discussion
+The developer accepted the following packaging choices and initial release targets.
+Support is earned through installation and SDK verification before release; these
+are not claims of compatibility for an SDK that has not yet been implemented.
 
-**Current decision, 2026-11-06:** proceed with the PEM-only provided-signing
-direction for both SDKs, keeping colocated generation. The earlier alternatives
-and dependency findings below explain the decision but do not override it.
-The multi-application namespace example introduces no new isolation requirement.
-The [shared PEM signing design](sdk-pem-signing-design-notes.md) now owns the
-cross-SDK decisions and remaining implementation details. The discussion below
-preserves research context; it does not override that design's agreed scope.
+| Area | Decision |
+| --- | --- |
+| Distribution / import | `loomspan-sdk` / `loomspan_sdk` |
+| Installation | `pip install loomspan-sdk` for core; `pip install "loomspan-sdk[fastapi]"` for integration |
+| Layout | Independent project at `sdks/python`, with `src/loomspan_sdk/` and standard `pyproject.toml` |
+| Artifacts | Wheel and source distribution, type annotations and packaged `py.typed` |
+| Version | Start development at `0.1.0.dev0`, progressing toward `0.1.0`; version independently of Java SDK, Sidecar and Framework |
+| Python | Standard CPython 3.12 minimum; initial tested support target 3.12Ã¢â‚¬â€œ3.15 |
+| Metadata | `requires-python = ">=3.12"`; separately document versions actually tested |
+| Platforms | Linux x86-64 for production/composed integration; Windows x86-64 for development/deployment; macOS ARM64 for development/local use |
+| Other runtimes | No initial support commitment for PyPy or free-threaded CPython |
 
-Remaining decisions for that note:
-- Encryption is settled: unencrypted PKCS#8 only for now. Remove signing-key
-  password settings with obsolete keystore settings; encrypted PEM must fail
-  startup clearly. Operator-managed secret delivery, storage and access controls
-  protect provided private keys. No automatic decryption or conversion is added.
-- One RSA private key per provided file, minimum 2048 bits and RS256 retained;
-  reject unsupported/ambiguous material with safe startup diagnostics.
-- Certificates are settled: remove signing-certificate input, chain handling,
-  expiry warnings and x5c export. TLS/mTLS certificates are unaffected.
-- Final reduced provided-signing settings and direct rejection/removal of obsolete
-  format, alias and store-password options. No automatic keystore conversion.
-- Inventory Java/suite fixtures, recipes and documentation affected by removal;
-  preserve existing key identity where needed through deliberate operator/test
-  preparation. Do not regenerate persisted credentials or reset data incidentally.
-  Define cross-language fixtures for loading, kid/JWKS equality and token verification.
+A lookup of the proposed PyPI project URL during the packaging discussion returned
+404. This does not establish name availability or ownership. Confirm those before
+publication; do not publish or reserve a name as part of implementation planning.
+New Python releases become supported after verification, not automatically because
+they satisfy the metadata minimum. Python 3.12 was selected for a longer support
+runway than 3.11; the official lifecycle table lists October 2028 versus October
+2027 end of support. Recheck timelines when planning later support changes.
 
-**Encrypted PEM assessment (2026-11-06; decision: defer encrypted support):** its concrete benefit
-is protecting a stolen/copied private-key file when the attacker does not also
-obtain the decryption password, subject to password strength and key-derivation
-cost. It can support operator policies requiring encrypted key files. It does not
-strengthen JWT signatures, RBAC or TLS and does not protect a compromised running
-signer, which can use the decrypted key. Unattended startup still requires access
-to a password, so separation of password delivery from key-file storage matters.
+### Dependencies and installation boundary
 
-Python cryptography already accepts a password in its PEM loader; modern .NET
-RSA has ImportFromEncryptedPem. Java 21 provides EncryptedPrivateKeyInfo and JCA
-decryption primitives, but mapping supported PBES2 parameters/provider behavior
-needs a concrete interoperability proof, not an assumption of a one-call loader.
-Go's standard crypto/x509 PKCS8 parser explicitly handles unencrypted keys;
-encrypted PKCS8 needs an additional vetted package (youmark/pkcs8 is a candidate,
-not a selected/audited dependency) or additional implementation. Do not use legacy
-encrypted PEM support as a substitute for encrypted PKCS8.
+Core includes the selected HTTP transport and signing dependencies. Web integration
+dependencies belong to the `fastapi` extra; core imports and runs without FastAPI,
+Starlette or an ASGI server. Do not install Uvicorn, a FastAPI CLI, identity provider
+or settings framework as a consumer requirement. There is no JKS extra.
 
-Estimated incremental complexity: low in Python/.NET loading code; moderate in
-Java and Go; moderate ongoing cross-SDK configuration/testing cost. This is a
-qualitative estimate from API research, not a four-runtime execution result.
-Common work includes env/file password references, wrong/missing/unexpected
-password handling, safe startup diagnostics, encoding rules, and a bounded
-interoperable encryption profile. PBES2 with PBKDF2-HMAC-SHA256 and AES-256-CBC is
-a candidate to test, not an approved profile or iteration-count recommendation.
-Avoid promising arbitrary encrypted PEM algorithms. Decryption occurs at startup,
-not per token; colocated in-memory generation is unaffected.
+Declare directly used libraries directly. Publish tested dependency ranges in
+package metadata and keep pinned development/test environments. Verify both the
+declared minimum dependencies and a current compatible set. Exact HTTP transport,
+JWT, cryptography and FastAPI bounds follow the feasibility work below; candidate
+libraries are not selected merely by being named in earlier research.
 
-Recommendation: support unencrypted PKCS8 first unless encrypted-file provisioning
-is an actual target requirement. This is an operator-storage capability rather
-than a prerequisite for secure token transport. If encrypted support is desired,
-scope it to one tested profile and retain existing secret-reference discipline;
-do not implement bespoke cryptography. The developer chose unencrypted PEM for
-now; the optional encrypted-profile discussion above is deferred research, not
-an implementation requirement.
-Sources: [Python loader](https://cryptography.io/en/50.0.2/hazmat/primitives/asymmetric/serialization/),
-[.NET loader](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.rsa.importfromencryptedpem),
-[Java 21 API](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/javax/crypto/EncryptedPrivateKeyInfo.html),
-[Go parser](https://go.dev/src/crypto/x509/pkcs8.go),
-[Go candidate](https://github.com/youmark/pkcs8), and
-[OpenSSL PKCS8 options](https://docs.openssl.org/3.5/man1/openssl-pkcs8/).
+### Proportional verification and release support
 
-**Signing certificates: removal agreed 2026-11-06.** Current Java optionally
-loads a certificate alongside PEM, checks that its public key matches, warns on
-expiry/near expiry, and exports certificate data as JWKS x5c. Sidecar and SDK
-callback validators construct trusted RSA keys from configured JWKS n/e/kid;
-they do not establish trust by validating x5c certificate chains or expiry.
-Colocated signing already works without certificates. Recommendation: remove
-optional signing-certificate configuration/export in the simplified contract,
-unless an external consumer concretely requires x5c. Export the public RSA JWK
-directly from the signer. This removes certificate loading, correspondence checks,
-chain handling and expiry warnings without changing the current explicit-JWKS
-trust model. TLS/mTLS certificates remain separately supported through normal
-server/client TLS configuration. Implement removal in Java and omit this capability
-from Python, following the shared signing design. No production code is changed yet.
+Run the CPython 3.12Ã¢â‚¬â€œ3.15 matrix on Linux and the SDK suite on one selected supported
+Python version on Windows and macOS. Cover installed-package behavior, PEM loading,
+atomic exports, TLS and lifecycle on each target platform. Run expensive composed
+Sidecar scenarios on one representative Linux configuration rather than every
+Python/OS combination. Use representative minimum/current dependency environments
+rather than a full dependency-by-platform Cartesian product. Test the installed
+wheel and build/install the source
+distribution; repository imports alone do not prove the package works.
 
-Retain agreed token profile, public JWKS format, trust reload/overlap behavior,
-operator-owned rotation and independent TLS configuration. PEM format selection
-does not require reopening those decisions.
+The selected per-platform Python versions and dependency environments are test-plan
+details. Do not describe untested combinations as independently certified. If a
+release target cannot meet the contract, record the evidence and revisit the
+commitment explicitly rather than silently dropping it or weakening behavior.
 
-**2026-11-06: cross-language and multi-application requirements.** The developer
-expects future Go and .NET SDKs as well as Java/Python, motivating a common PEM
-provided-key format. They ask about two apps using different namespaces on one
-Sidecar, each calling back only to its source app. PEM does not limit verification
-to one key: each app can hold its own private PEM, and an operator-managed Sidecar
-JWKS can contain both public keys with distinct kids. Each JWT has one signing
-key; multi-key trust enables multiple signers and rotation. Individual SDK public
-exports must not overwrite a shared aggregate file; operators own aggregation.
+Maintain the current SDK release line initially; make no promise of backports
+across multiple older lines. Document tested Sidecar versions independently of SDK
+versions. Java/Python parity means equivalent capabilities and protocol behavior,
+not synchronized release numbers. Publication remains separately scoped and must
+not overwrite an existing release.
 
-This is separate from issuer/namespace authorization. The current design lens
-specifies one issuer per Sidecar and full mutual trust among sharing applications,
-with common identity semantics and role vocabulary. Multiple keys in the validator
-do not establish support for isolated application issuers or cryptographically
-bind keys to namespaces. Namespace-specific callback configuration can route to
-the appropriate app but is not proof that other callers cannot invoke its skills.
-Each app may validate its own callback signer/audience, while Sidecar-wide app
-isolation would require an explicitly planned authorization contract. Confirm
-whether the desired topology is a fully trusted group or isolated applications
-before representing it as supported end-to-end. No new multi-tenant security
-contract or key-format removal is agreed by this question.
+Sources consulted for the packaging decision:
+[Python version lifecycle](https://devguide.python.org/versions/),
+[pyproject.toml guidance](https://packaging.python.org/en/latest/guides/writing-pyproject-toml/),
+and [src layout guidance](https://packaging.python.org/en/latest/discussions/src-layout-vs-flat-layout/).
 
-**Follow-up under consideration: PEM-only provided signing plus existing colocated
-generation in both SDKs.** These choices are independent: colocated keys are
-generated in memory and need no keystore loader. Both modes could retain the
-same JWT profile, public JWKS export, RBAC, callback identity, TLS and trust reload.
-This would remove JKS/PKCS12 format and alias/password combinations and the Python
-JKS dependency burden, while preserving the accepted easy-start colocated mode.
-It does not require changing own-key/overlap trust composition.
+## Ticket readiness
 
-Actual losses are direct consumption of existing keystores, selection by alias
-from a multi-key bundle, and bundled key/certificate-chain handling. Operators
-would provision one chosen signing key as PEM instead. Java's current PEM loader
-accepts only unencrypted PKCS#8 and optionally one certificate; simply retaining
-it also removes password-encrypted provided signing material and full keystore
-chain export. PEM itself can be encrypted, but adding encrypted PKCS#8 support
-would be a separate scoped implementation decision and retain password-reference
-handling. Explicitly settle that distinction rather than describing PEM-only as
-automatically security-equivalent for storage. Protected secret delivery and
-file permissions remain operator duties; some organizations' key-export/storage
-policies may rule out unencrypted PEM. Conversion can preserve the same key and
-therefore the RFC 7638 kid, but must be deliberate operator work, not automatic
-startup conversion or incidental regeneration. No SDK keystore change removes
-Spring Boot's separate TLS keystore/SSL-bundle facilities.
+No product-design decisions remain open before creating implementation tickets.
+Use the four delivery units above, with dated filenames and the development policy
+and design-lens reference prominent in each ticket. Package foundation belongs with
+core transport; FastAPI integration depends on client and signing/issuance contracts,
+and maintained-suite adoption/composed verification follows those capabilities.
+Each unit owns its documentation and verification; final integration is not a
+substitute for unit-specific evidence.
 
-Decision: adopt this simplification for both SDKs with unencrypted PKCS#8 and
-without signing certificates. This supersedes full-format parity. Implementation
-remains pending under the shared design and Java ticket. Sources:
-[Java keytool](https://docs.oracle.com/en/java/javase/21/docs/specs/man/keytool.html)
-and [OpenSSL PKCS12 conversion](https://docs.openssl.org/3.5/man1/openssl-pkcs12/).
+The Full 5-Step Pipeline provides research, implementation planning, test planning,
+implementation/verification and independent review. Tickets should preserve the
+agreed outcomes, acceptance criteria and boundaries while leaving library selection,
+exact API names and test mechanics to those stages. Do not require completed
+implementation proofs merely to write the tickets. Research/planning must resolve
+the feasibility items below before locking the affected implementation approach.
 
-The developer asks whether, without the Java SDK or an established Sidecar
-security model, a simpler design could meet RBAC and authenticated callback needs
-for FastAPI and Spring Boot. This question reopens evaluation, not implementation
-authorization by itself. The subsequent shared PEM decision supersedes the earlier
-full-format-parity requirement.
+If evidence requires a material divergence from Java behavior, the accepted API
+approach or support targets, bring back that specific tradeoff for a decision.
+No new compatibility layer, weakened deadline, precision loss or reduced security
+contract is implicitly authorized. PyPI name ownership and publication setup are
+release prerequisites, not blockers to creating local implementation tickets.
 
-Recommendation: retain the essential application-issued, short-lived signed
-execution JWT, containing issuer/subject, exact allowed roles, intended audiences
-and execution purpose. The application authenticates users by its existing means;
-Sidecar verifies assertions and applies RBAC; callbacks independently verify the
-credential and expose a request-scoped principal for application authorization.
-TLS protects transport. Neither original passwords nor provider-specific login
-tokens are needed. The existing protocol is already close to this minimal design.
+### Engineering evidence needed before committing implementation details
 
-Potential simplification is operational surface, not removing authentication:
-one operator-provisioned RSA signing key in PKCS#8 PEM, and one explicit public
-JWKS trust file per receiver, supporting multiple keys for operator-managed
-rotation. In this alternative, callback trust is exactly the configured complete
-set rather than an implicit own-key-plus-optional-overlap merge. Startup validity,
-atomic runtime reload, fail-closed behavior and safe diagnostics remain necessary.
-Do not include JKS/PKCS12, SDK key generation or automatic rotation in a greenfield
-minimum unless actual consumers require them. This would reduce format handling,
-initialization modes and trust composition cases, but transfer initial key
-provisioning to operators and change the convenience/compatibility scope. It is
-historical context only: retain both signing modes and own-key/overlap trust;
-remove JKS/PKCS12 and signing certificates per the shared PEM design.
+These are bounded feasibility/verification tasks, not additional policy questions
+for the developer. Select the simplest implementation that meets the baseline;
+raise a cross-SDK design question only if evidence shows a necessary divergence.
 
-Rejected shortcuts for these requirements: a shared API key alone authenticates
-the calling service, not its claimed user/roles; untrusted user/role headers do
-not establish identity. A symmetric signing secret shared with Sidecar would let
-verifiers mint credentials, unlike public-key verification. A central issuer or
-token-introspection service adds an availability/deployment dependency. Mutual
-TLS can authenticate services but does not by itself carry delegated user RBAC.
-Execution-scoped callback credentials could narrow authority but add issuance and
-verification machinery and are not the simplest baseline. Existing bearer-token
-replay exposure and shared-trust-group limitations still apply to the proposed
-minimal asymmetric design; it is not a claim of universal isolation.
+- **Transport and total deadlines:** HTTPX remains a candidate, not a selected
+  dependency. The earlier probe established that its default cookie persistence
+  needs disabling; earlier research identified the need to prove a real synchronous
+  total deadline. Demonstrate termination of underlying I/O during stalled and
+  trickling bodies, resource release, remaining wait-budget enforcement, one attempt,
+  no cookies/redirects/rechallenge and bounded body reads. A thread timeout leaving
+  I/O running, or a hidden event loop in the sync API, does not satisfy the contract.
+  Match Java's disabled automatic compression rather than adding decompression
+  support incidentally. Prove async deadlines and cancellation independently.
+- **Crypto and temporal representation:** PyJWT/cryptography remain candidates.
+  Verify strict PEM handling against Java fixtures, public kid/JWKS equality,
+  signature/profile interoperability, booleans/nonfinite numeric rejection,
+  fractional precision and representable timestamp limits. Do not accept a
+  library's integer-expiry coercion or silently reduce Java's accepted precision.
+  If full precision/range parity requires a public representation tradeoff, document
+  the concrete limitation and propose it explicitly for review.
+- **FastAPI boundary:** prove raw duplicate-header inspection, untouched bodies,
+  middleware order, mounts/root paths, malformed paths and unrelated browser/CSRF
+  isolation with actual server behavior. Initialization and partial-failure cleanup
+  belong to the composed application lifespan. File reads/key generation must not
+  block request processing. Decide implementation mechanics from this evidence.
+- **Deployment and dependencies:** verify selected versions and installation on the
+  declared support matrix; declare directly used libraries directly. Prove atomic
+  exports and equivalent-path protection on supported platforms. A single-worker
+  colocated example and a provided-key example are sufficient starting recipes;
+  each public export path has one writer even when provided identity is shared.
 
-### Dependency and FastAPI developer-experience research (2026-11-03)
+### Closed questions and superseded research
 
-**User direction:** target the general Python/FastAPI application developer for
-v1. Keep full agreed Java capability parity; lead documentation and examples with
-async FastAPI usage rather than Java-shaped configuration. Findings below are
-recommendations and feasibility evidence, not dependency selections or reduced
-scope. No Python SDK code or project dependency files were created.
+The earlier 2026-11-03/06 discussion evaluated JKS/PKCS12 dependencies, encrypted
+PEM, signing certificates, a provided-only greenfield design and complete-file-only
+callback trust. Those alternatives are superseded by the shared PEM contract and
+current Java implementation; they are not pending decisions. Historical dependency
+version observations and synthetic probes did not certify a supported stack.
 
-Historical research status: JKS extras and PKCS12 parity investigations below were
-superseded by the shared PEM decision. They explain dependency costs and are not
-remaining requirements. The protocol/transport findings still apply.
-
-**Proposed packaging:** one independently versioned distribution under
-`sdks/python`, provisionally `loomspan-sdk` / import `loomspan_sdk` (names not
-reserved or verified available). A `fastapi` extra installs the web integration;
-core imports without FastAPI/Starlette. A `jks` extra is worth considering to
-isolate keystore-specific installation cost; it would still be fully supported
-v1 functionality, not a parity deferral. Standard `pyproject.toml`, wheel/sdist,
-and `py.typed`; tested dependency ranges for consumers and reproducible development
-constraints. Do not force Uvicorn, a FastAPI CLI, an identity provider or a settings
-framework on applications. Use typed core objects and let callers use their own
-Pydantic settings/business models. See the
-[packaging guide](https://packaging.python.org/en/latest/guides/writing-pyproject-toml/).
-
-**Runtime baseline recommendation:** Python 3.11 minimum is a reasonable candidate
-for reach without older-version compatibility code; Python 3.12+ would provide a
-longer support runway. The official
-[version table](https://devguide.python.org/versions/) lists security support
-through October 2027 for 3.11 and October 2028 for 3.12. Final supported upper
-versions/platforms must follow actual installation and integration checks, not
-unbounded assumptions about new Python releases. No support matrix is settled.
-
-**Candidate stack and observed package versions:** PyPI metadata retrieved during
-this research reported HTTPX 0.28.1, PyJWT 2.15.1, cryptography 50.0.2, PyJKS 20.0.0,
-FastAPI 0.162.0, Starlette 1.10.0 and AnyIO 4.16.0. These are a dated research
-snapshot, not a recommended lockfile or compatibility certification. If directly
-using AnyIO or Starlette APIs, declare them directly rather than relying on
-transitive installation. Verify a bounded FastAPI/Starlette version combination
-and older supported baseline before publishing dependency ranges.
-
-**FastAPI integration fits the agreed design.** Use an explicit async context
-manager in the application's lifespan, an async client reused for that lifespan,
-an application-provided identity dependency, and a typed callback principal
-dependency. Use prefix-wide pure ASGI enforcement internally: raw headers must
-remain available for duplicate detection and request bodies must pass untouched.
-Avoid `BaseHTTPMiddleware` context propagation limitations. Mounting a callback
-sub-application does not automatically run its lifespan; initialize security from
-the main application's lifespan. Startup key/file work must not block request
-processing, and polling belongs to owned background lifecycle work. Sources:
-[FastAPI lifespan](https://fastapi.tiangolo.com/advanced/events/) and
-[Starlette middleware](https://starlette.dev/middleware/).
-
-Multiple workers are an ordinary FastAPI deployment option, so the quickstart
-must make the single-process scope of ephemeral colocated signing conspicuous.
-Workers sharing an export path cannot independently generate different keys.
-Recommend a single-worker colocated example and a provided-key production example
-using shared signing identity, without a new coordinator. See
-[FastAPI workers](https://fastapi.tiangolo.com/deployment/server-workers/).
-
-**HTTPX is a good transport candidate, not a complete policy implementation.** It
-has native sync and async clients and standard SSL-context support. Its read
-timeout is per chunk, not a total response deadline. Async deadlines can use an
-AnyIO cancel scope around the whole exchange; synchronous total-deadline
-enforcement needs a focused proof before selecting the implementation. A thread
-timeout alone does not stop underlying I/O. Keep synchronous support in scope;
-do not hide a private event loop in it. Disable redirects/retries and cookie
-persistence deliberately, keep credentials per request, bound decoded/streamed
-bodies, and preserve cancellation. Sources:
-[HTTPX timeouts](https://www.python-httpx.org/advanced/timeouts/),
-[async clients](https://www.python-httpx.org/async/),
-[transports](https://www.python-httpx.org/advanced/transports/) and
-[AnyIO cancellation](https://anyio.readthedocs.io/en/stable/cancellation.html).
-
-**PyJWT plus cryptography can handle signing, but defaults are not the contract.**
-Pin allowed verification to RS256 and enforce Loomspan type/purpose, issuer,
-audience, role shapes and required fields explicitly. Local inspection of PyJWT
-2.15.1 found `int(payload["exp"])` in expiry validation: copying its defaults
-would discard fractional expiry precision. Use public signature verification
-facilities with explicit profile/time validation where needed, not custom RSA.
-Strict numeric handling must reject bool/nonfinite values and preserve the chosen
-precision; prove Java/Python interoperation. Sources:
-[PyJWT API](https://pyjwt.readthedocs.io/en/stable/api.html) and
-[versioned implementation](https://raw.githubusercontent.com/jpadilla/pyjwt/2.15.1/jwt/api_jwt.py).
-
-**JKS is feasible but carries packaging cost.** PyJKS supports aliases, certificate
-chains and separate store/key passwords without a JVM. Its published 20.0.0 release
-dates to April 2020. Installed metadata includes javaobj-py3, pyasn1,
-pyasn1-modules, pycryptodomex and twofish; this is broader than the JKS-only need.
-An isolated `uv run` on this Windows host with Python 3.13.13 installed/imported
-PyJKS 20.0.0 and built twofish 0.3.0 locally. An in-memory synthetic RSA JKS
-roundtrip passed with alias selection and separate store/key passwords. This is
-not Java interoperability or proof of compiler-free installation on users'
-machines. The earlier recommendation to keep JKS was superseded; no PyJKS
-dependency or JKS installation matrix is now required. Do not copy unpublished
-upstream code or create a bespoke parser casually. Sources:
-[PyJKS release](https://pypi.org/project/pyjks/) and
-[keystore API](https://pyjks.readthedocs.io/en/latest/jks.html).
-
-**Unexpected parity issue: PKCS12 needs more research than the format name suggests.**
-Java selects a private key by alias from a keystore. cryptography supports one
-private key and associated certificates in its high-level PKCS12 parser; its
-loader takes data/password, not alias or distinct entry password. A certificate
-friendly name does not provide general multi-entry selection. Its additional
-certificates also should not be assumed to be precisely Java's selected alias
-chain. Therefore single-key PKCS12 loading alone would not have been full Java parity.
-The surveyed oscrypto API likewise returns one key/certificate plus extras; it
-does not establish an alias-selection solution. This investigation is closed by
-the agreed removal of PKCS12 signing support from both SDKs; no further
-multi-entry/password/chain feasibility work is required. Sources:
-[cryptography PKCS12](https://cryptography.io/en/50.0.2/hazmat/primitives/asymmetric/serialization/#pkcs12)
-and [oscrypto implementation](https://github.com/wbond/oscrypto/blob/master/oscrypto/_openssl/asymmetric.py).
-
-**Evidence limits and next steps:** probes used only synthetic in-memory keys and
-a mock HTTP transport; no user credentials, live Sidecar/model calls or publication.
-HTTPX mock requests confirmed response cookies are persisted and sent on the next
-request by default. No cross-language or full OS/Python matrix was run. Prioritize
-total-deadline feasibility work and review one concrete
-FastAPI installation/usage example. Main open choices include packaging and the
-supported Python floor; do not
-reopen settled authentication policy merely to fit library defaults.
-
-- Package/import names, independent version and supported Python/FastAPI versions.
-- Execution-credential lifetime policy and whether the provisional 15-minute
-  default fits expected work; any source-expiry extension needs independent
-  justification and consideration for both SDKs.
-- Implement the agreed PEM signing contract; no JKS/PKCS12 dependency assessment remains.
-- Exact sync/async cancellation surface and safe exposure of last wait state.
-- FastAPI installation API and routing/middleware order, proven against mounted
-  apps and actual server behavior rather than assumed from Spring semantics.
-
-These are bounded design decisions. They do not justify a general plugin system,
-identity-provider abstraction, automatic token refresh, certificate manager,
-business authorization engine or compatibility layer.
+The 15-minute default and independent lifetime now follow Java under the parity
+instruction. No new source-expiry field, automatic refresh, issuer/namespace
+isolation, rotation coordinator, general plugin system or business authorization
+engine is proposed. Reopen a shared behavior only for a concrete consumer need or
+verified correctness issue, considering both SDKs together.
 
 ## Source anchors
 
@@ -1022,13 +870,15 @@ business authorization engine or compatibility layer.
 - [Spring identity adapter](../../../sdks/java/spring-boot-starter/src/main/java/ai/loomspan/sdk/spring/SpringExecutionTokenIssuer.java),
   [callback security](../../../sdks/java/spring-boot-starter/src/main/java/ai/loomspan/sdk/spring/CallbackSecurityAutoConfiguration.java)
   and [JWT validation](../../../sdks/java/spring-boot-starter/src/main/java/ai/loomspan/sdk/spring/CallbackJwtDecoder.java).
-- [HTTP executor design](http-skill-executor-design-notes.md) and
-  [9.3 integration evidence](../verification/2026-11-02-pr-9-3-http-executor-integration-and-completion.md).
+- [HTTP executor design](http-skill-executor-design-notes.md). Earlier 9.3 suite
+  results above are retained historical context; its verification report is absent
+  from this checkout and was not revalidated in this refresh.
 - Neighboring suite: `apps/python/infrastructure/execution_identity.py`,
   `sidecar_client.py`, `scripts/prepare.py`, `scripts/sdk_lane/`,
   `tests/test_execution_identity.py`, and `tests/test_replay.py` under
   `C:/opendev/code/loomspan-sidecar-test-suite`.
 
-Source assessment is based on the current local checkout and the completed local
-integration work. Recheck Java behavior when planning implementation; this document
-must not silently freeze an obsolete SDK contract.
+Source assessment was refreshed against the Java checkout identified at the top
+on 2026-11-07. No Java tests, Python probes or composed integration runs were
+performed in this refresh. Recheck changed Java behavior when planning implementation;
+this document must not silently freeze an obsolete SDK contract.
