@@ -10,7 +10,15 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-dependencies = ["anyio>=4.16,<5", "h11>=0.16,<0.17"]
+dependencies = [
+    "anyio>=4.16,<5",
+    "asn1>=3.3,<4",
+    "cryptography>=48,<49",
+    "h11>=0.16,<0.17",
+    "pyasn1>=0.6.5,<0.7",
+    "pyasn1-modules>=0.4.2,<0.5",
+    "simplejson>=4.2,<5",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/loomspan_sdk"]

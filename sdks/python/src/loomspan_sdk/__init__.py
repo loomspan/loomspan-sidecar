@@ -11,6 +11,7 @@ from ._errors import (
     SidecarError,
     WaitTerminated,
 )
+from ._issuance import AuthenticatedIdentity, ExecutionTokenIssuer, IssuanceSettings
 from ._models import (
     AcceptedExecution,
     ExecutionEvent,
@@ -21,20 +22,26 @@ from ._models import (
     SkillDescriptor,
     WaitOptions,
 )
+from ._signing import ColocatedSigning, ProvidedSigning
 
 __all__ = [
     "AcceptanceUnknown",
     "AcceptedExecution",
     "AsyncSidecarClient",
+    "AuthenticatedIdentity",
+    "ColocatedSigning",
     "CredentialSnapshot",
     "ExecutionEvent",
     "ExecutionFailure",
     "ExecutionIssue",
     "ExecutionSnapshot",
     "ExecutionStatus",
+    "ExecutionTokenIssuer",
     "HttpFailure",
+    "IssuanceSettings",
     "LocalFailure",
     "ProtocolFailure",
+    "ProvidedSigning",
     "SidecarClient",
     "SidecarError",
     "SkillDescriptor",

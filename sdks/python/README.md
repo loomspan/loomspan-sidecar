@@ -1,9 +1,8 @@
 # Loomspan Python SDK
 
 `loomspan-sdk` provides typed synchronous and asynchronous clients for the Sidecar
-execution HTTP API. It requires CPython 3.12 or newer and an existing Sidecar
-execution credential from your application. Its direct runtime dependencies are
-h11 and AnyIO.
+execution HTTP API and issues execution credentials from application-authenticated
+identity. It requires CPython 3.12 or newer.
 
 From the repository root, install into your application's virtual environment.
 You can also install a wheel or source distribution of the SDK into that
@@ -12,6 +11,98 @@ environment.
 ```sh
 python -m pip install ./sdks/python
 ```
+
+## Issue execution credentials
+
+Choose one signing mode and initialize an `ExecutionTokenIssuer` at application
+startup. In colocated mode, the SDK generates a new in-memory 2048-bit RSA key
+on every startup and publishes `jwks.json` to the configured directory.
+Receivers adopting the new public key can no longer verify credentials signed
+with the previous key unless they still trust that key.
+
+```python
+from pathlib import Path
+
+from loomspan_sdk import ColocatedSigning, ExecutionTokenIssuer
+
+issuer = ExecutionTokenIssuer(ColocatedSigning(Path("runtime/loomspan-trust")))
+```
+
+In provided mode, provision a file containing one unencrypted PKCS#8 `PRIVATE KEY`
+PEM block for an RSA key of at least 2048 bits. The SDK loads it once at startup.
+The same material keeps the same public identity across restarts. To rotate it,
+replace the operator-owned private file, restart the application, and coordinate
+adoption of the new public key at receivers. Missing or invalid material fails
+startup.
+
+The loader checks the complete PKCS#8 structure, including optional attribute
+identifiers and nonempty value sets. It verifies that an embedded public key,
+when present, matches the RSA private key. The SDK ignores optional attribute
+payloads for signing and relies on its BER libraries to validate them. The
+Python and Java SDKs can differ in which payload encodings they accept, such
+as unusual ASN.1 time or string values.
+
+```python
+from pathlib import Path
+
+from loomspan_sdk import ExecutionTokenIssuer, IssuanceSettings, ProvidedSigning
+
+issuer = ExecutionTokenIssuer(
+    ProvidedSigning(Path("secrets/loomspan-signing.pem"), Path("runtime/loomspan-trust/provided-jwks.json")),
+    IssuanceSettings(roles=["ORDER_EDITOR"], additional_audiences=["orders-callbacks"]),
+)
+```
+
+In both modes, the operator provisions the files, directories and permissions
+needed by the app and its receivers. Use an existing export directory on a
+filesystem that supports atomic same-directory replacement, with one process
+responsible for each export path. The SDK publishes a complete public-only RSA
+JWKS for receiver trust. On POSIX, each publication installs a new owner-only
+file. If receivers run under a different account, arrange read access or
+distribute the public JWKS after each publication. Provided input and export
+paths must be distinct.
+A publication error fails startup and preserves any previous export. Configure
+TLS certificates and trust separately from the signing key and JWKS.
+
+Pass the subject and authorities captured by your application's authentication
+layer into `AuthenticatedIdentity`. Treat these values as security context and
+keep them separate from request bodies, model arguments and skill input. Issue a
+credential for that identity and pass it explicitly to either client.
+
+```python
+from collections.abc import Collection
+
+from loomspan_sdk import AuthenticatedIdentity, CredentialSnapshot, ExecutionTokenIssuer
+
+def credential_for_authenticated_caller(
+    issuer: ExecutionTokenIssuer, subject: str, authorities: Collection[str]
+) -> CredentialSnapshot:
+    return issuer.issue(AuthenticatedIdentity(subject, authorities))
+```
+
+The issuer defaults to `loomspan-app` with a 15-minute lifetime. It needs only
+the captured identity and uses its own lifetime independently of the login
+session or original token. Each credential includes `loomspan-sidecar`, the
+issuer and any configured extra audiences, with duplicates removed. Roles are
+the exact names present in both the captured authorities and the configured
+allowlist, which defaults to empty. The SDK preserves names such as
+`ROLE_ORDER_EDITOR` and `ORDER_EDITOR` as distinct authorities. Issued roles
+remain a snapshot until expiry.
+
+Set `lifetime_ns` to a positive number of nanoseconds within the supported
+timestamp range. The SDK warns at startup above one hour. It signs NumericDates
+as exact JSON numbers with nanosecond precision. Current Java receivers may
+round fractional values when reading them. A sub-microsecond lifetime can round
+to equal issuance and expiration times and be rejected. Very large dates near
+the timestamp limit can also round out of range.
+
+Credentials and issuer key material are omitted from default display and
+serialization. Treat issued credentials as bearer secrets.
+
+## Use the execution clients
+
+Use a `CredentialSnapshot` from the issuer or wrap an execution JWT issued by
+your application.
 
 ```python
 from loomspan_sdk import CredentialSnapshot, SidecarClient

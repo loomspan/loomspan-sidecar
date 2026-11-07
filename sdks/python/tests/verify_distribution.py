@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -15,6 +16,7 @@ PROJECT = Path(__file__).resolve().parents[1]
 EXECUTION_ID = UUID("6a0c950c-d172-4151-b629-6a5c15c7ae37")
 TOKEN = "synthetic-distribution-test"
 DESCRIPTOR = {"name": "echo", "kind": "HTTP", "inputSchema": "{}"}
+SYNTHETIC_PEM = PROJECT.parent / "java/core/src/test/resources/signing/synthetic-rsa.pem"
 
 CHECK_INSTALL = """
 import importlib.metadata as metadata
@@ -34,17 +36,37 @@ requirements = {
     name: set(bounds.split(","))
     for name, bounds in (requirement.split("<", 1) for requirement in dist.requires)
 }
-assert requirements == {"h11": {"0.17", ">=0.16"}, "anyio": {"5", ">=4.16"}}
+assert requirements == {
+    "anyio": {"5", ">=4.16"}, "asn1": {"4", ">=3.3"}, "cryptography": {"49", ">=48"}, "h11": {"0.17", ">=0.16"},
+    "pyasn1": {"0.7", ">=0.6.5"}, "pyasn1-modules": {"0.5", ">=0.4.2"}, "simplejson": {"5", ">=4.2"},
+}
 assert installed.with_name("py.typed").is_file()
 assert installed.with_name("py.typed").is_relative_to(pathlib.Path(sys.prefix).resolve())
-for name in ("fastapi", "starlette", "uvicorn", "cryptography", "jwt"):
+for name in ("fastapi", "starlette", "uvicorn", "jwt"):
     assert importlib.util.find_spec(name) is None, name
-assert importlib.util.find_spec("loomspan_sdk._signing") is None
-assert "CredentialSnapshot" in loomspan_sdk.__all__
-assert "AsyncSidecarClient" in loomspan_sdk.__all__
+assert {"CredentialSnapshot", "AsyncSidecarClient", "AuthenticatedIdentity", "ExecutionTokenIssuer",
+        "IssuanceSettings", "ColocatedSigning", "ProvidedSigning"}.issubset(loomspan_sdk.__all__)
 print(platform.python_implementation(), platform.python_version(), platform.system(),
-      platform.machine(), "h11", metadata.version("h11"), "anyio", metadata.version("anyio"))
+      platform.machine(), *(f"{name} {metadata.version(name)}" for name in sorted(requirements)))
 """
+
+
+def write_issuance_example(external: Path) -> Path:
+    readme = (PROJECT / "README.md").read_text(encoding="utf-8")
+    issuance = readme.split("## Issue execution credentials\n", 1)[1].split("\n## ", 1)[0]
+    colocated, provided, capture = re.findall(r"```python\n(.*?)\n```", issuance, re.DOTALL)
+    script = external / "documented_issuance.py"
+    script.write_text("\n\n".join((capture, colocated, """
+colocated_credential = credential_for_authenticated_caller(issuer, "alice", ["ORDER_EDITOR"])
+assert repr(colocated_credential) == "CredentialSnapshot([redacted])"
+""", provided, """
+provided_credential = credential_for_authenticated_caller(issuer, "bob", ["ORDER_EDITOR"])
+assert repr(provided_credential) == "CredentialSnapshot([redacted])"
+""")), encoding="utf-8")
+    (external / "runtime/loomspan-trust").mkdir(parents=True)
+    (external / "secrets").mkdir()
+    shutil.copyfile(SYNTHETIC_PEM, external / "secrets/loomspan-signing.pem")
+    return script
 
 
 def serve_example(conn, request, index):
@@ -96,12 +118,21 @@ def verify() -> None:
         examples = [external / name for name in ("existing_credential.py", "existing_credential_async.py")]
         for example in examples:
             shutil.copyfile(PROJECT / "examples" / example.name, example)
+        issuance_example = write_issuance_example(external)
         for kind, artifact in (("wheel", wheel), ("sdist", sdist)):
             environment = external / kind
             run("uv", "venv", "--python", sys.executable, str(environment))
             python = str(environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
             run("uv", "pip", "install", "--python", python, str(artifact))
             print(f"{kind}: {run(python, '-I', '-c', CHECK_INSTALL)}")
+            assert run(python, "-I", str(issuance_example)) == ""
+            keys = []
+            for filename in ("jwks.json", "provided-jwks.json"):
+                [key] = json.loads((external / "runtime/loomspan-trust" / filename).read_bytes())["keys"]
+                assert set(key) == {"kty", "n", "e", "kid", "alg", "use"}
+                keys.append(key)
+            assert keys[0]["kid"] != keys[1]["kid"]
+            assert keys[1] == json.loads(SYNTHETIC_PEM.with_name("public-jwks.json").read_bytes())["keys"][0]
             for example in examples:
                 with WirePeer(serve_example) as peer:
                     summary = run(python, "-I", str(example), peer.url, "echo", "hello",
@@ -118,7 +149,7 @@ def verify() -> None:
             if requirement.startswith("mypy==")
         )
         run("uv", "pip", "install", "--python", python, str(wheel), mypy)
-        print(run(python, "-I", "-m", "mypy", "--strict", *(str(example) for example in examples)))
+        print(run(python, "-I", "-m", "mypy", "--strict", *(str(example) for example in [*examples, issuance_example])))
 
 
 if __name__ == "__main__":
