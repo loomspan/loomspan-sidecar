@@ -197,6 +197,22 @@ and classes in `ai.loomspan.sdk`. Treat `AuthenticatedIdentity` as a trusted
 authentication snapshot; never deserialize business input into it. Subject and
 authorities are nonblank and defensively copied.
 
+`SpringExecutionTokenIssuer.issueCurrent()` uses Spring's
+`Authentication.getName()` as the subject. If your application needs a different
+identifier, such as its stable account ID, inject the core `ExecutionTokenIssuer`
+and supply identity explicitly from your trusted authentication code:
+
+```java
+var credential = issuer.issue(new AuthenticatedIdentity(
+        authenticatedUser.accountId(), authenticatedUser.authorities()));
+```
+
+Here `accountId()` returns the application's chosen subject as a string. The
+issuer still applies the configured authority allowlist. On callbacks, Spring's
+authentication name is this subject. Continue using `issueCurrent()` when the
+existing Spring authentication name is appropriate; no separate identity mapping
+is required.
+
 ### Provided signing
 
 Operators provide RSA keys of at least 2048 bits in `PKCS12`, `JKS`, or unencrypted
