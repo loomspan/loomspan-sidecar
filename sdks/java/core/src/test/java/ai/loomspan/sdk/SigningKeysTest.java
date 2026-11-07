@@ -2,13 +2,16 @@ package ai.loomspan.sdk;
 
 import com.nimbusds.jose.jwk.*;
 import java.nio.file.*;
-import java.security.Signature;
-import java.time.*;
+import java.security.*;
 import java.util.*;
-import java.util.logging.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.bouncycastle.asn1.ASN1Integer;
+import org.bouncycastle.asn1.DERNull;
+import org.bouncycastle.asn1.pkcs.PrivateKeyInfo;
+import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class SigningKeysTest {
     @TempDir Path directory;
@@ -32,7 +35,7 @@ class SigningKeysTest {
         assertFalse(Files.exists(missing));
         Path file = Files.writeString(directory.resolve("file"), "file");
         assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(SigningSettings.colocated(file)));
-        var provided = new SigningSettings.Provided("PEM", file, null, null, null, null, file);
+        var provided = new SigningSettings.Provided(file, file);
         assertThrows(IllegalArgumentException.class, () -> new SigningSettings("colocated", directory, provided));
         assertThrows(IllegalArgumentException.class, () -> new SigningSettings("provided", directory, provided));
     }
@@ -53,127 +56,218 @@ class SigningKeysTest {
                     throw new AtomicMoveNotSupportedException(source.toString(), target.toString(), "synthetic");
                 }
             };
-            assertTrue(assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(SigningSettings.colocated(directory), Clock.systemUTC(), files)).getMessage().contains(export.toString()));
+            assertTrue(assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(SigningSettings.colocated(directory), files)).getMessage().contains(export.toString()));
             assertEquals("prior complete public export", Files.readString(export));
             try (var paths = Files.list(directory)) { assertEquals(1, paths.count()); }
         }
     }
-    @Test void providedFormatsLoadTheSuppliedKeyAndExportCertificates() throws Exception {
-        for (String format : List.of("PKCS12", "JKS")) {
-            var fixture = new SigningTestMaterial(directory.resolve(format), format, "RSA", 2048);
-            Path export = directory.resolve(format + ".json");
-            var first = SigningKeys.initialize(fixture.settings(format, export, false));
+    @Test void explicitModesAndPathsAreRequired() {
+        for (String mode : new String[]{null, "", "unknown"})
+            assertThrows(IllegalArgumentException.class, () -> new SigningSettings(mode, null, null));
+        assertThrows(IllegalArgumentException.class, () -> new SigningSettings("provided", null, null));
+        assertThrows(IllegalArgumentException.class, () -> provided(null, directory.resolve("out")));
+        assertThrows(IllegalArgumentException.class, () -> provided(directory.resolve("in"), null));
+    }
+
+    @Test void providedPemAcceptsWhitespaceAndRetainsFixedIdentity() throws Exception {
+        String original = fixture();
+        var expected = JWKSet.parse(resource("public-jwks.json")).getKeys().getFirst();
+        Path pem = directory.resolve("signer.pem"), export = directory.resolve("public.json");
+        for (String ending : List.of("\n", "\r\n", "\r")) {
+            String content = " \t\f\013" + ending + original.replace("\n", ending) + " \t\f\013" + ending;
+            Files.writeString(pem, content);
+            var first = SigningKeys.initialize(provided(pem, export));
+            var second = SigningKeys.initialize(provided(pem, export));
+            assertEquals(expected.getKeyID(), first.kid()); assertEquals(first.kid(), second.kid());
             verify(first);
-            assertEquals(first.publicKey(), ((RSAKey) JWKSet.parse(Files.readString(export)).getKeys().getFirst()).toRSAPublicKey());
-            assertEquals(first.kid(), SigningKeys.initialize(fixture.settings(format, export, false)).kid());
-            var pem = SigningKeys.initialize(fixture.settings("PEM", export, true));
-            assertEquals(first.kid(), pem.kid()); verify(pem);
-            assertNotNull(JWKSet.parse(Files.readString(export)).getKeys().getFirst().getX509CertChain());
-            var bare = SigningKeys.initialize(fixture.settings("PEM", export, false));
-            assertEquals(first.kid(), bare.kid());
-            assertNull(JWKSet.parse(Files.readString(export)).getKeys().getFirst().getX509CertChain());
+            assertEquals(expected.toJSONObject(), JWKSet.parse(Files.readString(export)).getKeys().getFirst().toJSONObject());
+            assertEquals(content, Files.readString(pem));
+            assertFalse(first.toString().contains("PRIVATE KEY"));
+        }
+        var running = SigningKeys.initialize(provided(pem, export));
+        Files.writeString(pem, pem(pair("RSA", 2048).getPrivate().getEncoded()));
+        verify(running);
+        assertEquals(expected.getKeyID(), running.kid());
+        assertNotEquals(running.kid(), SigningKeys.initialize(provided(pem, export)).kid());
+    }
+
+    @Test void providedPemRequiresAnEndBoundaryLineAndCompleteBase64Quanta() throws Exception {
+        String good = fixture();
+        Path input = directory.resolve("signer.pem"), export = directory.resolve("public.json");
+        assertTrue(good.contains("="), "fixture exercises required padding");
+        for (String malformed : List.of(good.replace("\n-----END", "-----END"), good.replace("=", ""))) {
+            Files.writeString(input, malformed);
+            assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(provided(input, export)));
+            assertFalse(Files.exists(export));
         }
     }
-    @Test void keystoreAliasesMissingFilesDistinctPasswordsAndFormatOptionsFailClosed() throws Exception {
-        var fixture = new SigningTestMaterial(directory.resolve("keys"), "JKS", "RSA", 2048);
-        Path export = Files.writeString(directory.resolve("jwks.json"), "prior");
-        var reference = new SecretReference("file:" + fixture.secret);
-        assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(new SigningSettings("provided", null,
-                new SigningSettings.Provided("PKCS12", fixture.storePath, "signer", reference, null, null, export))));
-        for (String alias : List.of("missing", "public")) {
-            fixture.store.setCertificateEntry("public", fixture.store.getCertificate("signer"));
-            try (var output = Files.newOutputStream(fixture.storePath)) { fixture.store.store(output, SigningTestMaterial.PASSWORD.toCharArray()); }
-            var settings = new SigningSettings("provided", null, new SigningSettings.Provided("JKS", fixture.storePath, alias, reference, null, null, export));
-            assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(settings));
-            assertEquals("prior", Files.readString(export));
+
+    @Test void pkcs8OptionalAttributesMustBeStructurallyValid() throws Exception {
+        var encoded = Base64.getMimeDecoder().decode(fixture()
+                .replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", ""));
+        Path input = directory.resolve("signer.pem"), export = directory.resolve("public.json");
+        String expectedKid = JWKSet.parse(resource("public-jwks.json")).getKeys().getFirst().getKeyID();
+
+        // Attributes SET containing OID 1.2.3 and a UTF8String value.
+        Files.writeString(input, pem(withAttributes(encoded, "a00b300906022a0331030c0141")));
+        assertEquals(expectedKid, SigningKeys.initialize(provided(input, export)).kid());
+        String prior = Files.readString(export);
+
+        // Truncated child TLV, then a complete TLV with the wrong attribute type.
+        for (String malformed : List.of("a0020101", "a0020500")) {
+            Files.writeString(input, pem(withAttributes(encoded, malformed)));
+            assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(provided(input, export)));
+            assertEquals(prior, Files.readString(export));
         }
-        Path distinct = Files.writeString(directory.resolve("key-password"), "different-synthetic-key-password");
-        var privateKey = fixture.store.getKey("signer", SigningTestMaterial.PASSWORD.toCharArray());
-        fixture.store.setKeyEntry("signer", privateKey, "different-synthetic-key-password".toCharArray(), fixture.store.getCertificateChain("signer"));
-        try (var output = Files.newOutputStream(fixture.storePath)) { fixture.store.store(output, SigningTestMaterial.PASSWORD.toCharArray()); }
-        var settings = new SigningSettings("provided", null, new SigningSettings.Provided("JKS", fixture.storePath, "signer", reference,
-                new SecretReference("file:" + distinct), null, export));
-        verify(SigningKeys.initialize(settings));
-        var absent = new SigningSettings("provided", null, new SigningSettings.Provided("PEM", directory.resolve("absent.pem"), null, null, null, null, export));
-        assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(absent));
-        assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(new SigningSettings("provided", null,
-                new SigningSettings.Provided("PKCS12", fixture.storePath, "signer", reference, null, null, export))));
-        for (var invalid : List.of(
-                new SigningSettings.Provided(null, fixture.pem, null, null, null, null, export),
-                new SigningSettings.Provided("PEM", null, null, null, null, null, export),
-                new SigningSettings.Provided("PEM", fixture.pem, "alias", null, null, null, export),
-                new SigningSettings.Provided("PEM", fixture.pem, null, reference, null, null, export),
-                new SigningSettings.Provided("JKS", fixture.storePath, null, reference, null, null, export),
-                new SigningSettings.Provided("JKS", fixture.storePath, "signer", reference, null, fixture.certificate, export)))
-            assertThrows(IllegalArgumentException.class, () -> new SigningSettings("provided", null, invalid));
-        Path targetDirectory = Files.createDirectory(directory.resolve("target-directory"));
-        assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(fixture.settings("PEM", targetDirectory, false)));
-        assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(fixture.settings("PEM", directory.resolve("missing/keys.json"), false)));
     }
-    @Test void invalidWeakNonRsaAndMismatchedMaterialNeverReplacesExport() throws Exception {
-        Path export = Files.writeString(directory.resolve("jwks.json"), "prior");
-        for (var specification : List.of(List.of("RSA", "1024"), List.of("EC", "256"))) {
-            var fixture = new SigningTestMaterial(directory.resolve(specification.getFirst()), "PKCS12", specification.getFirst(), Integer.parseInt(specification.get(1)));
-            assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(fixture.settings("PKCS12", export, false)));
-            assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(fixture.settings("PEM", export, false)));
-            assertEquals("prior", Files.readString(export));
+
+    @Test void pkcs8RsaEncryptionRejectsNonNullAlgorithmParameters() throws Exception {
+        var encoded = Base64.getMimeDecoder().decode(fixture()
+                .replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", ""));
+        var info = PrivateKeyInfo.getInstance(encoded);
+        var oid = info.getPrivateKeyAlgorithm().getAlgorithm();
+        var innerKey = info.getPrivateKey().getOctets();
+        Path input = directory.resolve("signer.pem"), export = directory.resolve("public.json");
+        String expectedKid = JWKSet.parse(resource("public-jwks.json")).getKeys().getFirst().getKeyID();
+        Files.writeString(input, pem(new PrivateKeyInfo(new AlgorithmIdentifier(oid), innerKey).getEncoded()));
+        assertEquals(expectedKid, SigningKeys.initialize(provided(input, export)).kid());
+        String prior = Files.readString(export);
+
+        var malformed = new PrivateKeyInfo(new AlgorithmIdentifier(oid, new ASN1Integer(1)), innerKey);
+        Files.writeString(input, pem(malformed.getEncoded()));
+        assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(provided(input, export)));
+        assertEquals(prior, Files.readString(export));
+    }
+
+    @Test void pkcs8OptionalPublicKeyMustMatchTheSigner() throws Exception {
+        var encoded = Base64.getMimeDecoder().decode(fixture()
+                .replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", ""));
+        var info = PrivateKeyInfo.getInstance(encoded);
+        var expected = (RSAKey) JWKSet.parse(resource("public-jwks.json")).getKeys().getFirst();
+        var modulus = expected.getModulus().decodeToBigInteger();
+        var exponent = expected.getPublicExponent().decodeToBigInteger();
+        var matching = new org.bouncycastle.asn1.pkcs.RSAPublicKey(modulus, exponent).getEncoded();
+        var different = new org.bouncycastle.asn1.pkcs.RSAPublicKey(modulus.add(java.math.BigInteger.TWO), exponent).getEncoded();
+        Path input = directory.resolve("signer.pem"), export = directory.resolve("public.json");
+        Files.writeString(input, pem(new PrivateKeyInfo(info.getPrivateKeyAlgorithm(),
+                info.getPrivateKey().getOctets(), null, matching).getEncoded()));
+        assertEquals(expected.getKeyID(), SigningKeys.initialize(provided(input, export)).kid());
+        String prior = Files.readString(export);
+
+        for (byte[] malformed : List.of(DERNull.INSTANCE.getEncoded(), different)) {
+            Files.writeString(input, pem(new PrivateKeyInfo(info.getPrivateKeyAlgorithm(),
+                    info.getPrivateKey().getOctets(), null, malformed).getEncoded()));
+            assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(provided(input, export)));
+            assertEquals(prior, Files.readString(export));
         }
-        var good = new SigningTestMaterial(directory.resolve("good"), "JKS", "RSA", 2048);
-        var other = new SigningTestMaterial(directory.resolve("other"), "PKCS12", "RSA", 2048);
-        Files.copy(other.certificate, good.certificate, StandardCopyOption.REPLACE_EXISTING);
-        assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(good.settings("PEM", export, true)));
-        Files.writeString(good.secret, "wrong-secret");
-        assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(good.settings("JKS", export, false)));
-        for (String pem : List.of("malformed", "-----BEGIN RSA PRIVATE KEY-----\nprivate-marker\n-----END RSA PRIVATE KEY-----", "-----BEGIN ENCRYPTED PRIVATE KEY-----\na\n-----END ENCRYPTED PRIVATE KEY-----", "-----BEGIN PUBLIC KEY-----\na\n-----END PUBLIC KEY-----")) {
-            Files.writeString(good.pem, pem);
-            var error = assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(good.settings("PEM", export, false)));
-            assertFalse(error.toString().contains("private-marker")); assertNull(error.getCause());
+    }
+
+    private static byte[] withAttributes(byte[] encoded, String tail) {
+        // The fixed fixture's outer sequence uses exactly two length octets.
+        assertEquals(0x82, encoded[1] & 0xff);
+        byte[] attributes = HexFormat.of().parseHex(tail);
+        byte[] variant = Arrays.copyOf(encoded, encoded.length + attributes.length);
+        int length = variant.length - 4;
+        variant[2] = (byte) (length >> 8);
+        variant[3] = (byte) length;
+        System.arraycopy(attributes, 0, variant, encoded.length, attributes.length);
+        return variant;
+    }
+
+    @Test void invalidMaterialNeverFallsBackReplacesExportOrDisclosesInput() throws Exception {
+        String good = fixture();
+        byte[] der = Base64.getMimeDecoder().decode(good.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", ""));
+        byte[] trailing = Arrays.copyOf(der, der.length + 1);
+        String certificate = "-----BEGIN CERTIFICATE-----\nprivate-marker\n-----END CERTIFICATE-----\n";
+        String publicKey = "-----BEGIN PUBLIC KEY-----\nprivate-marker\n-----END PUBLIC KEY-----\n";
+        var invalid = new ArrayList<>(List.of("", "private-marker", good + good,
+                certificate, publicKey, certificate + good, good + certificate, publicKey + good, good + publicKey,
+                "private-marker" + good, good + "private-marker",
+                good.replace("PRIVATE KEY", "RSA PRIVATE KEY"), good.replace("PRIVATE KEY", "ENCRYPTED PRIVATE KEY"),
+                "-----BEGIN PRIVATE KEY-----\n-----END PRIVATE KEY-----",
+                good.replace("MII", "M!II"), pem(new byte[]{0x30, 0}), pem(trailing), pem(Arrays.copyOf(der, der.length - 1)),
+                pem(pair("RSA", 1024).getPrivate().getEncoded()), pem(pair("EC", 256).getPrivate().getEncoded())));
+        Path input = directory.resolve("signer.pem"), export = Files.writeString(directory.resolve("public.json"), "prior");
+        for (String content : invalid) {
+            Files.writeString(input, content);
+            var error = assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(provided(input, export)));
+            assertNull(error.getCause()); assertFalse(error.toString().contains("private-marker"));
+            assertFalse(error.toString().contains("BEGIN PRIVATE"));
+            assertEquals("prior", Files.readString(export)); assertEquals(content, Files.readString(input));
+            try (var files = Files.list(directory)) { assertEquals(2, files.count()); }
         }
+        Files.delete(input);
+        assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(provided(input, export)));
         assertEquals("prior", Files.readString(export));
     }
-    @Test void publicExportNeverOverwritesProvidedInputs() throws Exception {
-        var fixture = new SigningTestMaterial(directory.resolve("inputs"), "JKS", "RSA", 2048);
-        for (var input : List.of(fixture.storePath, fixture.pem, fixture.certificate, fixture.secret)) {
-            byte[] original = Files.readAllBytes(input);
-            String format = input.equals(fixture.storePath) || input.equals(fixture.secret) ? "JKS" : "PEM";
-            var settings = fixture.settings(format, input.getParent().resolve(".").resolve(input.getFileName()), true);
-            assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(settings), input.toString());
+
+    @Test void publicExportNeverOverwritesPrivateInputOrEquivalentFiles() throws Exception {
+        Path input = Files.writeString(directory.resolve("signer.pem"), fixture());
+        byte[] original = Files.readAllBytes(input);
+        Path hardlink = Files.createLink(directory.resolve("hardlink.pem"), input);
+        for (Path export : List.of(input, directory.resolve(".").resolve("signer.pem"), hardlink)) {
+            assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(provided(input, export)));
             assertArrayEquals(original, Files.readAllBytes(input));
         }
-        // Different paths to one input must also be protected where links are available.
-        Path linkedParent = directory.resolve("linked-inputs");
-        try { Files.createSymbolicLink(linkedParent, fixture.storePath.getParent()); }
-        catch (UnsupportedOperationException | java.io.IOException unavailable) { return; }
-        byte[] original = Files.readAllBytes(fixture.pem);
-        assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(fixture.settings("PEM", linkedParent.resolve(fixture.pem.getFileName()), false)));
-        assertArrayEquals(original, Files.readAllBytes(fixture.pem));
     }
-    @Test void secretReferencesAndSigningWarningsAreSafe() throws Exception {
-        assertArrayEquals(" secret ".toCharArray(), new SecretReference("env:SELECTED").resolve(name -> name.equals("SELECTED") ? " secret " : null));
-        Path secret = Files.writeString(directory.resolve("secret"), " secret \r\n");
-        assertArrayEquals(" secret ".toCharArray(), new SecretReference("file:" + secret).resolve());
-        for (String ref : List.of("literal-password-marker", "env:MISSING", "file:relative", "vault:unknown", "file:" + directory.resolve("absent"))) {
-            var error = assertThrows(IllegalArgumentException.class, () -> new SecretReference(ref).resolve(name -> null));
-            assertFalse(error.toString().contains("literal-password-marker"));
+
+    @Test void symbolicInputAliasIsProtectedWhenPlatformAllowsLinks() throws Exception {
+        Path input = Files.writeString(directory.resolve("signer.pem"), fixture());
+        Path link = directory.resolve("symlink.pem");
+        try { Files.createSymbolicLink(link, input); }
+        catch (UnsupportedOperationException | java.io.IOException unavailable) {
+            assumeTrue(false, "Symbolic links unavailable: " + unavailable.getClass().getSimpleName());
         }
-        assertThrows(IllegalArgumentException.class, () -> new SecretReference("env:EMPTY").resolve(name -> ""));
-        Files.writeString(secret, "\n");
-        assertThrows(IllegalArgumentException.class, () -> new SecretReference("file:" + secret).resolve());
-        assertFalse(new SecretReference("literal-password-marker").toString().contains("literal-password-marker"));
-        var fixture = new SigningTestMaterial(directory.resolve("warnings"), "PKCS12", "RSA", 2048);
-        var expiry = fixture.certificate().getNotAfter().toInstant();
-        var messages = new ArrayList<String>();
-        var logger = Logger.getLogger(SigningKeys.class.getName());
-        var handler = new Handler() { public void publish(LogRecord r) { messages.add(r.getMessage()); } public void flush() {} public void close() {} };
-        logger.addHandler(handler);
-        try {
-            for (var now : List.of(expiry.plusSeconds(1), expiry.minus(Duration.ofDays(30)), expiry.minus(Duration.ofDays(30)).minusSeconds(1))) {
-                SigningKeys.initialize(fixture.settings("PKCS12", directory.resolve("warn.json"), false), Clock.fixed(now, ZoneOffset.UTC), new SigningKeys.FileOperations());
-            }
-            assertEquals(2, messages.size());
-            assertFalse(messages.toString().contains(SigningTestMaterial.PASSWORD));
-            assertFalse(messages.toString().contains("PRIVATE KEY"));
-        } finally { logger.removeHandler(handler); }
+        assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(provided(input, link)));
+        assertEquals(fixture(), Files.readString(input));
+    }
+
+    @Test void providedPublicationErrorsPreservePrivateAndPriorPublicMaterial() throws Exception {
+        Path input = Files.writeString(directory.resolve("signer.pem"), fixture());
+        Path export = Files.writeString(directory.resolve("public.json"), "prior");
+        for (int failure = 0; failure < 4; failure++) {
+            int stage = failure; int[] moves = {0};
+            var files = new SigningKeys.FileOperations() {
+                @Override Path temporary(Path parent) throws java.io.IOException {
+                    if (stage == 0) throw new AccessDeniedException("synthetic");
+                    return super.temporary(parent);
+                }
+                @Override void write(Path path, String content) throws java.io.IOException {
+                    if (stage == 1) throw new AccessDeniedException("synthetic");
+                    super.write(path, content);
+                }
+                @Override void move(Path source, Path target, CopyOption... options) throws java.io.IOException {
+                    moves[0]++;
+                    assertEquals(Set.of(StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING), Set.of(options));
+                    if (stage == 2) throw new AccessDeniedException("synthetic");
+                    throw new AtomicMoveNotSupportedException(source.toString(), target.toString(), "synthetic");
+                }
+            };
+            assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(provided(input, export), files));
+            assertEquals(stage >= 2 ? 1 : 0, moves[0]);
+            assertEquals(fixture(), Files.readString(input)); assertEquals("prior", Files.readString(export));
+            try (var paths = Files.list(directory)) { assertEquals(2, paths.count()); }
+        }
+        assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(provided(input, directory.resolve("absent/public.json"))));
+        assertFalse(Files.exists(directory.resolve("absent")));
+        Path target = Files.createDirectory(directory.resolve("target"));
+        assertThrows(IllegalArgumentException.class, () -> SigningKeys.initialize(provided(input, target)));
+    }
+
+    private static SigningSettings provided(Path input, Path export) {
+        return new SigningSettings("provided", null, new SigningSettings.Provided(input, export));
+    }
+    private static String resource(String name) throws Exception {
+        try (var input = SigningKeysTest.class.getResourceAsStream("/signing/" + name)) {
+            return new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+    }
+    private static String fixture() throws Exception { return resource("synthetic-rsa.pem"); }
+    private static KeyPair pair(String algorithm, int bits) throws Exception {
+        var generator = KeyPairGenerator.getInstance(algorithm); generator.initialize(bits); return generator.generateKeyPair();
+    }
+    private static String pem(byte[] bytes) {
+        return "-----BEGIN PRIVATE KEY-----\n" + Base64.getEncoder().encodeToString(bytes) + "\n-----END PRIVATE KEY-----\n";
     }
     private void verify(SigningKeySource source) throws Exception {
         byte[] bytes = "synthetic challenge".getBytes();

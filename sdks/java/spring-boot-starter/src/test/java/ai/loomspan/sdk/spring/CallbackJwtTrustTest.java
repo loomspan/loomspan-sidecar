@@ -30,7 +30,7 @@ class CallbackJwtTrustTest {
                 Path pem = directory.resolve("signer.pem");
                 Files.writeString(pem, "-----BEGIN PRIVATE KEY-----\n"
                         + Base64.getEncoder().encodeToString(OWN.getPrivate().getEncoded()) + "\n-----END PRIVATE KEY-----");
-                properties.getProvided().setFormat("PEM"); properties.getProvided().setKeyLocation(pem);
+                properties.getProvided().setKeyLocation(pem);
                 properties.getProvided().setJwksExport(directory.resolve("provided.json"));
             }
             SigningKeySource signer = SigningKeys.initialize(properties.settings());
@@ -39,12 +39,25 @@ class CallbackJwtTrustTest {
             }, System::nanoTime, true)) {
                 assertThat(trust.snapshot().keys()).containsOnlyKeys(signer.kid());
                 assertThat(trust.snapshot().keys().get(signer.kid())).isEqualTo(signer.publicKey());
-                var header = headers(); header.put("kid", signer.kid());
-                var base64 = Base64.getUrlEncoder().withoutPadding();
-                String input = base64.encodeToString(JSONObjectUtils.toJSONString(header).getBytes(StandardCharsets.UTF_8))
-                        + "." + base64.encodeToString(JSONObjectUtils.toJSONString(claims()).getBytes(StandardCharsets.UTF_8));
-                String credential = input + "." + base64.encodeToString(signer.signRs256(input.getBytes(StandardCharsets.US_ASCII)));
-                assertThat(decoder(trust).decode(credential).getSubject()).isEqualTo("alice");
+                var wireToken = new AtomicReference<String>();
+                var observedSigner = new SigningKeySource() {
+                    public RSAPublicKey publicKey() { return signer.publicKey(); }
+                    public String kid() { return signer.kid(); }
+                    public byte[] signRs256(byte[] input) {
+                        byte[] signature = signer.signRs256(input);
+                        wireToken.set(new String(input, StandardCharsets.US_ASCII) + "."
+                                + Base64.getUrlEncoder().withoutPadding().encodeToString(signature));
+                        return signature;
+                    }
+                };
+                var issuer = new ExecutionTokenIssuer(observedSigner, new IssuanceSettings("issuer", Duration.ofMinutes(5),
+                        List.of("receiver"), List.of("ROLE_ORDER_EDITOR", "ORDER_EDITOR")));
+                issuer.issue(new AuthenticatedIdentity("alice", List.of("ROLE_ORDER_EDITOR", "other")));
+                var receiver = new CallbackJwtDecoder(trust, "issuer", "receiver", Clock.systemUTC());
+                var decoded = receiver.decode(wireToken.get());
+                assertThat(decoded.getSubject()).isEqualTo("alice");
+                assertThat(decoded.getClaimAsString("iss")).isEqualTo("issuer");
+                assertThat(decoded.getClaimAsStringList("roles")).containsExactly("ROLE_ORDER_EDITOR");
                 trust.forKid("unknown"); trust.reload();
             }
         }

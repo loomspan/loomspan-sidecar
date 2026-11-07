@@ -11,8 +11,8 @@ Both examples use the SDK's provided signer and Sidecar file trust. Deliver the
 private signing key only to the application, provision its writable public-export
 directory, and deliver the SDK's exported `/public/jwks.json` to the exact
 Sidecar file path. Sidecar gets only public verification material. The example
-uses unencrypted PKCS#8 RSA PEM; use protected secret delivery or the documented
-SDK keystore/password-reference facilities. Missing/invalid provided material
+uses exactly one unencrypted PKCS#8 RSA PEM private key; use protected secret
+delivery and operator-owned access controls. Missing/invalid provided material
 fails startup and never generates replacement keys.
 Remove colocated signing settings when selecting provided mode; the modes are
 mutually exclusive.

@@ -215,59 +215,41 @@ is required.
 
 ### Provided signing
 
-Operators provide RSA keys of at least 2048 bits in `PKCS12`, `JKS`, or unencrypted
-PKCS#8 PEM (`-----BEGIN PRIVATE KEY-----`). PKCS#1 and encrypted PEM are rejected;
-convert them or use an encrypted keystore. Optional PEM certificates may be PEM
-or DER X.509 and must match the private key. Keystores use their alias certificate
-chain. Public JWKS includes `x5c` when a certificate exists.
-
-Generate a keystore using a password already supplied in the environment:
-
-```sh
-keytool -genkeypair -alias signer -keyalg RSA -keysize 2048 -validity 365 -dname "CN=Loomspan signer" -storetype PKCS12 -keystore signing.p12 -storepass:env SIGNING_STORE_PASSWORD
-```
+Operators provide exactly one unencrypted PKCS#8 RSA private key of at least
+2048 bits (`-----BEGIN PRIVATE KEY-----`). Surrounding whitespace and LF, CRLF
+or CR line endings are accepted. Encrypted PEM, PKCS#1, certificate/public-key
+bundles, multiple blocks, extra content, malformed, weak and non-RSA keys fail
+startup. Protect the private file through operator-owned secret delivery and
+access controls. The SDK does not create directories or manage permissions.
 
 ```yaml
 loomspan-sdk:
   signing:
     mode: provided
     provided:
-      format: PKCS12
-      key-location: /run/secrets/signing.p12
-      key-alias: signer
-      keystore-password-reference: env:SIGNING_STORE_PASSWORD
+      key-location: /run/secrets/signing.pem
       jwks-export: /run/loomspan-public/jwks.json
 ```
 
-For JKS choose `format: JKS`; an optional `key-password-reference` can differ
-from the store password and otherwise defaults to the store reference. Passwords
-accept only `env:VARIABLE_NAME` or `file:/absolute/path` references. Secret files
-are UTF-8; one terminal LF or CRLF is removed, with other characters preserved.
-Missing or empty secret targets fail startup. Literal `keystore-password` and
-`key-password` settings are forbidden. Do not put passwords in reference values.
-
-For PEM configure `format`, `key-location`, `jwks-export` and optionally
-`certificate-location`; omit aliases and password references. For keystores,
-`format`, `key-location`, `key-alias`, `keystore-password-reference` and
-`jwks-export` are required, and `certificate-location` is forbidden. Export parents
-must exist; the SDK never creates directories. The export must be separate from
-the provided key, certificate and password files; overlapping paths fail startup
-without replacing those inputs. In core construct
-`new SigningSettings("provided", null, new SigningSettings.Provided(format,
-keyPath, alias, storeReference, keyReference, certificatePath, exportPath))`
-with `SecretReference` objects and null for absent options.
+Both paths are required; the export parent must already exist. The export must
+be separate from the private input, including equivalent existing-file paths.
+In core construct `new SigningSettings("provided", null,
+new SigningSettings.Provided(keyPath, exportPath))`.
 
 Provided keys load at startup only: changing private material requires a restart.
-Missing/invalid, mismatched, weak or non-RSA material fails startup and never
-generates a fallback. The SDK warns when the signing certificate has expired or
-expires within 30 days; it continues signing. This warning does not affect TLS
-validation. Neither private material nor tokens are logged by SDK issuance.
+Unchanged material retains its public identity across restart. Missing or invalid
+material fails startup and never generates a fallback. Multiple workers may use
+the same provided identity, with one process owning each public export path.
+Signing configuration accepts neither keystore/alias/password options nor signing
+certificates; obsolete Spring signing properties fail with actionable errors.
+TLS/mTLS certificates and standard SSL bundle keystores are configured separately.
 
-The export is a complete public-only JWKS written to a sibling temporary file
-and atomically replaced. Filesystem publication failure aborts startup; there is
-no ordinary-move fallback. The exported content is the trust file consumed by
-the Sidecar file-based JWT trust work in PR 8.1.4, in either application
+The export is complete public RSA JWKS (`kty`, `n`, `e`, `kid`, `use`, `alg`),
+without private members or `x5c`. It is written to a sibling temporary file and
+atomically replaced. Publication failure aborts startup with no non-atomic
+fallback. Sidecar consumes the exported public trust in either application
 ConfigurationMode. Callback validation uses its own application-side trust below.
+Neither private material nor tokens are logged by SDK issuance.
 
 ### Token profile and exact authorities
 

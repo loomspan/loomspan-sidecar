@@ -20,6 +20,15 @@ class ExecutionTokenAutoConfigurationTest {
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(SidecarClientAutoConfiguration.class, ExecutionTokenAutoConfiguration.class, CallbackSecurityAutoConfiguration.class))
             .withPropertyValues("loomspan-sdk.base-url=http://localhost:12345");
+    @Test void obsoleteSigningFormatFailsActionably() {
+        runner.withPropertyValues("loomspan-sdk.signing.mode=colocated",
+                "loomspan-sdk.signing.colocated.key-directory=" + directory,
+                "loomspan-sdk.signing.provided.format=PEM").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure()).hasStackTraceContaining("provided.format")
+                    .hasStackTraceContaining("PKCS#8");
+        });
+    }
     @Test void missingModeNamesBothOptionsAndQuickstart() {
         new ApplicationContextRunner()
                 .withConfiguration(AutoConfigurations.of(SidecarClientAutoConfiguration.class, ExecutionTokenAutoConfiguration.class))
@@ -77,18 +86,91 @@ class ExecutionTokenAutoConfigurationTest {
                 .run(context -> assertThat(context).hasFailed());
         assertThat(output.getAll()).doesNotContain("forbidden-secret-marker");
     }
+    @Test void obsoleteSigningPropertiesFailSafelyInBothModesAndRelaxedSources(CapturedOutput output) {
+        for (String name : new String[]{"format", "key-alias", "keystore-password-reference",
+                "key-password-reference", "certificate-location", "keystore-password", "key-password"}) {
+            String property = "loomspan-sdk.signing.provided." + name;
+            for (String mode : new String[]{"colocated", "provided"}) {
+                for (String value : new String[]{"", "synthetic-secret-marker"}) {
+                    runner.withPropertyValues("loomspan-sdk.signing.mode=" + mode,
+                            "loomspan-sdk.signing.colocated.key-directory=" + directory, property + "=" + value)
+                            .run(context -> {
+                                assertThat(context).hasFailed();
+                                assertThat(context.getStartupFailure()).hasStackTraceContaining(property)
+                                        .hasStackTraceContaining("PKCS#8").hasStackTraceContaining("provided.key-location");
+                                assertThat(stack(context.getStartupFailure())).doesNotContain("synthetic-secret-marker");
+                            });
+                }
+            }
+        }
+        runner.withPropertyValues("loomspan-sdk.signing.mode=provided",
+                "loomspan-sdk.signing.provided.keyAlias=synthetic-secret-marker").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure()).hasStackTraceContaining("provided.key-alias");
+            assertThat(stack(context.getStartupFailure())).doesNotContain("synthetic-secret-marker");
+        });
+        runner.withInitializer(context -> context.getEnvironment().getPropertySources().addFirst(
+                new org.springframework.core.env.SystemEnvironmentPropertySource("systemEnvironment", java.util.Map.of(
+                        "LOOMSPANSDK_SIGNING_PROVIDED_KEYPASSWORD", "synthetic-secret-marker"))))
+                .withPropertyValues("loomspan-sdk.signing.mode=provided").run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure()).hasStackTraceContaining("provided.key-password");
+                    assertThat(stack(context.getStartupFailure())).doesNotContain("synthetic-secret-marker");
+                });
+        assertThat(Files.exists(directory.resolve("jwks.json"))).isFalse();
+        assertThat(output.getAll()).doesNotContain("synthetic-secret-marker");
+    }
+
+    @Test void minimalProvidedSettingsAndRepresentativeInvalidMaterialFailAtStartup() throws Exception {
+        Path input = directory.resolve("signer.pem"), export = directory.resolve("public.json");
+        for (String[] settings : new String[][] {
+                {"loomspan-sdk.signing.mode=provided"},
+                {"loomspan-sdk.signing.mode=provided", "loomspan-sdk.signing.provided.key-location=" + input},
+                {"loomspan-sdk.signing.mode=provided", "loomspan-sdk.signing.provided.jwks-export=" + export},
+                {"loomspan-sdk.signing.mode=colocated", "loomspan-sdk.signing.colocated.key-directory=" + directory,
+                        "loomspan-sdk.signing.provided.key-location=" + input}}) {
+            runner.withPropertyValues(settings).run(context -> assertThat(context).hasFailed());
+        }
+        for (String algorithm : new String[]{"missing", "malformed", "RSA", "EC"}) {
+            if (algorithm.equals("malformed")) Files.writeString(input, "private-material-marker");
+            else if (!algorithm.equals("missing")) {
+                var generator = java.security.KeyPairGenerator.getInstance(algorithm);
+                generator.initialize(algorithm.equals("RSA") ? 1024 : 256);
+                Files.writeString(input, "-----BEGIN PRIVATE KEY-----\n"
+                        + java.util.Base64.getEncoder().encodeToString(generator.generateKeyPair().getPrivate().getEncoded())
+                        + "\n-----END PRIVATE KEY-----\n");
+            }
+            runner.withPropertyValues("loomspan-sdk.signing.mode=provided",
+                    "loomspan-sdk.signing.provided.key-location=" + input,
+                    "loomspan-sdk.signing.provided.jwks-export=" + export).run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(stack(context.getStartupFailure())).doesNotContain("private-material-marker", "BEGIN PRIVATE KEY");
+            });
+            assertThat(Files.exists(export)).isFalse();
+        }
+    }
+
+    private static String stack(Throwable error) {
+        var text = new java.io.StringWriter(); error.printStackTrace(new java.io.PrintWriter(text)); return text.toString();
+    }
     @Test void providedPemUsesCoreLoaderAndExportsPublicOnly() throws Exception {
         var generator = java.security.KeyPairGenerator.getInstance("RSA"); generator.initialize(2048);
         var pair = generator.generateKeyPair();
         var pem = directory.resolve("signer.pem");
         Files.writeString(pem, "-----BEGIN PRIVATE KEY-----\n" + java.util.Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded()) + "\n-----END PRIVATE KEY-----");
         var export = directory.resolve("public.json");
-        runner.withPropertyValues("loomspan-sdk.signing.mode=provided", "loomspan-sdk.signing.provided.format=PEM",
-                "loomspan-sdk.signing.provided.key-location=" + pem, "loomspan-sdk.signing.provided.jwks-export=" + export)
-                .run(context -> {
+        var providedRunner = runner.withPropertyValues("loomspan-sdk.signing.mode=provided",
+                "loomspan-sdk.signing.provided.key-location=" + pem, "loomspan-sdk.signing.provided.jwks-export=" + export);
+        var kid = new java.util.concurrent.atomic.AtomicReference<String>();
+        providedRunner.run(context -> {
                     assertThat(context).hasNotFailed();
                     assertThat(context.getBean(SigningKeySource.class).publicKey()).isEqualTo(pair.getPublic());
+                    kid.set(context.getBean(SigningKeySource.class).kid());
                 });
-        assertThat(Files.readString(export)).doesNotContain("PRIVATE", "\"d\"");
+        providedRunner.run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context.getBean(SigningKeySource.class).kid()).isEqualTo(kid.get());
+        });
+        assertThat(Files.readString(export)).doesNotContain("PRIVATE", "\"d\"", "x5c");
     }
 }

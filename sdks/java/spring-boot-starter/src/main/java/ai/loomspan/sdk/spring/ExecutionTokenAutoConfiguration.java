@@ -4,16 +4,23 @@ import ai.loomspan.sdk.*;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
-import org.springframework.core.env.Environment;
+import org.springframework.core.env.ConfigurableEnvironment;
+import org.springframework.boot.context.properties.source.ConfigurationPropertySources;
+import org.springframework.boot.context.properties.source.ConfigurationPropertyName;
 
 /** Explicit SDK signing and issuance; does not install an application security chain. */
 @AutoConfiguration
 @EnableConfigurationProperties({SigningProperties.class, IssuanceProperties.class})
 public class ExecutionTokenAutoConfiguration {
-    @Bean SigningKeySource signingKeySource(SigningProperties properties, Environment environment) {
-        for (String name : new String[]{"keystore-password", "key-password"}) {
-            if (environment.containsProperty("loomspan-sdk.signing.provided." + name))
-                throw new IllegalArgumentException("loomspan-sdk.signing.provided." + name + " is forbidden; use a password-reference");
+    @Bean SigningKeySource signingKeySource(SigningProperties properties, ConfigurableEnvironment environment) {
+        for (String name : new String[]{"format", "key-alias", "keystore-password-reference",
+                "key-password-reference", "certificate-location", "keystore-password", "key-password"}) {
+            String property = "loomspan-sdk.signing.provided." + name;
+            var canonical = ConfigurationPropertyName.of(property);
+            for (var source : ConfigurationPropertySources.get(environment)) {
+                if (source.getConfigurationProperty(canonical) != null)
+                    throw new IllegalArgumentException(property + " is unsupported; use unencrypted PKCS#8 PRIVATE KEY with provided.key-location and provided.jwks-export");
+            }
         }
         return SigningKeys.initialize(properties.settings());
     }
