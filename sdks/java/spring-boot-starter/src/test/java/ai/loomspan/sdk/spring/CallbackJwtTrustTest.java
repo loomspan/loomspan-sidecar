@@ -1,6 +1,10 @@
 package ai.loomspan.sdk.spring;
 
 import ai.loomspan.sdk.*;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.nimbusds.jose.jwk.RSAKey;
 import com.nimbusds.jose.util.JSONObjectUtils;
 import java.io.IOException;
@@ -13,8 +17,10 @@ import java.time.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.slf4j.LoggerFactory;
 import static ai.loomspan.sdk.spring.CallbackJwtDecoderTest.*;
 import static org.assertj.core.api.Assertions.*;
 
@@ -78,10 +84,8 @@ class CallbackJwtTrustTest {
     }
 
     @Test void missingMalformedEmptyAndUnreadableOverlapWithdrawAllTrustAndCorrectedFileRecovers() throws Exception {
-        Path file = directory.resolve("overlap.json");
+        Path file = write(jwks(key("old", OLD)));
         try (var trust = trust(file)) {
-            assertThat(trust.snapshot().keys()).isEmpty(); rejects(trust, "own", OWN);
-            Files.writeString(file, jwks(key("old", OLD))); trust.reload();
             accepts(trust, "own", OWN); accepts(trust, "old", OLD);
             for (String broken : List.of("invalid", "", "{\"keys\":[]}", "{\"keys\":{}}", "{\"keys\":[17]}")) {
                 Files.writeString(file, broken); trust.reload();
@@ -98,6 +102,77 @@ class CallbackJwtTrustTest {
         }, System::nanoTime, false)) {
             accepts(trust, "own", OWN); unreadable.set(true); trust.reload();
             assertThat(trust.snapshot().keys()).isEmpty(); unreadable.set(false); trust.reload(); accepts(trust, "own", OWN);
+        }
+    }
+
+    @Test void failedInitialOverlapReadLeavesNoRefreshTask() throws Exception {
+        Set<Thread> previousThreads = refreshThreads();
+        var reads = new AtomicInteger();
+        Path file = directory.resolve("synthetic-private-path.json");
+        assertThatThrownBy(() -> {
+            try (var ignored = new CallbackJwtTrust(source(OWN, "own"), properties(file), path -> {
+                reads.incrementAndGet();
+                throw new IOException("synthetic-private-reader-detail");
+            }, System::nanoTime, true)) {
+                // Close any task created if initialization unexpectedly succeeds.
+            }
+        }).isInstanceOf(IllegalStateException.class)
+                .hasMessage("loomspan-sdk.callbacks.overlap-jwks is unavailable. Provide a readable overlap JWKS file.")
+                .hasNoCause();
+        assertThat(reads).hasValue(1);
+        Thread.sleep(1200);
+        assertThat(reads).hasValue(1);
+        assertThat(refreshThreads()).isSubsetOf(previousThreads);
+    }
+
+    private static Set<Thread> refreshThreads() {
+        return Thread.getAllStackTraces().keySet().stream()
+                .filter(thread -> thread.getName().equals("loomspan-sdk-callback-trust"))
+                .collect(Collectors.toSet());
+    }
+
+    @Test void runtimeTrustLogsOnlySafeCategoryTransitions() {
+        var content = new AtomicReference<>(jwks(key("old", OLD)));
+        var ticker = new AtomicLong();
+        var logger = (Logger) LoggerFactory.getLogger(CallbackJwtTrust.class);
+        var appender = new ListAppender<ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try (var trust = new CallbackJwtTrust(source(OWN, "own"), properties(directory.resolve("synthetic-private-path.json")), path -> {
+            String candidate = content.get();
+            if (candidate == null) throw new IOException("synthetic-private-reader-detail");
+            return candidate.getBytes(StandardCharsets.UTF_8);
+        }, ticker::get, false)) {
+            trust.reload();
+            assertThat(appender.list).isEmpty();
+
+            content.set(null);
+            trust.forKid("unknown");
+            trust.reload();
+            ticker.addAndGet(TimeUnit.SECONDS.toNanos(1));
+            trust.forKid("unknown");
+
+            content.set("{synthetic-private-content");
+            trust.reload();
+            trust.reload();
+            content.set("{different-private-content");
+            ticker.addAndGet(TimeUnit.SECONDS.toNanos(1));
+            trust.forKid("unknown");
+
+            content.set(jwks(key("old", OLD)));
+            trust.reload();
+            content.set(jwks(key("next", NEXT)));
+            trust.reload();
+
+            assertThat(appender.list).extracting(ILoggingEvent::getLevel).containsExactly(Level.WARN, Level.WARN, Level.INFO);
+            assertThat(appender.list).extracting(ILoggingEvent::getFormattedMessage).containsExactly(
+                    "Callback trust withdrawn. loomspan-sdk.callbacks.overlap-jwks is unavailable. Provide a readable overlap JWKS file.",
+                    "Callback trust withdrawn. loomspan-sdk.callbacks.overlap-jwks is invalid. Provide a valid nonempty public RSA JWKS file.",
+                    "Callback trust restored.");
+            assertThat(appender.list).allSatisfy(event -> assertThat(event.getThrowableProxy()).isNull());
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
         }
     }
 

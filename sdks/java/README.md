@@ -342,12 +342,27 @@ JWTs must have an RS256 trusted signature, `typ=loomspan-execution+jwt`,
 audience, include it in `issuance.additional-audiences` for tokens intended for
 that receiver. Sidecar still checks strict credential expiry before sending.
 
-The callback validator always owns the startup signer's public key in colocated
-or provided mode, independently of Sidecar's configured JWKS. With no overlap
-file, that own key is sufficient. A configured overlap file is loaded immediately,
-polled every second and reloaded on unknown `kid` at most once per second.
-Every complete public RSA key set is validated and published atomically; removed
-keys cease to authenticate new requests. Missing, unreadable, malformed or empty
-configured overlap withdraws ALL callback trust, including the own key, until a
-valid file is restored. There is no stale fallback, private signer reload or
-public key-hosting endpoint. Trust updates do not cancel already admitted work.
+The SDK callback validator uses the startup signer's public key in colocated
+and provided modes. With no overlap file configured, that key is sufficient.
+If you set `loomspan-sdk.callbacks.overlap-jwks`, a readable, valid, nonempty
+public RSA JWKS must be in place before the servlet application starts. A
+missing, unreadable, malformed, empty or invalid file fails application startup.
+The diagnostic identifies the setting and what to correct. Sidecar uses its own
+verification file and can start while it waits for the colocated application's
+first public export.
+
+After startup, the SDK polls the overlap file every second and attempts an
+immediate reload for unknown `kid` values at most once per second. Once detected,
+an unavailable or invalid file withdraws all callback trust, including the
+signer's own key. New callbacks receive the generic HTTP 401 response while
+trust is withdrawn. Already admitted callbacks keep their authenticated
+identity and continue. A valid replacement automatically restores acceptance
+for its current keys and the signer's own key. The SDK logs transitions to
+unavailable, invalid and restored trust. Repeated refreshes in the same state
+stay quiet.
+
+Write the complete, validated public JWKS to a temporary file in the configured
+file's directory, then atomically replace the configured file. This lets the
+SDK read a complete file and publish its validated key set in a single update.
+Removed keys cease to authenticate new requests. The startup signer continues
+to sign with its original private key until the application restarts.

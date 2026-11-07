@@ -7,6 +7,7 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpMethod;
@@ -27,7 +28,9 @@ import org.springframework.security.web.savedrequest.NullRequestCache;
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @EnableConfigurationProperties(CallbackProperties.class)
 public class CallbackSecurityAutoConfiguration {
-    @Bean(destroyMethod="close") CallbackJwtTrust callbackJwtTrust(SigningKeySource source, CallbackProperties properties) {
+    @Bean(destroyMethod="close")
+    @Lazy(false)
+    CallbackJwtTrust callbackJwtTrust(SigningKeySource source, CallbackProperties properties) {
         return new CallbackJwtTrust(source, properties);
     }
 
