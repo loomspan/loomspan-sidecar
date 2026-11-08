@@ -244,6 +244,13 @@ def test_startup_failure_and_partial_cleanup(tmp_path, monkeypatch, failure):
         with pytest.raises(RuntimeError if failure in ("client", "composed") else LocalFailure) as caught:
             await app({"type": "lifespan", "asgi": {"version": "3.0"}, "state": {}}, receive, send)
         assert messages[0]["type"] == "lifespan.startup.failed"
+        if failure == "signer":
+            with pytest.raises(LocalFailure, match=r"key_location.*missing.*Provision") as standalone:
+                ExecutionTokenIssuer(signing, ISSUANCE)
+            assert str(caught.value) == str(standalone.value)
+            assert str(caught.value) in messages[0]["message"]
+            assert "missing.pem" not in messages[0]["message"]
+            assert not signing.jwks_export.exists()
         assert await response(app) == 401
         assert not hasattr(app.state, integration._RESOURCE)
         assert (tmp_path / "jwks.json").exists() == (failure != "signer")

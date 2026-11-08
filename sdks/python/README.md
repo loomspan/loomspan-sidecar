@@ -106,6 +106,24 @@ the timestamp limit can also round out of range.
 Credentials and issuer key material are omitted from default display and
 serialization. Treat issued credentials as bearer secrets.
 
+### Troubleshoot signing startup
+
+A signing startup `LocalFailure` means local initialization failed before the
+issuer was ready. With FastAPI, the same diagnostic appears during application
+startup. Execution reads and skill runs occur separately.
+
+| Diagnostic | What to check |
+| --- | --- |
+| Missing private key at `key_location` | Provision the intended signing key file at the configured location. |
+| `key_location` needs a readable regular file | Confirm the path points to the file and the application account can read it. |
+| Invalid key at `key_location` | Supply one unencrypted PKCS#8 `PRIVATE KEY` PEM block for an RSA key of at least 2048 bits. |
+| Missing or invalid `key_directory` | Point colocated signing at an existing directory the application can access. |
+| RSA RS256 signing initialization failed | Check that the application's cryptographic runtime can generate or use the configured key for RS256. For an unclassified initialization failure, check the signing configuration and SDK runtime. |
+| Public JWKS publication failed | Use a file destination. Check that the parent of `jwks_export`, or `key_directory` in colocated mode, exists and allows the application to write and atomically replace the export. If the export overlaps the private input, configure a separate destination. |
+
+If Docker cannot set up a bind mount and the application never starts, check
+the host path and container mount configuration in Docker.
+
 ## Verify execution callbacks
 
 Open one `CallbackVerifier` from the initialized issuer in your application's

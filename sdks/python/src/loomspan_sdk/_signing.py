@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -10,10 +11,12 @@ from tempfile import NamedTemporaryFile
 from typing import Any, final
 
 import asn1
+from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from pyasn1.codec.ber import decoder  # type: ignore[import-untyped]
 from pyasn1.codec.der import encoder  # type: ignore[import-untyped]
+from pyasn1.error import PyAsn1Error  # type: ignore[import-untyped]
 from pyasn1.type import univ  # type: ignore[import-untyped]
 from pyasn1_modules import rfc5958, rfc8017  # type: ignore[import-untyped]
 
@@ -89,7 +92,11 @@ def _decode_complete(data: bytes, schema: Any) -> Any:
     # Check the full wire structure before typed decoding. The typed decoder
     # leaves open attribute values opaque and normalizes some malformed values.
     structure = asn1.Decoder(data)
-    structure.read()
+    try:
+        structure.read()
+    except IndexError:
+        # The BER decoder can index an empty INTEGER payload.
+        raise ValueError from None
     if not structure.eof():
         raise ValueError
     _validate_ber_identifiers(data)
@@ -99,8 +106,8 @@ def _decode_complete(data: bytes, schema: Any) -> Any:
     return value
 
 
-def _load_private_key(path: Path) -> rsa.RSAPrivateKey:
-    match = _PRIVATE_KEY_PEM.fullmatch(path.read_bytes())
+def _parse_private_key(material: bytes) -> rsa.RSAPrivateKey:
+    match = _PRIVATE_KEY_PEM.fullmatch(material)
     if match is None:
         raise ValueError
     payload = match[1].translate(None, b" \t\r\n")
@@ -134,16 +141,48 @@ def _load_private_key(path: Path) -> rsa.RSAPrivateKey:
     return key
 
 
-def _validate_distinct_paths(private_path: Path, export: Path) -> None:
+def _publication_failure(destination: str) -> str:
+    return (
+        f"Unable to publish the public JWKS to {destination}. "
+        "Use a file path in an existing directory that permits writing and atomic replacement."
+    )
+
+
+def _read_private_key(private_path: Path, export: Path) -> bytes:
     if Path(os.path.abspath(private_path)) == Path(os.path.abspath(export)):
-        raise LocalFailure("JWKS export must not replace the signing input")
+        raise LocalFailure("JWKS export must not replace the signing input") from None
+    message = _publication_failure("jwks_export")
     try:
-        existing_export = export.stat()
-    except FileNotFoundError:
-        return
-    # Use the unnormalized paths for actual traversal, including symlink parents.
-    if os.path.samestat(private_path.stat(), existing_export):
-        raise LocalFailure("JWKS export must not replace the signing input")
+        try:
+            existing_export = export.stat()
+        except FileNotFoundError:
+            existing_export = None
+
+        message = "key_location must point to a readable regular file. Check the path and the application's read access."
+        try:
+            # Use the unnormalized paths for actual traversal, including symlink parents.
+            private_info = private_path.stat()
+            if existing_export is not None and os.path.samestat(private_info, existing_export):
+                raise LocalFailure("JWKS export must not replace the signing input") from None
+            if stat.S_ISREG(private_info.st_mode):
+                return private_path.read_bytes()
+        except FileNotFoundError:
+            message = "The private key file at key_location is missing. Provision the intended signing key file."
+    except (OSError, ValueError):
+        pass
+    raise LocalFailure(message) from None
+
+
+def _load_private_key(private_path: Path, export: Path) -> rsa.RSAPrivateKey:
+    material = _read_private_key(private_path, export)
+    try:
+        return _parse_private_key(material)
+    except (ValueError, asn1.Error, PyAsn1Error, UnsupportedAlgorithm, OverflowError, RecursionError):
+        pass
+    raise LocalFailure(
+        "key_location must contain one unencrypted PKCS#8 PRIVATE KEY PEM block "
+        f"for an RSA key of at least {_MINIMUM_RSA_BITS} bits. Check the provisioned key's format and size."
+    ) from None
 
 
 def _publish(export: Path, content: bytes) -> None:
@@ -163,18 +202,30 @@ def _publish(export: Path, content: bytes) -> None:
 
 
 def _initialize_signing(signing: ColocatedSigning | ProvidedSigning) -> tuple[rsa.RSAPrivateKey, str]:
+    failure = "Signing initialization failed. Check the signing configuration and SDK runtime."
+    colocated = isinstance(signing, ColocatedSigning)
+    field = "key_directory" if colocated else "key_location"
+    destination = "jwks.json in key_directory" if colocated else "jwks_export"
+    signing_failure = f"Unable to initialize RSA RS256 signing for {field}. Check the application's cryptographic runtime."
     try:
         if isinstance(signing, ColocatedSigning):
             directory = signing.key_directory.absolute()
-            if not directory.is_dir():
-                raise ValueError
+            try:
+                is_directory = directory.is_dir()
+            except (OSError, ValueError):
+                is_directory = False
+            if not is_directory:
+                raise LocalFailure(
+                    "key_directory must point to an existing directory the application can access."
+                ) from None
             export = directory / "jwks.json"
+            failure = signing_failure
             key = rsa.generate_private_key(public_exponent=65537, key_size=_MINIMUM_RSA_BITS)
         else:
             private_path = signing.key_location.absolute()
             export = signing.jwks_export.absolute()
-            _validate_distinct_paths(private_path, export)
-            key = _load_private_key(private_path)
+            key = _load_private_key(private_path, export)
+            failure = signing_failure
 
         public = key.public_key()
         challenge = b"Loomspan signing key validation"
@@ -185,11 +236,13 @@ def _initialize_signing(signing: ColocatedSigning | ProvidedSigning) -> tuple[rs
         kid = _base64url(hashlib.sha256(thumbprint_input).digest())
         public_jwk.update(kid=kid, alg="RS256", use="sig")
         result = key, kid
-        _publish(export, json.dumps({"keys": [public_jwk]}).encode("ascii"))
+        content = json.dumps({"keys": [public_jwk]}).encode("ascii")
+        failure = _publication_failure(destination)
+        _publish(export, content)
         return result
     except LocalFailure:
         raise
     except Exception:
         # Crypto and parser diagnostics may contain private input.
         pass
-    raise LocalFailure("Unable to initialize RSA RS256 signing material or publish its public JWKS")
+    raise LocalFailure(failure) from None

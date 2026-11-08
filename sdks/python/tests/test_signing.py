@@ -2,6 +2,7 @@ import base64
 import errno
 import json
 import os
+import traceback
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -24,6 +25,16 @@ EXPECTED = json.loads((FIXTURES / "public-jwks.json").read_bytes())
 PKCS8 = base64.b64decode(b"".join(PEM.splitlines()[1:-1]), validate=True)
 PRIOR = b"prior complete public export"
 MARKER = "synthetic-private-marker"
+PATH_MARKER = "synthetic-caller-path"
+TOKEN_MARKER = "Bearer synthetic-credential"
+BACKEND_MARKER = "synthetic-backend-detail"
+
+
+def assert_sanitized(error, caplog, *markers):
+    assert error.__cause__ is None and error.__context__ is None
+    displayed = str(error) + repr(error) + "".join(traceback.format_exception(error)) + caplog.text
+    for marker in markers:
+        assert marker not in displayed
 
 
 def pem(encoded):
@@ -175,7 +186,7 @@ def test_invalid_provided_material_never_falls_back_or_replaces_files(tmp_path, 
         key.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo),
         PEM.replace(b"\n-----END", b"-----END"), PEM.replace(b"=", b""), PEM.replace(b"MII", b"M!II", 1),
         traditional_pem, traditional_pem.replace(b"RSA PRIVATE KEY", b"PRIVATE KEY"), encrypted_pem,
-        pem(b"\x30\x00"), pem(PKCS8[:-1]), pem(PKCS8 + b"\x00"),
+        pem(b"\x30\x00"), pem(b"\x30\x02\x02\x00"), pem(PKCS8[:-1]), pem(PKCS8 + b"\x00"),
     ]
     invalid += [key.private_bytes(
         serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
@@ -188,16 +199,14 @@ def test_invalid_provided_material_never_falls_back_or_replaces_files(tmp_path, 
     for material in invalid:
         mode = make_provided(tmp_path, material)
         mode.jwks_export.write_bytes(PRIOR)
-        with pytest.raises(LocalFailure) as error:
+        with pytest.raises(LocalFailure, match=r"key_location.*unencrypted PKCS#8.*2048") as error:
             ExecutionTokenIssuer(mode)
-        assert error.value.__cause__ is None and error.value.__context__ is None
-        assert MARKER not in str(error.value) + repr(error.value) + caplog.text
-        assert "BEGIN PRIVATE" not in str(error.value) + repr(error.value) + caplog.text
+        assert_sanitized(error.value, caplog, MARKER, "BEGIN PRIVATE", "index out of range")
         assert mode.key_location.read_bytes() == material and mode.jwks_export.read_bytes() == PRIOR
         assert set(tmp_path.iterdir()) == {mode.key_location, mode.jwks_export}
 
     mode.key_location.unlink()
-    with pytest.raises(LocalFailure):
+    with pytest.raises(LocalFailure, match=r"key_location.*missing.*Provision"):
         ExecutionTokenIssuer(mode)
     assert not mode.key_location.exists() and mode.jwks_export.read_bytes() == PRIOR
 
@@ -274,19 +283,78 @@ def test_provided_rejects_invalid_version_encodings_in_outer_and_inner_structure
         assert not mode.jwks_export.exists()
 
 
-def test_signing_backend_error_is_sanitized(tmp_path, monkeypatch, caplog):
+@pytest.mark.parametrize("failure,diagnostic", [
+    (ValueError, r"key_location.*unencrypted PKCS#8.*2048"),
+    (RuntimeError, r"Signing initialization failed.*signing configuration.*SDK runtime"),
+])
+def test_key_loader_error_is_sanitized(tmp_path, monkeypatch, caplog, failure, diagnostic):
+    tmp_path = tmp_path / PATH_MARKER
+    tmp_path.mkdir()
     mode = make_provided(tmp_path)
     mode.jwks_export.write_bytes(PRIOR)
 
     def fail_load(*args, **kwargs):
-        raise ValueError(MARKER)
+        raise failure(f"{mode.key_location}: {PEM.decode()} {TOKEN_MARKER} {BACKEND_MARKER}")
 
     monkeypatch.setattr(_signing.serialization, "load_der_private_key", fail_load)
-    with pytest.raises(LocalFailure) as error:
+    with pytest.raises(LocalFailure, match=diagnostic) as error:
         ExecutionTokenIssuer(mode)
-    assert error.value.__cause__ is None and error.value.__context__ is None
-    assert MARKER not in str(error.value) + repr(error.value) + caplog.text
+    assert_sanitized(error.value, caplog, PATH_MARKER, "BEGIN PRIVATE", TOKEN_MARKER, BACKEND_MARKER)
     assert mode.key_location.read_bytes() == PEM and mode.jwks_export.read_bytes() == PRIOR
+
+
+@pytest.mark.parametrize("is_directory", [False, True], ids=["unreadable", "non-file"])
+def test_key_location_requires_a_readable_file(tmp_path, monkeypatch, caplog, is_directory):
+    private = tmp_path / PATH_MARKER
+    export = tmp_path / "public.json"
+    export.write_bytes(PRIOR)
+    mode = ProvidedSigning(private, export)
+    if is_directory:
+        private.mkdir()
+    else:
+        private.write_bytes(PEM)
+        read_bytes = Path.read_bytes
+
+        def unreadable(path):
+            if path == private:
+                raise PermissionError(errno.EACCES, BACKEND_MARKER, str(path))
+            return read_bytes(path)
+
+        monkeypatch.setattr(Path, "read_bytes", unreadable)
+    with pytest.raises(LocalFailure, match=r"key_location.*readable regular file") as error:
+        ExecutionTokenIssuer(mode)
+    assert_sanitized(error.value, caplog, PATH_MARKER, BACKEND_MARKER)
+    assert export.read_bytes() == PRIOR
+    assert set(tmp_path.iterdir()) == {private, export}
+    if not is_directory:
+        assert read_bytes(private) == PEM
+
+
+@pytest.mark.parametrize("fail_at", ["generate", "self-check"])
+def test_signing_initialization_failure_precedes_publication(tmp_path, monkeypatch, caplog, fail_at):
+    if fail_at == "generate":
+        mode = ColocatedSigning(tmp_path)
+        field = "key_directory"
+        export = tmp_path / "jwks.json"
+    else:
+        mode = make_provided(tmp_path)
+        field = "key_location"
+        export = mode.jwks_export
+    export.write_bytes(PRIOR)
+
+    def fail(*args, **kwargs):
+        raise RuntimeError(f"{BACKEND_MARKER} {TOKEN_MARKER}")
+
+    if fail_at == "generate":
+        monkeypatch.setattr(_signing.rsa, "generate_private_key", fail)
+    else:
+        monkeypatch.setattr(_signing, "_sign_rs256", fail)
+    with pytest.raises(LocalFailure, match=rf"RSA RS256 signing.*{field}.*cryptographic runtime") as error:
+        ExecutionTokenIssuer(mode)
+    assert_sanitized(error.value, caplog, BACKEND_MARKER, TOKEN_MARKER)
+    assert export.read_bytes() == PRIOR
+    if isinstance(mode, ProvidedSigning):
+        assert mode.key_location.read_bytes() == PEM
 
 
 def test_settings_require_an_explicit_mode_and_paths_without_doing_io(tmp_path):
@@ -380,11 +448,11 @@ def test_invalid_export_destinations_do_not_create_parents(tmp_path):
     absent = tmp_path / "absent"
     directory = tmp_path / "directory"
     directory.mkdir()
-    for target in (absent / "public.json", mode.key_location / "public.json", directory):
-        with pytest.raises(LocalFailure):
+    for target in (directory, absent / "public.json", mode.key_location / "public.json"):
+        with pytest.raises(LocalFailure, match=r"publish the public JWKS.*jwks_export.*file path.*directory"):
             ExecutionTokenIssuer(ProvidedSigning(mode.key_location, target))
     for location in (absent, mode.key_location):
-        with pytest.raises(LocalFailure):
+        with pytest.raises(LocalFailure, match=r"key_directory.*existing.*directory"):
             ExecutionTokenIssuer(ColocatedSigning(location))
     assert set(tmp_path.iterdir()) == {mode.key_location, directory}
     assert mode.key_location.read_bytes() == PEM
@@ -392,7 +460,7 @@ def test_invalid_export_destinations_do_not_create_parents(tmp_path):
 
 @pytest.mark.parametrize("mode_name", ["colocated", "provided"])
 @pytest.mark.parametrize("fail_at", ["create", "write", "replace", "unsupported-replace"])
-def test_atomic_publication_failure_preserves_existing_files(tmp_path, monkeypatch, mode_name, fail_at):
+def test_atomic_publication_failure_preserves_existing_files(tmp_path, monkeypatch, caplog, mode_name, fail_at):
     if mode_name == "colocated":
         mode = ColocatedSigning(tmp_path)
         export = tmp_path / "jwks.json"
@@ -428,9 +496,10 @@ def test_atomic_publication_failure_preserves_existing_files(tmp_path, monkeypat
 
     monkeypatch.setattr(_signing, "NamedTemporaryFile", temporary)
     monkeypatch.setattr(_signing.os, "replace", replace)
-    with pytest.raises(LocalFailure) as error:
+    field = "key_directory" if mode_name == "colocated" else "jwks_export"
+    with pytest.raises(LocalFailure, match=rf"publish the public JWKS.*{field}.*atomic replacement") as error:
         ExecutionTokenIssuer(mode)
-    assert MARKER not in str(error.value) and error.value.__context__ is None
+    assert_sanitized(error.value, caplog, MARKER)
     assert parents == [export.parent.resolve(strict=True)]
     assert len(moves) == int(fail_at in {"replace", "unsupported-replace"})
     for parent, target, previous, content in moves:
