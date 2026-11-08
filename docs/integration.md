@@ -4,6 +4,12 @@ Use the [quickstart](quickstart.md) for a complete first invocation or
 [setup](setup.md) for deployment choices. Application work belongs in your
 application repository; it does not require modifying Sidecar's Java code.
 
+Use the [Python execution SDK](../sdks/python/README.md) for synchronous or
+asynchronous calls and [FastAPI integration](../sdks/python/README.md#use-fastapi-for-invocation-and-callbacks),
+or the [Java execution SDK](../sdks/java/README.md) for Java/Spring applications.
+These execution clients are separate from the configuration-authoring client below.
+For result handling, see [typed snapshots and application decisions](../sdks/python/README.md#process-results-before-http-serialization).
+
 Configure invocation and callback transport independently using the
 [Standard HTTPS and Hardened mTLS references](remote-recipes.md).
 

@@ -308,6 +308,65 @@ The response contains the accepted Sidecar execution ID. The callback handler
 requires `ORDER_EDITOR` and the verified owner of `order-1`. A browser session
 or the demo password does not authenticate a callback.
 
+## Process results before HTTP serialization
+
+Keep the `ExecutionSnapshot` returned by `get_execution` through application
+processing. Apply business validation to its `result` only when execution is
+`COMPLETED`, then build your public response. Keep application outcomes separate
+from the immutable snapshot; a failed application validation does not turn the
+SDK's completed execution into an SDK failure. Parse result text only if your
+application's skill contract requires structured content.
+
+For example, add this endpoint inside the runnable FastAPI example's `create_app`,
+after defining `current_user`. This example's application policy flags empty echo
+text for review; replace that policy with your own business validation.
+
+```python
+from uuid import UUID
+from loomspan_sdk import HttpFailure, ProtocolFailure
+
+@app.get("/executions/{execution_id}")
+async def result(
+    execution_id: UUID,
+    user: Annotated[AuthenticatedIdentity, Depends(current_user)],
+    client: Annotated[AsyncSidecarClient, Depends(loomspan.client)],
+    issuer: Annotated[ExecutionTokenIssuer, Depends(loomspan.issuer)],
+):
+    try:
+        snapshot = await client.get_execution(execution_id, issuer.issue(user))
+    except HttpFailure as error:
+        raise HTTPException(error.status_code, "Execution read rejected") from None
+    except ProtocolFailure:
+        raise HTTPException(502, "Execution could not be read") from None
+
+    # Business processing precedes public response projection.
+    application_outcome = None
+    if snapshot.status == "COMPLETED":
+        application_outcome = {
+            "needsReview": snapshot.result is None or not snapshot.result.strip(),
+        }
+
+    # This app deliberately exposes a small view, not the full execution envelope.
+    return {
+        "id": str(snapshot.id),
+        "executionStatus": snapshot.status,
+        "result": snapshot.result,
+        "failureKind": snapshot.failure.kind if snapshot.failure else None,
+        "applicationOutcome": application_outcome,
+    }
+```
+
+A `FAILED` snapshot is a successful read of a failed execution. It reaches the
+public projection without running completion-only business validation. A failed
+read raises an SDK exception and supplies no usable snapshot; do not turn it into
+an asserted execution failure or resubmit the execution. Authenticate the caller
+on every read as above; Sidecar enforces execution ownership.
+
+Use one explicit projection when your app exposes the complete execution envelope.
+Preserve original result/timestamp text, absent-versus-empty events and numeric
+precision. If projecting event details with `Decimal` values, use a serializer
+that preserves those numbers rather than converting them to binary floats.
+
 ## Use the execution clients
 
 Use a `CredentialSnapshot` from the issuer or wrap an execution JWT issued by
