@@ -3,7 +3,8 @@
 `loomspan-sdk` provides typed synchronous and asynchronous clients for the Sidecar
 execution HTTP API and issues execution credentials from application-authenticated
 identity. It also verifies execution credentials at callback admission. It requires
-CPython 3.12 or newer.
+CPython 3.12 or newer. Installed-package checks cover standard CPython 3.12
+through 3.15 on Linux x86-64 and CPython 3.13 on Windows x86-64 and macOS ARM64.
 
 From the repository root, install into your application's virtual environment.
 You can also install a wheel or source distribution of the SDK into that
@@ -12,6 +13,11 @@ environment.
 ```sh
 python -m pip install ./sdks/python
 ```
+
+To build one artifact for deployment, run `uv build --out-dir dist sdks/python`
+from the repository root. Install the resulting wheel by its file path.
+Append `[fastapi]` to that path when the application uses the FastAPI
+callback guard. The core distribution has no web framework dependency.
 
 ## Issue execution credentials
 

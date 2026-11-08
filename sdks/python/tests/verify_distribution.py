@@ -1,5 +1,7 @@
 """Build and exercise the installed SDK from fresh, external environments."""
 
+import argparse
+import hashlib
 import json
 import os
 import re
@@ -59,6 +61,21 @@ print(platform.python_implementation(), platform.python_version(), platform.syst
       platform.machine(), *(f"{name} {metadata.version(name)}" for name in sorted(requirements)))
 """
 
+RUNTIME = """
+import importlib.metadata as metadata
+import json
+import platform
+import sysconfig
+
+assert platform.python_implementation() == "CPython"
+assert not sysconfig.get_config_var("Py_GIL_DISABLED")
+print(json.dumps({
+    "interpreter": platform.python_version(), "platform": platform.platform(),
+    "machine": platform.machine(), "abi": sysconfig.get_config_var("SOABI"),
+    "packages": {dist.metadata["Name"]: dist.version for dist in metadata.distributions()},
+}, sort_keys=True))
+"""
+
 
 def write_issuance_example(external: Path) -> Path:
     readme = (PROJECT / "README.md").read_text(encoding="utf-8")
@@ -113,7 +130,7 @@ def serve_example(conn, request, index):
         })
 
 
-def verify() -> None:
+def verify(dist_dir: Path | None = None, constraints: Path | None = None) -> None:
     env = os.environ.copy()
     for key in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"):
         env.pop(key, None)
@@ -131,11 +148,15 @@ def verify() -> None:
             assert TOKEN not in process.stdout and TOKEN not in process.stderr
             return process.stdout.strip()
 
-        output = external / "dist"
-        run("uv", "build", "--out-dir", str(output), str(PROJECT))
+        output = dist_dir.resolve() if dist_dir is not None else external / "dist"
+        if dist_dir is None:
+            run("uv", "build", "--out-dir", str(output), str(PROJECT))
         (wheel,) = output.glob("*.whl")
         (sdist,) = output.glob("*.tar.gz")
-        print(f"Built {wheel.name} and {sdist.name}")
+        print(run("uv", "--version"))
+        for artifact in (wheel, sdist):
+            print(f"{artifact.name} sha256={hashlib.sha256(artifact.read_bytes()).hexdigest()}")
+        resolution = ("--constraints", str(constraints.resolve())) if constraints is not None else ()
         examples = [external / name for name in ("existing_credential.py", "existing_credential_async.py")]
         for example in examples:
             shutil.copyfile(PROJECT / "examples" / example.name, example)
@@ -153,8 +174,9 @@ def verify() -> None:
             environment = external / kind
             run("uv", "venv", "--python", sys.executable, str(environment))
             python = str(environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
-            run("uv", "pip", "install", "--python", python, str(artifact))
+            run("uv", "pip", "install", "--python", python, *resolution, str(artifact))
             print(f"{kind}: {run(python, '-I', '-c', CHECK_INSTALL)}")
+            print(f"{kind} runtime: {run(python, '-I', '-c', RUNTIME)}")
             assert run(python, "-I", str(issuance_example)) == ""
             keys = []
             for filename in ("jwks.json", "provided-jwks.json"):
@@ -174,21 +196,22 @@ def verify() -> None:
             web_environment = external / f"{kind}-fastapi"
             run("uv", "venv", "--python", sys.executable, str(web_environment))
             web_python = str(web_environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
-            run("uv", "pip", "install", "--python", web_python, f"{artifact}[fastapi]")
+            run("uv", "pip", "install", "--python", web_python, *resolution, f"{artifact}[fastapi]")
+            print(f"{kind} fastapi runtime: {run(web_python, '-I', '-c', RUNTIME)}")
             runtime = external / f"{kind}-runtime"
             runtime.mkdir()
             assert run(web_python, str(external / "verify_fastapi_example.py"), str(runtime)) == ""
             print(f"{kind} with fastapi: installed colocated and provided app checks passed")
-            if kind == "wheel":
-                run("uv", "pip", "install", "--python", web_python, mypy)
-                print(run(web_python, "-I", "-m", "mypy", "--strict", str(web_example)))
-
-        type_environment = external / "types"
-        run("uv", "venv", "--python", sys.executable, str(type_environment))
-        python = str(type_environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
-        run("uv", "pip", "install", "--python", python, str(wheel), mypy)
-        print(run(python, "-I", "-m", "mypy", "--strict", *(str(example) for example in [*examples, issuance_example])))
+            run("uv", "pip", "install", "--python", web_python, *resolution, mypy)
+            print(run(web_python, "-I", "-m", "mypy", "--strict", str(web_example)))
+            run("uv", "pip", "install", "--python", python, *resolution, mypy)
+            print(run(python, "-I", "-m", "mypy", "--strict",
+                      *(str(example) for example in [*examples, issuance_example])))
 
 
 if __name__ == "__main__":
-    verify()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dist-dir", type=Path)
+    parser.add_argument("--constraints", type=Path)
+    args = parser.parse_args()
+    verify(args.dist_dir, args.constraints)
