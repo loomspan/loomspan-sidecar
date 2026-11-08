@@ -151,6 +151,157 @@ any local read already in progress.
 Withdrawal and expiry govern new admission. Previously admitted callbacks can
 finish with the identity already verified for them.
 
+## Use FastAPI for invocation and callbacks
+
+Install the optional FastAPI integration into your application's environment.
+
+```sh
+python -m pip install './sdks/python[fastapi]'
+```
+
+The [runnable FastAPI app](examples/fastapi_app.py) uses an ordinary application
+user dependency, one reusable SDK client and issuer, and an ordinary callback
+router. Its local demo checks an application password and supplies a fixed,
+server-owned identity. In your own app, use your existing authenticated user
+dependency and explicitly map its trusted subject and authorities into
+`AuthenticatedIdentity`. Inject the SDK resources with
+`Depends(loomspan.issuer)` and `Depends(loomspan.client)`, then call
+`issuer.issue(identity)` and pass the credential to each client operation.
+The standalone async client also works with existing credentials independently
+of FastAPI and signing configuration.
+
+Constructing `Loomspan` validates its configuration. Enter
+`async with loomspan.lifespan(app)` in the owning app's FastAPI lifespan. It
+initializes the signer and public export, verifies initial callback trust and
+starts overlap refresh if configured, then opens the client. Compose your
+existing lifespan inside that context if it needs the SDK resources during
+startup or shutdown. Initialization failures propagate and release any local
+resources that were opened. A successfully published public file stays in
+place. Shutdown stops refresh and closes the local client without cancelling
+or replaying Sidecar executions.
+
+Register `app.add_middleware(CallbackMiddleware, loomspan=loomspan)` after the
+owning app's other user middleware so authentication precedes CORS, login or
+any other middleware that can return a response. The SDK checks this ordering
+at lifespan startup. Scope browser login, sessions and CSRF checks to their own
+routes. Middleware or proxies outside the owner must forward callback requests
+to the guard for its authentication and method policy to apply.
+
+The guard protects `/loomspan/callbacks` and its slash-delimited descendants,
+including handlers without a principal dependency. Use `callback_prefix` for
+one literal absolute non-root prefix relative to the owning app. A single
+trailing slash is normalized. A server's deployment root is separate. For
+example, if the root app mounts a child at `/orders`, configure a guard on the
+root at `/orders/loomspan/callbacks` and use the root integration's
+`loomspan.principal` dependency in the child router. That placement covers the
+callback before root CORS or browser middleware. If the child owns its own
+guard instead, the parent lifespan must explicitly enter
+`loomspan.lifespan(child)` and its middleware must forward those requests.
+Mounted apps inherit the deployment root from the server and the mount.
+
+Callbacks require exactly one bearer Authorization header. Duplicate
+Authorization headers, query parameters named `access_token` (including
+encoded names), malformed percent escapes in query names, and missing or invalid
+authentication return 401 with `WWW-Authenticate: Bearer`. This also applies
+when the guard is installed but the lifespan was omitted. Browser
+cookies and session identity have no effect on callback admission. The SDK
+allows authenticated GET and POST, returns 403 for other authenticated HTTP
+methods, and denies callback WebSocket upgrades. It forwards request bodies
+and business headers intact.
+
+Ambiguous protected paths seen by the middleware receive 400. Examples include
+empty or dot segments, semicolon parameters and encoded path separators when
+visible in the ASGI raw path. The raw path is optional in ASGI. Once a server or
+proxy has normalized away a distinction, the guard can only check the path it
+receives. With Uvicorn's h11 backend, malformed HTTP targets with raw spaces or
+NUL are rejected before ASGI. h11 can deliver TRACE and path forms such as
+encoded delimiters to the app, where the SDK applies its own method and path
+rules. Other servers and proxies can reject requests earlier.
+
+Use `Annotated[CallbackPrincipal, Depends(loomspan.principal)]` to obtain the
+already-verified issuer, subject and exact authorities inside a callback.
+Apply your own role checks and authorize records using both issuer and subject,
+returning 403 when access is denied. Normal FastAPI dependency overrides work
+for client, issuer and principal. Overrides do not change middleware admission.
+Keep tokens and private keys out of logs, examples and business data.
+
+The callback verifier uses the issuer as the default audience. Set
+`callback_audience` to require a different one and `overlap_jwks` to load and
+refresh an additional local public JWKS. Trust withdrawal and expiration
+including the callback's 60-second skew apply to new admission. Already-admitted
+requests retain their verified identity. Sidecar checks expiry strictly before
+forwarding, independently of callback skew.
+
+### Run the installed app
+
+Use a local application environment. The SDK extra installs FastAPI and
+Starlette. Install a server separately to run the example. These commands use
+Bash from the repository root.
+
+```sh
+python -m pip install './sdks/python[fastapi]' uvicorn
+export LOOMSPAN_SIDECAR_URL=http://127.0.0.1:8080
+export LOOMSPAN_SKILL=echo
+read -r -s -p 'Local demo password: ' LOOMSPAN_DEMO_PASSWORD
+export LOOMSPAN_DEMO_PASSWORD
+```
+
+Use a configured Sidecar and a skill accepting a `text` input. The example
+issues credentials with issuer `orders-app` and includes the default Sidecar
+audience `loomspan-sidecar`. Configure Sidecar to trust the public JWKS from
+the chosen signing mode. See the [Sidecar trust settings](../../docs/operations.md).
+For a Sidecar operation using execution-credential passthrough, configure its
+approved callback recipient and a POST to
+`/loomspan/callbacks/orders/order-1` with a JSON `note` field.
+
+For a **single-worker colocated signer**, create an empty application-owned
+directory and start the app.
+
+```sh
+mkdir -p runtime/fastapi-colocated
+export LOOMSPAN_SIGNING_MODE=colocated
+export LOOMSPAN_KEY_DIRECTORY=runtime/fastapi-colocated
+python -m uvicorn --factory --app-dir sdks/python/examples --workers 1 --http h11 fastapi_app:create_app
+```
+
+This process owns `runtime/fastapi-colocated/jwks.json`. Set
+`loomspan-sidecar.trust.mode=colocated` and point
+`loomspan-sidecar.trust.colocated.key-directory` at the directory as seen by
+Sidecar. Give Sidecar read access to the public export and use its loopback
+listener. Each application restart publishes a new identity, which Sidecar
+adopts on refresh.
+
+For a **single-worker provided signer**, first provision your unencrypted RSA
+PKCS#8 private PEM at the path below and give the application read access.
+Use an existing directory for the public export.
+
+```sh
+mkdir -p runtime/fastapi-provided
+export LOOMSPAN_SIGNING_MODE=provided
+export LOOMSPAN_SIGNING_KEY=secrets/loomspan-signing.pem
+export LOOMSPAN_JWKS_EXPORT=runtime/fastapi-provided/jwks.json
+python -m uvicorn --factory --app-dir sdks/python/examples --workers 1 --http h11 fastapi_app:create_app
+```
+
+The operator owns the provided private key and the process owns its public
+export path. Set `loomspan-sidecar.trust.mode=file` and point
+`loomspan-sidecar.trust.file.jwks` at the readable public export or a copy
+distributed to Sidecar. Provided-key replicas can read the same private
+identity with appropriate permissions, each with a distinct public export path.
+Keep one writer per public path. Each command above starts one process.
+
+From another Bash shell, enter the same local password and submit.
+
+```sh
+read -r -s -p 'Local demo password: ' LOOMSPAN_DEMO_PASSWORD
+printf 'X-Demo-Password: %s\n' "$LOOMSPAN_DEMO_PASSWORD" |
+  curl --fail-with-body --header @- --json '{"text":"hello"}' http://127.0.0.1:8000/submit
+```
+
+The response contains the accepted Sidecar execution ID. The callback handler
+requires `ORDER_EDITOR` and the verified owner of `order-1`. A browser session
+or the demo password does not authenticate a callback.
+
 ## Use the execution clients
 
 Use a `CredentialSnapshot` from the issuer or wrap an execution JWT issued by

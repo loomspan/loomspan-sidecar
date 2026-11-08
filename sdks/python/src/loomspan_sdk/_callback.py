@@ -47,6 +47,15 @@ def _instant_ns(value: JsonValue) -> int:
         return int(number.quantize(_NANOSECOND).scaleb(9))
 
 
+def _validate_callback_options(audience: str | None, overlap_jwks: Path | None) -> None:
+    if audience is not None and (not isinstance(audience, str) or _java_blank(audience)):
+        raise LocalFailure("Callback audience must be a nonblank string")
+    if overlap_jwks is not None and (
+        not isinstance(overlap_jwks, Path) or _java_blank(overlap_jwks.name) or "\0" in str(overlap_jwks)
+    ):
+        raise LocalFailure("Callback overlap JWKS must be a file path")
+
+
 @dataclass(frozen=True, slots=True)
 class CallbackPrincipal:
     """Authenticated callback identity and its exact authority snapshot."""
@@ -76,10 +85,7 @@ class CallbackVerifier:
         """Initialize current trust, then own any refresh work until context exit."""
         if not isinstance(issuer, ExecutionTokenIssuer):
             raise LocalFailure("An initialized execution token issuer is required")
-        if audience is not None and (not isinstance(audience, str) or _java_blank(audience)):
-            raise LocalFailure("Callback audience must be a nonblank string")
-        if overlap_jwks is not None and (not isinstance(overlap_jwks, Path) or _java_blank(overlap_jwks.name)):
-            raise LocalFailure("Callback overlap JWKS must be a file path")
+        _validate_callback_options(audience, overlap_jwks)
 
         issuer_name, kid, public = issuer._callback_verification_material()
         trust = _CallbackTrust(kid, public, overlap_jwks)

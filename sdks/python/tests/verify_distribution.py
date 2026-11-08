@@ -32,17 +32,25 @@ assert installed.is_relative_to(pathlib.Path(sys.prefix).resolve()), installed
 dist = metadata.distribution("loomspan-sdk")
 assert dist.version == "0.1.0.dev0"
 assert dist.metadata["Requires-Python"] == ">=3.12"
-requirements = {
-    name: set(bounds.split(","))
-    for name, bounds in (requirement.split("<", 1) for requirement in dist.requires)
-}
+requirements = {}
+extras = {}
+for requirement in dist.requires:
+    spec, separator, marker = requirement.partition(";")
+    name, bounds = spec.rstrip().split("<", 1)
+    if separator:
+        assert marker.replace(" ", "").replace('"', "'") == "extra=='fastapi'"
+        extras[name] = set(bounds.split(","))
+    else:
+        requirements[name] = set(bounds.split(","))
 assert requirements == {
     "anyio": {"5", ">=4.16"}, "asn1": {"4", ">=3.3"}, "cryptography": {"49", ">=48"}, "h11": {"0.17", ">=0.16"},
     "pyasn1": {"0.7", ">=0.6.5"}, "pyasn1-modules": {"0.5", ">=0.4.2"}, "simplejson": {"5", ">=4.2"},
 }
+assert dist.metadata.get_all("Provides-Extra") == ["fastapi"]
+assert extras == {"fastapi": {"0.163", ">=0.162.2"}, "starlette": {"1.11", ">=1.10"}}
 assert installed.with_name("py.typed").is_file()
 assert installed.with_name("py.typed").is_relative_to(pathlib.Path(sys.prefix).resolve())
-for name in ("fastapi", "starlette", "uvicorn", "jwt"):
+for name in ("fastapi", "starlette", "uvicorn", "fastapi_cli", "jwt"):
     assert importlib.util.find_spec(name) is None, name
 assert {"CredentialSnapshot", "AsyncSidecarClient", "AuthenticatedIdentity", "ExecutionTokenIssuer",
         "IssuanceSettings", "ColocatedSigning", "ProvidedSigning", "CallbackPrincipal", "CallbackVerifier",
@@ -131,7 +139,16 @@ def verify() -> None:
         examples = [external / name for name in ("existing_credential.py", "existing_credential_async.py")]
         for example in examples:
             shutil.copyfile(PROJECT / "examples" / example.name, example)
+        web_example = external / "fastapi_app.py"
+        shutil.copyfile(PROJECT / "examples" / web_example.name, web_example)
+        for name in ("verify_fastapi_example.py", "wire_fixture.py"):
+            shutil.copyfile(PROJECT / "tests" / name, external / name)
         issuance_example = write_issuance_example(external)
+        shutil.copyfile(SYNTHETIC_PEM.with_name("public-jwks.json"), external / "secrets/public-jwks.json")
+        mypy = next(
+            requirement for requirement in (PROJECT / "requirements-dev.txt").read_text().splitlines()
+            if requirement.startswith("mypy==")
+        )
         for kind, artifact in (("wheel", wheel), ("sdist", sdist)):
             environment = external / kind
             run("uv", "venv", "--python", sys.executable, str(environment))
@@ -154,13 +171,21 @@ def verify() -> None:
                     assert str(EXECUTION_ID) in summary
                 assert len(peer.requests) == 5
 
+            web_environment = external / f"{kind}-fastapi"
+            run("uv", "venv", "--python", sys.executable, str(web_environment))
+            web_python = str(web_environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
+            run("uv", "pip", "install", "--python", web_python, f"{artifact}[fastapi]")
+            runtime = external / f"{kind}-runtime"
+            runtime.mkdir()
+            assert run(web_python, str(external / "verify_fastapi_example.py"), str(runtime)) == ""
+            print(f"{kind} with fastapi: installed colocated and provided app checks passed")
+            if kind == "wheel":
+                run("uv", "pip", "install", "--python", web_python, mypy)
+                print(run(web_python, "-I", "-m", "mypy", "--strict", str(web_example)))
+
         type_environment = external / "types"
         run("uv", "venv", "--python", sys.executable, str(type_environment))
         python = str(type_environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
-        mypy = next(
-            requirement for requirement in (PROJECT / "requirements-dev.txt").read_text().splitlines()
-            if requirement.startswith("mypy==")
-        )
         run("uv", "pip", "install", "--python", python, str(wheel), mypy)
         print(run(python, "-I", "-m", "mypy", "--strict", *(str(example) for example in [*examples, issuance_example])))
 
