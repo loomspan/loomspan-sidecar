@@ -1,11 +1,13 @@
 """Client and models for the Loomspan Sidecar execution API."""
 
 from ._async_client import AsyncSidecarClient
+from ._callback import CallbackPrincipal, CallbackVerifier
 from ._client import SidecarClient
 from ._credential import CredentialSnapshot
 from ._errors import (
     AcceptanceUnknown,
     HttpFailure,
+    InvalidCallbackCredential,
     LocalFailure,
     ProtocolFailure,
     SidecarError,
@@ -29,6 +31,8 @@ __all__ = [
     "AcceptedExecution",
     "AsyncSidecarClient",
     "AuthenticatedIdentity",
+    "CallbackPrincipal",
+    "CallbackVerifier",
     "ColocatedSigning",
     "CredentialSnapshot",
     "ExecutionEvent",
@@ -38,6 +42,7 @@ __all__ = [
     "ExecutionStatus",
     "ExecutionTokenIssuer",
     "HttpFailure",
+    "InvalidCallbackCredential",
     "IssuanceSettings",
     "LocalFailure",
     "ProtocolFailure",

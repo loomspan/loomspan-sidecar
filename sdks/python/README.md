@@ -2,7 +2,8 @@
 
 `loomspan-sdk` provides typed synchronous and asynchronous clients for the Sidecar
 execution HTTP API and issues execution credentials from application-authenticated
-identity. It requires CPython 3.12 or newer.
+identity. It also verifies execution credentials at callback admission. It requires
+CPython 3.12 or newer.
 
 From the repository root, install into your application's virtual environment.
 You can also install a wheel or source distribution of the SDK into that
@@ -98,6 +99,57 @@ the timestamp limit can also round out of range.
 
 Credentials and issuer key material are omitted from default display and
 serialization. Treat issued credentials as bearer secrets.
+
+## Verify execution callbacks
+
+Open one `CallbackVerifier` from the initialized issuer in your application's
+async lifecycle. Keep the verifier open while the application accepts callbacks.
+
+```python
+from collections.abc import Awaitable, Callable
+
+from loomspan_sdk import CallbackVerifier, ExecutionTokenIssuer
+
+async def serve_callbacks(
+    issuer: ExecutionTokenIssuer,
+    serve: Callable[[CallbackVerifier], Awaitable[None]],
+) -> None:
+    async with CallbackVerifier.open(issuer) as verifier:
+        await serve(verifier)
+```
+
+At admission, pass the compact token from the bearer header to
+`await verifier.verify(token)`. The result is an immutable `CallbackPrincipal`
+with `issuer`, `subject` and the exact `authorities` in the credential. Use these
+values for application authorization. Invalid credentials raise
+`InvalidCallbackCredential` with a generic message. Treat the bearer token as
+secret and keep it out of application logs and business payloads.
+
+The verifier uses the issuance issuer and defaults its audience to that same
+value. Set `audience` on `CallbackVerifier.open` to require an explicit receiver
+audience. The verifier checks the RS256 signature, execution type and purpose,
+audience and claims. Expiration and optional not-before receive 60 seconds of
+clock skew at admission. The verifier preserves nanosecond precision and requires
+expiration to follow issuance when the credential supplies an issuance time.
+
+By default only the startup signer's public key is trusted. To also trust public
+keys for the same issuer, pass `overlap_jwks=Path("runtime/callback-overlap.json")`
+to `CallbackVerifier.open`. Use a readable local file with a complete, nonempty
+public RSA JWKS. Relative paths use the working directory at verifier startup.
+Supply unique key IDs and use RSA keys of at least 2048 bits.
+If a key specifies `use` or `alg`, use `sig` and `RS256` respectively.
+The file may include the startup public key under its own ID. A different key
+with that ID invalidates the file. Unavailable or invalid overlap fails startup.
+
+While overlap is configured, the verifier reads the current file at one-second
+intervals and can refresh on an unknown key ID, at most once per second across
+the verifier. Detected unavailability or invalidity withdraws all callback trust,
+including the startup public key. A corrected file restores own-key trust and
+the complete current overlap. Publish overlap changes atomically. Refresh keeps
+the startup signing key in place. Closing the verifier stops refresh and waits for
+any local read already in progress.
+Withdrawal and expiry govern new admission. Previously admitted callbacks can
+finish with the identity already verified for them.
 
 ## Use the execution clients
 

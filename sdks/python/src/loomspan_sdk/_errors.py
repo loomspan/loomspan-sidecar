@@ -32,6 +32,13 @@ class ProtocolFailure(SidecarError):
     """A discovery or status read failed to return a usable response."""
 
 
+class InvalidCallbackCredential(SidecarError):
+    """The callback could not be authenticated."""
+
+    def __init__(self) -> None:
+        super().__init__("Invalid callback execution credential")
+
+
 class AcceptanceUnknown(SidecarError):
     """A submission was attempted, but its acceptance could not be established."""
 

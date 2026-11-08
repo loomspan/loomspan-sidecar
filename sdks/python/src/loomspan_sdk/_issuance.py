@@ -8,11 +8,16 @@ from typing import final
 from uuid import uuid4
 
 import simplejson  # type: ignore[import-untyped]
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 
 from ._credential import CredentialSnapshot
 from ._errors import LocalFailure
+from ._protocol import _java_blank
 from ._signing import ColocatedSigning, ProvidedSigning, _base64url, _initialize_signing, _sign_rs256
 
+_EXECUTION_ALGORITHM = "RS256"
+_EXECUTION_TYPE = "loomspan-execution+jwt"
+_EXECUTION_PURPOSE = "loomspan_execution"
 _NANOS_PER_SECOND = 1_000_000_000
 _MIN_INSTANT_NS = -31_557_014_167_219_200 * _NANOS_PER_SECOND
 _MAX_INSTANT_NS = 31_556_889_864_403_199 * _NANOS_PER_SECOND + 999_999_999
@@ -20,8 +25,7 @@ _LOG = logging.getLogger(__name__)
 
 
 def _require_name(value: str, field: str) -> None:
-    # Java String.isBlank() excludes these whitespace characters.
-    if type(value) is not str or all(ch.isspace() and ch not in "\u0085\u00a0\u2007\u202f" for ch in value):
+    if type(value) is not str or _java_blank(value):
         raise LocalFailure(f"{field} must be a nonblank string")
 
 
@@ -108,13 +112,16 @@ class ExecutionTokenIssuer:
     def __getstate__(self) -> None:
         raise TypeError("Execution token issuers cannot be serialized")
 
+    def _callback_verification_material(self) -> tuple[str, str, RSAPublicKey]:
+        return self.__settings.issuer, self.__kid, self.__key.public_key()
+
     def issue(self, identity: AuthenticatedIdentity) -> CredentialSnapshot:
         """Issue an opaque credential for one application-authenticated identity."""
         if type(identity) is not AuthenticatedIdentity:
             raise LocalFailure("An authenticated identity is required")
         now = time_ns()
         expires = _expiry(now, self.__settings.lifetime_ns)
-        headers = {"alg": "RS256", "typ": "loomspan-execution+jwt", "kid": self.__kid}
+        headers = {"alg": _EXECUTION_ALGORITHM, "typ": _EXECUTION_TYPE, "kid": self.__kid}
         claims = {
             "iss": self.__settings.issuer,
             "sub": identity.subject,
@@ -122,7 +129,7 @@ class ExecutionTokenIssuer:
             "iat": _numeric_date(now),
             "exp": _numeric_date(expires),
             "jti": str(uuid4()),
-            "token_use": "loomspan_execution",
+            "token_use": _EXECUTION_PURPOSE,
             "roles": list(dict.fromkeys(name for name in identity.authorities if name in self.__roles)),
         }
         try:

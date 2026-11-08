@@ -204,14 +204,14 @@ def _parse_float(value: str) -> float | Decimal:
     return number
 
 
-def decode_json(body: bytes) -> JsonValue:
+def decode_json(body: bytes, *, exact_numbers: bool = False) -> JsonValue:
     return cast(
         JsonValue,
         json.loads(
             body.decode("utf-8"),
             object_pairs_hook=_object_pairs,
             parse_constant=_reject_constant,
-            parse_float=_parse_float,
+            parse_float=Decimal if exact_numbers else _parse_float,
         ),
     )
 

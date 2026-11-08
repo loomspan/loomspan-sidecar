@@ -45,7 +45,8 @@ assert installed.with_name("py.typed").is_relative_to(pathlib.Path(sys.prefix).r
 for name in ("fastapi", "starlette", "uvicorn", "jwt"):
     assert importlib.util.find_spec(name) is None, name
 assert {"CredentialSnapshot", "AsyncSidecarClient", "AuthenticatedIdentity", "ExecutionTokenIssuer",
-        "IssuanceSettings", "ColocatedSigning", "ProvidedSigning"}.issubset(loomspan_sdk.__all__)
+        "IssuanceSettings", "ColocatedSigning", "ProvidedSigning", "CallbackPrincipal", "CallbackVerifier",
+        "InvalidCallbackCredential"}.issubset(loomspan_sdk.__all__)
 print(platform.python_implementation(), platform.python_version(), platform.system(),
       platform.machine(), *(f"{name} {metadata.version(name)}" for name in sorted(requirements)))
 """
@@ -55,6 +56,8 @@ def write_issuance_example(external: Path) -> Path:
     readme = (PROJECT / "README.md").read_text(encoding="utf-8")
     issuance = readme.split("## Issue execution credentials\n", 1)[1].split("\n## ", 1)[0]
     colocated, provided, capture = re.findall(r"```python\n(.*?)\n```", issuance, re.DOTALL)
+    callbacks = readme.split("## Verify execution callbacks\n", 1)[1].split("\n## ", 1)[0]
+    [serve_callbacks] = re.findall(r"```python\n(.*?)\n```", callbacks, re.DOTALL)
     script = external / "documented_issuance.py"
     script.write_text("\n\n".join((capture, colocated, """
 colocated_credential = credential_for_authenticated_caller(issuer, "alice", ["ORDER_EDITOR"])
@@ -62,6 +65,16 @@ assert repr(colocated_credential) == "CredentialSnapshot([redacted])"
 """, provided, """
 provided_credential = credential_for_authenticated_caller(issuer, "bob", ["ORDER_EDITOR"])
 assert repr(provided_credential) == "CredentialSnapshot([redacted])"
+""", serve_callbacks, """
+import anyio
+from loomspan_sdk import CallbackPrincipal
+
+async def accept_callback(verifier: CallbackVerifier) -> None:
+    token = provided_credential._authorization().removeprefix(b"Bearer ").decode("ascii")
+    principal = await verifier.verify(token)
+    assert principal == CallbackPrincipal("loomspan-app", "bob", ("ORDER_EDITOR",))
+
+anyio.run(serve_callbacks, issuer, accept_callback)
 """)), encoding="utf-8")
     (external / "runtime/loomspan-trust").mkdir(parents=True)
     (external / "secrets").mkdir()
