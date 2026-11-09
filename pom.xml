@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
   <groupId>ai.loomspan</groupId>
   <artifactId>loomspan-sidecar</artifactId>
-  <version>1.0.0-beta.4-SNAPSHOT</version>
+  <version>1.0.0-beta.4</version>
   <name>Loomspan Sidecar</name>
 
   <properties>
@@ -14,7 +14,7 @@
     <maven.compiler.release>${java.version}</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <spring-boot.version>4.1.0</spring-boot.version>
-    <loomspan.version>1.0.0-beta.9-SNAPSHOT</loomspan.version>
+    <loomspan.version>1.0.0-beta.9</loomspan.version>
     <archunit.version>1.4.1</archunit.version>
     <bouncycastle.version>1.81</bouncycastle.version>
   </properties>
@@ -118,12 +118,16 @@
       <resource>
         <directory>src/main/resources</directory>
         <filtering>false</filtering>
-        <excludes><exclude>bundle-producer.properties</exclude></excludes>
+        <excludes>
+          <exclude>bundle-producer.properties</exclude>
+        </excludes>
       </resource>
       <resource>
         <directory>src/main/resources</directory>
         <filtering>true</filtering>
-        <includes><include>bundle-producer.properties</include></includes>
+        <includes>
+          <include>bundle-producer.properties</include>
+        </includes>
       </resource>
     </resources>
     <plugins>
@@ -145,7 +149,11 @@
         <artifactId>spring-boot-maven-plugin</artifactId>
         <version>${spring-boot.version}</version>
         <executions>
-          <execution><goals><goal>repackage</goal></goals></execution>
+          <execution>
+            <goals>
+              <goal>repackage</goal>
+            </goals>
+          </execution>
         </executions>
       </plugin>
     </plugins>
@@ -163,7 +171,9 @@
             <executions>
               <execution>
                 <id>release-safety</id>
-                <goals><goal>enforce</goal></goals>
+                <goals>
+                  <goal>enforce</goal>
+                </goals>
                 <configuration>
                   <rules>
                     <requireReleaseVersion />
