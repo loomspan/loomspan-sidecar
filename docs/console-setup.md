@@ -4,7 +4,7 @@ Sidecar includes a **management UI** for accounts and configuration. **Loomspan
 Console** is a separate application for runtime investigation, with read-only
 MCP tools for development assistants. Its version is coordinated with the bundled
 Framework, not Sidecar's version number. This checkout uses Framework
-`1.0.0-beta.9-SNAPSHOT`; use Console and guidance from the matching Framework
+`1.0.0-beta.9`. Use Console and guidance from the matching Framework
 checkout described by [assistant setup](setup.md#equip-your-development-assistant).
 
 ## Enable Sidecar observability

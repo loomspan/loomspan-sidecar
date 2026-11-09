@@ -55,10 +55,11 @@ class VersionTest(unittest.TestCase):
 
     def test_annotated_tag_and_duplicate_guard(self):
         _, framework = version.check(self.root)
-        for relative in (Path("pom.xml"), version.SKILL):
-            path = self.root / relative
-            path.write_text(path.read_text().replace(framework, framework.removesuffix("-SNAPSHOT")))
-        self.commit()
+        if framework.endswith("-SNAPSHOT"):
+            for relative in (Path("pom.xml"), version.SKILL):
+                path = self.root / relative
+                path.write_text(path.read_text().replace(framework, framework.removesuffix("-SNAPSHOT")))
+            self.commit()
         version.set_version(self.root, "2.0.0-beta.1")
         self.commit()
         name = version.tag(self.root, "2.0.0-beta.1")
