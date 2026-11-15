@@ -43,7 +43,7 @@
 
 ## Dependency and release policy
 
-- Maven dependency: `ai.loomspan:loomspan-spring-boot-starter:1.0.0-beta.9`.
+- Maven dependency: `ai.loomspan:loomspan-spring-boot-starter:1.0.0-beta.10-SNAPSHOT`.
   When developing against a Framework snapshot, use the artifact installed in
   the developer's local Maven repository. Run a new Framework install after
   Framework changes to keep the artifact aligned with

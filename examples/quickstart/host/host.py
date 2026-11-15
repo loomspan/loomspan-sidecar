@@ -84,10 +84,12 @@ def verify(token):
 
 
 def completion(content):
-    return {"id": "quickstart", "object": "chat.completion", "created": int(time.time()),
-            "model": "deterministic-planner", "choices": [{"index": 0,
-            "message": {"role": "assistant", "content": json.dumps(content, separators=(",", ":"))},
-            "finish_reason": "stop"}], "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}
+    return {"id": "quickstart", "object": "response", "created_at": int(time.time()),
+            "model": "deterministic-planner", "status": "completed",
+            "output": [{"id": "msg_quickstart", "type": "message", "role": "assistant",
+                        "status": "completed", "content": [{"type": "output_text",
+                        "text": json.dumps(content, separators=(",", ":")), "annotations": []}]}],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}
 
 
 def reset_responses():
@@ -134,7 +136,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length)
-        if self.path == "/v1/chat/completions":
+        if self.path == "/v1/responses":
             with LOCK:
                 if not RESPONSES: reset_responses()
                 response = RESPONSES.pop(0)

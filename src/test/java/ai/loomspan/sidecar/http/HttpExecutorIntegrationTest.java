@@ -45,10 +45,28 @@ class HttpExecutorIntegrationTest {
         try(var application=new HttpTestSupport(e->{applicationTokens.add(String.valueOf(e.getRequestHeaders().getFirst("Authorization")));respond(e,status.get(),"text/plain",exact);});var provider=new HttpTestSupport(e->{
             try {
                 var json=new tools.jackson.databind.json.JsonMapper();var request=json.readTree(e.getRequestBody().readAllBytes());modelCalls.incrementAndGet();
-                Object message=null;
-                for(var m:request.path("messages"))if(m.path("role").asText().equals("tool")){feedback.set(m.path("content").asText());message=Map.of("role","assistant","content","DONE");}
-                if(message==null)message=Map.of("role","assistant","content","","tool_calls",List.of(Map.of("id","call-1","type","function","function",Map.of("name","default-call","arguments","{}"))));
-                respond(e,200,"application/json",json.writeValueAsBytes(Map.of("id","fixture","object","chat.completion","created",1,"model","fixture","choices",List.of(Map.of("index",0,"message",message,"finish_reason",feedback.get()==null?"tool_calls":"stop")),"usage",Map.of("prompt_tokens",1,"completion_tokens",1,"total_tokens",2))));
+                assertThat(e.getRequestMethod()).isEqualTo("POST");
+                assertThat(e.getRequestURI().getPath()).isEqualTo("/v1/responses");
+                String response = null;
+                for (var item : request.path("input")) {
+                    if ("function_call_output".equals(item.path("type").asText())) {
+                        assertThat(item.path("call_id").asText()).isEqualTo("call-1");
+                        assertThat(feedback.get()).isNull();
+                        feedback.set(item.path("output").asText());
+                        response = ai.loomspan.sidecar.support.SidecarApplicationFixture.completion("DONE");
+                    }
+                }
+                if (response == null) {
+                    assertThat(modelCalls.get()).isEqualTo(1);
+                    assertThat(request.path("tools")).anySatisfy(tool -> {
+                        assertThat(tool.path("type").asText()).isEqualTo("function");
+                        assertThat(tool.path("name").asText()).isEqualTo("default-call");
+                    });
+                    response = ai.loomspan.sidecar.support.SidecarApplicationFixture.responseOutput(List.of(
+                            Map.of("id", "fc_1", "type", "function_call", "call_id", "call-1",
+                                    "name", "default-call", "arguments", "{}", "status", "completed")));
+                }
+                respond(e,200,"application/json",response);
             }catch(Throwable failure){providerFailure.set(failure);respond(e,500,null,"fixture error");}
         });var context=HttpFrameworkFixture.start(empty)) {
             var op="""
@@ -80,6 +98,7 @@ class HttpExecutorIntegrationTest {
                 status.set(terminal);modelCalls.set(0);feedback.set(null);
                 assertThatThrownBy(()->template.invoke("parent",Map.of())).isInstanceOf(SkillException.class);
                 assertThat(modelCalls).hasValue(1);assertThat(feedback.get()).isNull();
+                assertThat(providerFailure.get()).isNull();
             }
         }finally{org.springframework.security.core.context.SecurityContextHolder.clearContext();}
     }

@@ -83,7 +83,13 @@ public final class SidecarApplicationFixture implements AutoCloseable {
         try {
             callback = CallbackFixture.start();
             modelServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-            modelServer.createContext("/v1/chat/completions", exchange -> {
+            modelServer.createContext("/v1/responses", exchange -> {
+                if (!"POST".equals(exchange.getRequestMethod())
+                        || !"/v1/responses".equals(exchange.getRequestURI().getPath())) {
+                    exchange.sendResponseHeaders(404, -1);
+                    exchange.close();
+                    return;
+                }
                 modelRequests.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
                 modelAuthorizations.add(exchange.getRequestHeaders().getFirst("Authorization"));
                 String response = modelResponses.poll();
@@ -149,13 +155,17 @@ public final class SidecarApplicationFixture implements AutoCloseable {
     public CallbackFixture callback() { return callback; }
 
     public static String completion(String content) {
-        String escaped = content.replace("\\", "\\\\").replace("\"", "\\\"")
-                .replace("\r", "").replace("\n", "");
-        return "{\"id\":\"fixture\",\"object\":\"chat.completion\",\"created\":1,"
-                + "\"model\":\"fixture-provider-model\",\"choices\":[{\"index\":0,"
-                + "\"message\":{\"role\":\"assistant\",\"content\":\"" + escaped
-                + "\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,"
-                + "\"completion_tokens\":1,\"total_tokens\":2}}";
+        return responseOutput(java.util.List.of(java.util.Map.of(
+                "id", "msg_fixture", "type", "message", "role", "assistant", "status", "completed",
+                "content", java.util.List.of(java.util.Map.of(
+                        "type", "output_text", "text", content, "annotations", java.util.List.of())))));
+    }
+
+    public static String responseOutput(java.util.List<?> output) {
+        return new ObjectMapper().writeValueAsString(java.util.Map.of(
+                "id", "resp_fixture", "object", "response", "created_at", 1,
+                "model", "fixture-provider-model", "status", "completed", "output", output,
+                "usage", java.util.Map.of("input_tokens", 1, "output_tokens", 1, "total_tokens", 2)));
     }
 
     @Override

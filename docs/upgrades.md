@@ -21,6 +21,19 @@ before upgrading. Sidecar and Framework versions advance independently.
    to select guidance for the new Sidecar and its bundled Framework. Update Console
    to the coordinated Framework version and verify MCP connectivity separately.
 
+## Current development snapshot
+
+This checkout uses the locally installed Framework `1.0.0-beta.10-SNAPSHOT`.
+Its `openai` driver uses the Responses API: a service root ending in `/v1`
+receives requests at `/v1/responses`. Chat Completions-only services are no longer
+supported. Check the matching Framework connection documentation before using
+an OpenAI-compatible provider. The native `ollama` driver is also removed; use
+`openai` with a Responses-compatible Ollama endpoint and the documented credentials.
+
+Sidecar's model test fixtures and local quickstart host use Responses without
+calling paid providers. Release preparation requires a published Framework
+dependency; the local development snapshot is not a release artifact.
+
 ## Configuration and recovery
 
 Use complete file startup configuration or the selected database publication.

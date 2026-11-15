@@ -8,6 +8,8 @@ import java.nio.file.Path;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ReleasePreparationTest {
+    @org.junit.jupiter.api.io.TempDir Path releaseFixture;
+
     @Test
     void releasePreparationRejectsSnapshotsAndProducesExpectedArtifactPlan() throws Exception {
         String pom = Files.readString(Path.of("pom.xml"));
@@ -33,14 +35,24 @@ class ReleasePreparationTest {
         assertThat(release.split("verify-deployment.py", -1)).hasSize(2);
         assertThat(ci + release + pom).doesNotContain("run_sdk.py", "loomspan-sidecar-test-suite");
 
+        Files.createDirectories(releaseFixture.resolve("scripts"));
+        Files.writeString(releaseFixture.resolve("scripts/prepare-release.py"), script);
+        Files.writeString(releaseFixture.resolve("pom.xml"), pom.replaceFirst(
+                "<loomspan.version>[^<]+</loomspan.version>",
+                "<loomspan.version>1.0.0-beta.9</loomspan.version>"));
         assertThat(run("1.0.0-beta.4", "1.0.0-beta.9", "v1.0.0-beta.4")).isZero();
         assertThat(run("1.0.0-beta.4-SNAPSHOT", "1.0.0-beta.9", "v1.0.0-beta.4-SNAPSHOT")).isNotZero();
         assertThat(run("1.0.0-beta.4", "1.0.0-beta.3", "v1.0.0-beta.4")).isNotZero();
         assertThat(run("1.0.0-beta.4", "1.0.0-beta.9", "vwrong")).isNotZero();
+        assertThat(run("1.0.0-beta.4", "1.0.0-beta.10-SNAPSHOT", "v1.0.0-beta.4")).isNotZero();
+        Files.writeString(releaseFixture.resolve("pom.xml"), pom.replaceFirst(
+                "<loomspan.version>[^<]+</loomspan.version>",
+                "<loomspan.version>1.0.0-beta.10-SNAPSHOT</loomspan.version>"));
+        assertThat(run("1.0.0-beta.4", "1.0.0-beta.9", "v1.0.0-beta.4")).isNotZero();
     }
 
-    private static int run(String project, String loomspan, String tag) throws Exception {
-        Process process = new ProcessBuilder("python", "scripts/prepare-release.py", "--validate-only",
+    private int run(String project, String loomspan, String tag) throws Exception {
+        Process process = new ProcessBuilder("python", releaseFixture.resolve("scripts/prepare-release.py").toString(), "--validate-only",
                 "--project-version", project, "--loomspan-version", loomspan, "--tag", tag)
                 .redirectErrorStream(true).start();
         process.getInputStream().transferTo(java.io.OutputStream.nullOutputStream());

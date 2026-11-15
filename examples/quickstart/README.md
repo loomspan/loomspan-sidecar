@@ -2,7 +2,8 @@
 
 Follow the [application quickstart](../../docs/quickstart.md) to publish and invoke
 [triageSupportRequest](triage-support-request.yaml). The fixture host provides a
-demo ephemeral signer, deterministic planner and approved callbacks. It exports
+demo ephemeral signer, deterministic planner and approved callbacks. The planner
+serves `/v1/responses` locally without calling a paid model provider. It exports
 only public JWKS atomically; private keys live in temporary container storage.
 Restarting the host generates a new signing key and invalidates old tokens once
 receivers reload. These fixtures are not a deployed signing product.

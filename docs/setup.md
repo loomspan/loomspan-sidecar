@@ -12,12 +12,14 @@ versioned at `0.1.0-SNAPSHOT`; its presence here does not imply a published rele
 
 Select an exact Sidecar release and use that revision's documentation and POM.
 The POM in this checkout declares Sidecar `1.0.0-beta.5-SNAPSHOT` and Framework
-`1.0.0-beta.9`. Check the [Sidecar releases](https://github.com/loomspan/loomspan-sidecar/releases)
+`1.0.0-beta.10-SNAPSHOT`. Check the [Sidecar releases](https://github.com/loomspan/loomspan-sidecar/releases)
 for available artifacts and checksums.
 
 For a source evaluation, use Java 21, the included Maven wrapper, Docker with
 Compose, and Python 3.9+ for the quickstart's portable commands. Maven resolves
-the pinned Framework artifact from Maven Central.
+the pinned Framework snapshot from your local Maven repository. Install it from
+the matching Framework checkout before building Sidecar. Hosted CI and release
+verification wait for a published Framework release and a released dependency pin.
 From the Sidecar repository root:
 
 ```powershell
@@ -72,7 +74,7 @@ supported skill manager. It does not require your application to have a POM or a
 running Sidecar instance. Project scope is the default where supported.
 
 For this checkout, use the `1.0.0-beta.5-SNAPSHOT` Sidecar authoring guidance and
-the `1.0.0-beta.9` Framework versions of `loomspan`, `loomspan-docs`, and
+the `1.0.0-beta.10-SNAPSHOT` Framework versions of `loomspan`, `loomspan-docs`, and
 `loomspan-console`. If an older release lacks a required skill, report which
 skill is missing. Install complete folders, including references and the bundled
 client. Guidance installation does not change runtime dependencies or configure MCP.

@@ -142,7 +142,8 @@ class ExecutionConfigurationCorrelationIntegrationTest {
     @Test
     void modelOnlyExecutionKeepsDurableIdAfterPublicationAndRetirement() throws Exception {
         try (var fixture = new SidecarApplicationFixture()) {
-            fixture.modelResponses().add(SidecarApplicationFixture.completion("model-only result"));
+            String exactResult = "  model-only \"result\" 雪\nsecond line\t\\path  ";
+            fixture.modelResponses().add(SidecarApplicationFixture.completion(exactResult));
             Path database = directory.resolve("model-only.db");
             SidecarApplicationFixture.seedDatabase(database,
                     List.of(SidecarApplicationFixture.resourceFile("fixtures/skills/mounted-yaml-skill.yaml")),
@@ -179,11 +180,13 @@ class ExecutionConfigurationCorrelationIntegrationTest {
                 var terminal = awaitTerminal(coordinator, id, owner);
                 assertThat(terminal.configurationSnapshotId()).isEqualTo(a.localId());
                 assertThat(terminal.status()).isEqualTo(ExecutionStatus.COMPLETED);
+                assertThat(terminal.result()).isEqualTo(exactResult);
                 var draft = new ConfigurationDraft(a);
                 draft.replaceContent(new ManagedConfiguration(List.of(), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
                 assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(service, draft, List.of()).successful()).isTrue();
                 context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(draft, List.of());
                 assertThat(coordinator.find(id, owner).orElseThrow().configurationSnapshotId()).isEqualTo(a.localId());
+                assertThat(coordinator.find(id, owner).orElseThrow().result()).isEqualTo(exactResult);
             }
         }
     }

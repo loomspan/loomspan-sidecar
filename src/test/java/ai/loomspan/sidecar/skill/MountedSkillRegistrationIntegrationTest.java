@@ -33,7 +33,7 @@ class MountedSkillRegistrationIntegrationTest
 
         ai.loomspan.sidecar.support.SidecarApplicationFixture.seedDatabase(temporaryDirectory.resolve("sidecar.db"),
                 List.of(skills.resolve("mounted.yaml"), skills.resolve("nested/mounted.yml")),
-                modelExecutionYaml());
+                modelExecutionYaml(), java.util.Map.of("fixture-key", "fixture-value"));
         try (var context = runApplication(modelProperties()))
         {
             var catalog = context.getBean(SkillReloader.class).snapshot("default");
@@ -52,7 +52,7 @@ class MountedSkillRegistrationIntegrationTest
 
         ai.loomspan.sidecar.support.SidecarApplicationFixture.seedDatabase(temporaryDirectory.resolve("sidecar.db"),
                 List.of(custom.resolve("only.yml")),
-                modelExecutionYaml());
+                modelExecutionYaml(), java.util.Map.of("fixture-key", "fixture-value"));
         try (var context = runApplication(modelProperties()))
         {
             assertThat(context.getBean(SkillReloader.class).snapshot("default").skills())
@@ -106,7 +106,8 @@ class MountedSkillRegistrationIntegrationTest
         properties.add("--loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json");
         additionalProperties = additionalProperties.stream().map(value -> "--" + value).toList();
         properties.addAll(additionalProperties);
-        return new SpringApplicationBuilder(LoomspanSidecarApplication.class)
+        return new SpringApplicationBuilder(LoomspanSidecarApplication.class,
+                ai.loomspan.sidecar.support.SidecarApplicationFixture.Credentials.class)
                 .web(WebApplicationType.NONE)
                 .run(properties.toArray(String[]::new));
     }
@@ -114,8 +115,9 @@ class MountedSkillRegistrationIntegrationTest
     private static List<String> modelProperties()
     {
         return List.of(
-                "loomspan.connections.fixture.driver=ollama",
-                "loomspan.connections.fixture.base-url=http://127.0.0.1:9",
+                "loomspan.connections.fixture.driver=openai",
+                "loomspan.connections.fixture.base-url=http://127.0.0.1:9/v1",
+                "loomspan.connections.fixture.api-key=fixture-key",
                 "loomspan.models.fixture-model.connection=fixture",
                 "loomspan.models.fixture-model.provider-model=fixture-provider-model");
     }
@@ -126,8 +128,9 @@ class MountedSkillRegistrationIntegrationTest
                   executor-config: {default: {http: {}}}
                   connections:
                     fixture:
-                      driver: ollama
-                      base-url: http://127.0.0.1:9
+                      driver: openai
+                      base-url: http://127.0.0.1:9/v1
+                      api-key-ref: fixture-key
                   models:
                     fixture-model:
                       connection: fixture
