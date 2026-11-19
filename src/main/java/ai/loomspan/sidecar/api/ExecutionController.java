@@ -73,6 +73,7 @@ final class ExecutionController {
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("kind", failure.kind());
         response.put("message", failure.message());
+        if (failure.producingSkillName() != null) response.put("producingSkillName", failure.producingSkillName());
         if (!failure.issues().isEmpty()) response.put("issues", failure.issues());
         return response;
     }

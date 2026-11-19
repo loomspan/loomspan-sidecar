@@ -345,6 +345,11 @@ framework's independent API-key filter. Console keys do not authenticate `/v1`.
 | `loomspan-sidecar.configuration.mode` | `database` (default) or `file`; startup-only authority, invalid values fail. |
 <!-- configuration-reference:end -->
 
+The diagnostics policy controls the `events` field on owned execution
+snapshots. A terminal `OUTPUT_SCHEMA` failure includes the canonical
+`failure.producingSkillName` and the validator's issues even with the default
+`NEVER` policy. The snapshot's `skillName` identifies the requested skill.
+
 The explicit operation and target schema is described in
 [HTTP executor](http-executor.md). Framework shutdown remains
 `loomspan.shutdown.timeout`; inbound server TLS configuration

@@ -121,7 +121,36 @@ authorization is enforced when POST validates the JSON-object input. Accepted
 requests return `202`, an `id`, and a `Location` header without waiting. Poll the
 location until `COMPLETED` or `FAILED`. Successful results are the framework's
 unchanged text. A known owned failure is a normal `200` representation whose
-kind is `INPUT_VALIDATION`, `ACCESS_DENIED`, or `SKILL_FAILURE`.
+kind is `INPUT_VALIDATION`, `ACCESS_DENIED`, `SKILL_FAILURE`, or
+`OUTPUT_SCHEMA`.
+
+When an output-schema violation is the terminal cause, `skillName` is the
+requested skill and `failure.producingSkillName` is the canonical name of the
+skill whose output failed validation. The failure includes structured issues.
+Each issue contains a JSON Pointer `path` (an empty string points to the root),
+the schema constraint `code`, and the validator's `message`. These fields are
+available with every diagnostics policy. The following shows selected fields
+from a failed parent execution.
+
+```json
+{
+  "skillName": "parent",
+  "status": "FAILED",
+  "result": null,
+  "failure": {
+    "kind": "OUTPUT_SCHEMA",
+    "message": "Skill 'parent' execution failed.",
+    "producingSkillName": "default-tsTriageStructured",
+    "issues": [
+      {
+        "path": "/repeatContactProbability",
+        "code": "type",
+        "message": "/repeatContactProbability: null found, number expected (schema #/properties/repeatContactProbability/type)"
+      }
+    ]
+  }
+}
+```
 
 ```powershell
 $headers = @{ Authorization = "Bearer $env:SIDECAR_ACCESS_TOKEN" }

@@ -1,7 +1,7 @@
 package ai.loomspan.sidecar.http;
 
 import ai.loomspan.api.SkillExecutor;
-import ai.loomspan.api.SkillExecutorInvocation;
+import ai.loomspan.api.extensions.v1.SkillExecutorInvocation;
 import ai.loomspan.api.SkillException;
 import ai.loomspan.sidecar.configuration.ProviderCredentialCipher;
 import org.springframework.beans.factory.annotation.Autowired;

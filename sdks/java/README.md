@@ -55,6 +55,13 @@ server's `COMPLETED` or `FAILED` status determines the outcome; a failed executi
 returns a normal terminal snapshot with its primary failure. The SDK does not
 parse or sanitize results or business failure/event details.
 
+When `failure().kind()` is `OUTPUT_SCHEMA`, `failure().producingSkillName()`
+identifies the canonical skill that produced invalid output and
+`failure().issues()` provides each issue's JSON Pointer `path()`, validator
+`code()`, and `message()`. The snapshot's `skillName()` is the requested
+skill. These details identify the terminal cause even when `events()` is null.
+An absent producing skill is null.
+
 Each HTTP request is attempted once. The client disables retries, redirects and
 authentication rechallenge replay, and never follows `Location`. Status URLs
 are built under the configured base URL and must return the requested ID.

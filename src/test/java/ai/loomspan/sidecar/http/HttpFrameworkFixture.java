@@ -12,7 +12,8 @@ import java.time.Clock;
 import java.util.*;
 
 final class HttpFrameworkFixture {
-    @org.springframework.boot.test.context.TestConfiguration(proxyBeanMethods=false) @EnableAutoConfiguration
+    @org.springframework.boot.test.context.TestConfiguration(proxyBeanMethods=false)
+    @EnableAutoConfiguration(excludeName = "ai.loomspan.decisions.autoconfigure.DecisionsAutoConfiguration")
     @Import({HttpSkillExecutor.class,HttpExecutorClient.class})
     static class App {
         @Bean Clock clock(){return Clock.systemUTC();}

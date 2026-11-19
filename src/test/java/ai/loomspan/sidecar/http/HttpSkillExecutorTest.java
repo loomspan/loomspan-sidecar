@@ -1,6 +1,5 @@
 package ai.loomspan.sidecar.http;
 
-import ai.loomspan.api.SkillExecutorInvocation;
 import ai.loomspan.sidecar.configuration.ProviderCredentialCipher;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
@@ -38,7 +37,7 @@ class HttpSkillExecutorTest {
                 assertThatThrownBy(()->fixture.call(operation(),Map.of(),HttpExecutorConfiguration.withCredentials(base,java.util.List.of(bad))))
                         .isExactlyInstanceOf(ai.loomspan.api.SkillException.class).hasMessage("HTTP service credential unavailable").hasNoCause();
                 var wrongCipher=new HttpSkillExecutor(fixture.client,new ProviderCredentialCipher(null),Clock.systemUTC());
-                assertThatThrownBy(()->wrongCipher.execute(new SkillExecutorInvocation(Map.of(),operation(),settings,"call","g"))).isInstanceOf(ai.loomspan.api.SkillException.class).hasNoCause();
+                assertThatThrownBy(()->wrongCipher.execute(invocation(Map.of(),operation(),settings))).isInstanceOf(ai.loomspan.api.SkillException.class).hasNoCause();
             }
             assertThat(received).isEmpty();
             assertThatThrownBy(()->fixture.call(operation(),Map.of(),base)).isInstanceOf(ai.loomspan.api.SkillException.class);
@@ -164,7 +163,7 @@ class HttpSkillExecutorTest {
             var input = Map.<String,Object>of("car", Map.of("id",42), "options", Map.of("colors", java.util.List.of("red","blue")), "zero",0,"flag",false);
             var operation = Map.<String,Object>of("target","app","method","POST","path","/cars/{id}","pathParams",Map.of("id","/car/id"),"queryParams",Map.of("color","/options/colors"),"body",Map.of("source","input"));
             var settings = Map.<String,Object>of("targets", Map.of("app",Map.of("base-url","http://127.0.0.1:"+server.getAddress().getPort()+"/api/v1")));
-            assertThat(executor.execute(new SkillExecutorInvocation(input,operation,settings,"default-call","generation"))).isEqualTo("  result\n");
+            assertThat(executor.execute(invocation(input,operation,settings))).isEqualTo("  result\n");
         } finally { server.stop(0); }
     }
 }

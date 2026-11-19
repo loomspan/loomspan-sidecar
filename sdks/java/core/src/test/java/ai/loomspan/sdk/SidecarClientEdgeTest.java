@@ -77,7 +77,41 @@ class SidecarClientEdgeTest {
         try (var f=new Fixture(ex -> reply(ex,200,failed.toString())); var c=f.client()) {
             var result=c.await(ID,CREDENTIAL,WaitOptions.defaults());
             assertEquals(ExecutionStatus.FAILED,result.status()); assertEquals("primary failure",result.failure().message());
+            assertNull(result.failure().producingSkillName());
             assertEquals("$.x",result.failure().issues().getFirst().path()); assertEquals(1,f.attempts.get());
+        }
+    }
+
+    @Test void exposesTerminalOutputSchemaFailure() throws Exception {
+        var failed = envelope("FAILED").put("skillName", "parent");
+        failed.putNull("result");
+        var failure = failed.putObject("failure")
+                .put("kind", "OUTPUT_SCHEMA")
+                .put("message", "Skill 'parent' execution failed.")
+                .put("producingSkillName", "default-tsTriageStructured");
+        var issue = failure.putArray("issues").addObject()
+                .put("path", "/repeatContactProbability")
+                .put("code", "type")
+                .put("message", "null found, number expected");
+        var body = new AtomicReference<>(failed.toString());
+        try (var fixture = new Fixture(ex -> reply(ex, 200, body.get())); var client = fixture.client()) {
+            var result = client.getExecution(ID, CREDENTIAL);
+            assertEquals("parent", result.skillName());
+            assertEquals(ExecutionStatus.FAILED, result.status());
+            assertNull(result.result());
+            assertNull(result.events());
+            assertEquals("OUTPUT_SCHEMA", result.failure().kind());
+            assertEquals("default-tsTriageStructured", result.failure().producingSkillName());
+            assertEquals(List.of(new ExecutionFailure.Issue(
+                    "/repeatContactProbability", "type", "null found, number expected")), result.failure().issues());
+
+            issue.put("path", "");
+            body.set(failed.toString());
+            assertEquals("", client.getExecution(ID, CREDENTIAL).failure().issues().getFirst().path());
+
+            failure.put("producingSkillName", 42);
+            body.set(failed.toString());
+            assertThrows(ProtocolException.class, () -> client.getExecution(ID, CREDENTIAL));
         }
     }
 

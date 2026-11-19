@@ -17,8 +17,9 @@ for available artifacts and checksums.
 
 For a source evaluation, use Java 21, the included Maven wrapper, Docker with
 Compose, and Python 3.9+ for the quickstart's portable commands. Maven resolves
-the pinned Framework snapshot from your local Maven repository. Install it from
-the matching Framework checkout before building Sidecar. Hosted CI and release
+the pinned Framework snapshot and `ai.loomspan:loomspan-decisions:0.1.0-SNAPSHOT`
+from your local Maven repository. Install Framework first and then the Decisions
+module from the matching `loomspan-extensions` checkout. Hosted CI and release
 verification wait for a published Framework release and a released dependency pin.
 From the Sidecar repository root:
 
@@ -52,6 +53,20 @@ for driver-specific settings. For real model access, choose a connection and a m
 account can use. Model aliases referenced by skills belong in the same complete
 configuration. Database mode uses write-only credential controls and an external
 encryption key. See [execution configuration](../agent-skills/loomspan-sidecar-authoring/references/execution-configuration.md).
+
+## TypeSafe executor in file mode
+
+The Sidecar JAR includes the Decisions extension. Activate the `typesafe` Spring
+profile for a file-mode deployment that uses it, for example with
+`SPRING_PROFILES_ACTIVE=typesafe`. Include the `loomspan.executor-config.default.typesafe`
+map in the mounted execution configuration alongside the existing `http` map.
+The executor reads resolved `base_url` and `api_key` values from configuration.
+Keep live credentials in protected deployment configuration. The two-host replay
+uses a local fixture endpoint and a dummy key.
+
+Declare leaves with `executor: typesafe`, a native `config.request` and optional
+JSON Pointer `config.bindings`. Successful calls return the full provider envelope.
+Parent output bindings select values under `/answers`.
 
 ## Establish access
 

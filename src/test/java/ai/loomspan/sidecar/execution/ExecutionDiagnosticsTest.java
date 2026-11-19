@@ -9,9 +9,12 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import ai.loomspan.api.SkillContractIssue;
+import ai.loomspan.api.SkillContractStage;
 import ai.loomspan.api.SkillExecutionEvent;
 import ai.loomspan.api.SkillExecutionView;
 import ai.loomspan.api.SkillException;
+import ai.loomspan.api.SkillFailureDiagnosis;
 import ai.loomspan.api.SkillInputValidationException;
 import ai.loomspan.api.SkillInputValidationIssue;
 import ai.loomspan.api.SkillTemplate;
@@ -76,13 +79,33 @@ class ExecutionDiagnosticsTest {
         var validation = ExecutionFailureClassifier.classify(
                 new SkillInputValidationException("invalid input", List.of(issue)));
         assertThat(validation.kind()).isEqualTo(ExecutionFailure.Kind.INPUT_VALIDATION);
-        assertThat(validation.issues()).containsExactly(issue);
+        assertThat(validation.producingSkillName()).isNull();
+        assertThat(validation.issues()).containsExactly(new ExecutionFailure.Issue(
+                "$.message", "required", "Message is required"));
 
         assertThat(ExecutionFailureClassifier.classify(new AccessDeniedException("denied")).kind())
                 .isEqualTo(ExecutionFailure.Kind.ACCESS_DENIED);
         assertThat(ExecutionFailureClassifier.classify(
                 new SkillException("outer", new AccessDeniedException("nested"))).kind())
                 .isEqualTo(ExecutionFailure.Kind.SKILL_FAILURE);
+    }
+
+    @Test
+    void mapsOnlyOutputSchemaDiagnosisFromThePrimaryFacadeFailure() {
+        var issue = new SkillContractIssue("", "type", "The root must be an object");
+        var output = new SkillFailureDiagnosis("default-child", SkillContractStage.OUTPUT_SCHEMA,
+                "schema diagnosis", List.of(issue));
+        var diagnosed = new SkillException("primary message", null, output);
+        assertThat(ExecutionFailureClassifier.classify(diagnosed)).isEqualTo(new ExecutionFailure(
+                ExecutionFailure.Kind.OUTPUT_SCHEMA, "primary message", "default-child",
+                List.of(new ExecutionFailure.Issue("", "type", "The root must be an object"))));
+
+        var transform = new SkillFailureDiagnosis("default-child", SkillContractStage.OUTPUT_TRANSFORM,
+                "transform diagnosis", List.of());
+        var outer = new SkillException("primary message", diagnosed, transform);
+        outer.addSuppressed(diagnosed);
+        assertThat(ExecutionFailureClassifier.classify(outer)).isEqualTo(new ExecutionFailure(
+                ExecutionFailure.Kind.SKILL_FAILURE, "primary message", null, List.of()));
     }
 
     @Test

@@ -66,6 +66,7 @@ class ExecutionFailure:
     kind: str
     message: str | None
     issues: tuple[ExecutionIssue, ...] = ()
+    producing_skill_name: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "issues", tuple(self.issues))

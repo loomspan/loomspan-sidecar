@@ -75,3 +75,11 @@ management:
     web:
       exposure:
         include: health
+
+---
+spring:
+  config:
+    activate:
+      on-profile: "!typesafe"
+  autoconfigure:
+    exclude: ai.loomspan.decisions.autoconfigure.DecisionsAutoConfiguration

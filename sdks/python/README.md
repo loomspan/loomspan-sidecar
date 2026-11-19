@@ -444,6 +444,13 @@ An absent event history is `None`, while present empty history is `()`.
 Event details are returned as defensive copies. A decimal number in event or
 problem details that would overflow a float is represented by `decimal.Decimal`.
 
+When `snapshot.failure.kind` is `OUTPUT_SCHEMA`,
+`snapshot.failure.producing_skill_name` identifies the canonical skill that
+produced invalid output. Each entry in `snapshot.failure.issues` provides a
+JSON Pointer `path`, validator `code`, and `message`. The snapshot's
+`skill_name` is the requested skill. These details identify the terminal
+cause even when `events` is `None`. An absent producing skill is `None`.
+
 ## Deadlines and failures
 
 By default, the client allows 2 seconds for connection setup and 10 seconds

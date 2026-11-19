@@ -2,12 +2,12 @@ package ai.loomspan.sidecar.execution;
 
 import java.util.List;
 
-import ai.loomspan.api.SkillInputValidationIssue;
+public record ExecutionFailure(Kind kind, String message, String producingSkillName, List<Issue> issues) {
+    public enum Kind { INPUT_VALIDATION, ACCESS_DENIED, SKILL_FAILURE, OUTPUT_SCHEMA }
 
-public record ExecutionFailure(Kind kind, String message, List<SkillInputValidationIssue> issues) {
-    public enum Kind { INPUT_VALIDATION, ACCESS_DENIED, SKILL_FAILURE }
+    public record Issue(String path, String code, String message) { }
 
     public ExecutionFailure {
-        issues = issues == null ? List.of() : List.copyOf(issues);
+        issues = List.copyOf(issues);
     }
 }

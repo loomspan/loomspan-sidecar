@@ -1,8 +1,10 @@
 package ai.loomspan.sidecar.http;
 
-import ai.loomspan.api.SkillExecutorInvocation;
+import ai.loomspan.api.extensions.v1.SkillExecutorInvocation;
 import ai.loomspan.sidecar.configuration.ProviderCredentialCipher;
 import com.sun.net.httpserver.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -23,7 +25,15 @@ final class HttpTestSupport implements AutoCloseable {
     String base(){return "http://127.0.0.1:"+server.getAddress().getPort();}
     Map<String,Object> settings(Object... overrides){var target=map("base-url",base());target.putAll(map(overrides));return map("targets",Map.of("app",target));}
     static Map<String,Object> operation(Object... overrides){var op=map("target","app","method","GET","path","/");op.putAll(map(overrides));return op;}
-    String call(Map<String,Object> op,Map<String,Object> input,Map<String,Object> settings){return executor.execute(new SkillExecutorInvocation(input,op,settings,"default-call","generation"));}
+    static SkillExecutorInvocation invocation(Map<String,Object> input, Map<String,Object> operation,
+                                              Map<String,Object> settings) {
+        var invocation = mock(SkillExecutorInvocation.class);
+        when(invocation.input()).thenReturn(input);
+        when(invocation.skillConfig()).thenReturn(operation);
+        when(invocation.executorConfig()).thenReturn(settings);
+        return invocation;
+    }
+    String call(Map<String,Object> op,Map<String,Object> input,Map<String,Object> settings){return executor.execute(invocation(input,op,settings));}
     static Map<String,Object> map(Object... pairs){var map=new LinkedHashMap<String,Object>();for(int i=0;i<pairs.length;i+=2)map.put((String)pairs[i],pairs[i+1]);return map;}
     static void respond(HttpExchange e,int status,String type,byte[] bytes) throws java.io.IOException {
         if(type!=null)e.getResponseHeaders().set("Content-Type",type);

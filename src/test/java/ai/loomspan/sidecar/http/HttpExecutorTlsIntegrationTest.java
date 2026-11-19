@@ -43,9 +43,9 @@ class HttpExecutorTlsIntegrationTest {
             try(var client=new HttpExecutorClient()) {
                 var executor=new HttpSkillExecutor(client,new ai.loomspan.sidecar.configuration.ProviderCredentialCipher(null),Clock.systemUTC());
                 var settings=map("targets",Map.of("app",map("base-url","https://localhost:"+server.getAddress().getPort(),"connect-timeout","1s","read-timeout","1s")));
-                assertThat(executor.execute(new SkillExecutorInvocation(Map.of(),operation(),settings,"call","g"))).isEqualTo("https");
+                assertThat(executor.execute(invocation(Map.of(),operation(),settings))).isEqualTo("https");
                 var wrong=map("targets",Map.of("app",map("base-url","https://127.0.0.1:"+server.getAddress().getPort(),"connect-timeout","1s","read-timeout","1s")));
-                assertThatThrownBy(()->executor.execute(new SkillExecutorInvocation(Map.of(),operation(),wrong,"call","g"))).isInstanceOf(SkillException.class).hasMessage("HTTP transport failed");
+                assertThatThrownBy(()->executor.execute(invocation(Map.of(),operation(),wrong))).isInstanceOf(SkillException.class).hasMessage("HTTP transport failed");
             }
             var otherKey=keyPair();var otherCa=certificate("CN=Other",otherKey,null,null,true,false,false);
             var otherServer=HttpsServer.create(new InetSocketAddress("127.0.0.1",0),0);
@@ -54,7 +54,7 @@ class HttpExecutorTlsIntegrationTest {
             otherServer.createContext("/",e->respond(e,200,null,"untrusted"));otherServer.start();
             try(var client=new HttpExecutorClient()) {
                 var executor=new HttpSkillExecutor(client,new ai.loomspan.sidecar.configuration.ProviderCredentialCipher(null),Clock.systemUTC());
-                assertThatThrownBy(()->executor.execute(new SkillExecutorInvocation(Map.of(),operation(),map("targets",Map.of("app",map("base-url","https://localhost:"+otherServer.getAddress().getPort(),"connect-timeout","1s","read-timeout","1s"))),"call","g"))).isInstanceOf(SkillException.class).hasMessage("HTTP transport failed");
+                assertThatThrownBy(()->executor.execute(invocation(Map.of(),operation(),map("targets",Map.of("app",map("base-url","https://localhost:"+otherServer.getAddress().getPort(),"connect-timeout","1s","read-timeout","1s")))))).isInstanceOf(SkillException.class).hasMessage("HTTP transport failed");
             }finally{otherServer.stop(0);}
         } finally {
             SSLContext.setDefault(previousDefault);

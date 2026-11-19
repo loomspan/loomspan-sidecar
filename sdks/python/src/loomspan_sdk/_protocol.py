@@ -316,6 +316,7 @@ def _failure(value: JsonValue) -> ExecutionFailure:
         _text(obj, "kind"),
         _optional_text(obj, "message"),
         () if issues is None else tuple(_issue(issue) for issue in _array(issues)),
+        producing_skill_name=_optional_text(obj, "producingSkillName"),
     )
 
 

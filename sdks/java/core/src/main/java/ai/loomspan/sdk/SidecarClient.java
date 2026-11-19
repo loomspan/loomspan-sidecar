@@ -321,7 +321,8 @@ public final class SidecarClient implements AutoCloseable {
                     issues.add(new ExecutionFailure.Issue(text(issue,"path",false),text(issue,"code",false),text(issue,"message",false)));
                 }
             }
-            failure = new ExecutionFailure(text(f,"kind",true),text(f,"message",false),issues);
+            failure = new ExecutionFailure(text(f,"kind",true),text(f,"message",false),
+                    text(f,"producingSkillName",false),issues);
         }
         if (status == ExecutionStatus.FAILED && failure == null) throw new IllegalArgumentException();
         List<ExecutionEvent> events = null;

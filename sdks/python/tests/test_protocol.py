@@ -250,6 +250,33 @@ def test_optional_diagnostics() -> None:
             snapshot("FAILED") | {"failure": {"kind": "ERROR", **extra}}, EXECUTION_ID
         ).failure
         assert failure.message is None and failure.issues == ()
+        assert failure.producing_skill_name is None
+
+
+def test_terminal_output_schema_failure() -> None:
+    issue = {"path": "/repeatContactProbability", "code": "type", "message": "null found, number expected"}
+    value = snapshot("FAILED") | {
+        "skillName": "parent",
+        "result": None,
+        "failure": {
+            "kind": "OUTPUT_SCHEMA",
+            "message": "Skill 'parent' execution failed.",
+            "producingSkillName": "default-tsTriageStructured",
+            "issues": [issue],
+        },
+    }
+    result = parse_snapshot(value, EXECUTION_ID)
+    assert result.skill_name == "parent" and result.status is ExecutionStatus.FAILED
+    assert result.result is None and result.events is None
+    assert result.failure is not None
+    assert result.failure.kind == "OUTPUT_SCHEMA"
+    assert result.failure.producing_skill_name == "default-tsTriageStructured"
+    (parsed_issue,) = result.failure.issues
+    assert (parsed_issue.path, parsed_issue.code, parsed_issue.message) == (
+        "/repeatContactProbability", "type", "null found, number expected"
+    )
+    issue["path"] = ""
+    assert parse_snapshot(value, EXECUTION_ID).failure.issues[0].path == ""
 
 
 @pytest.mark.parametrize(("field", "invalid"), [
@@ -258,6 +285,7 @@ def test_optional_diagnostics() -> None:
     ("createdAt", "-0000-01-01T00:00:00Z"),
     ("completedAt", ""), ("result", {"unexpected": "object"}), ("configurationSnapshotId", "uuid"),
     ("failure", []), ("failure", {}), ("failure", {"kind": "X", "message": 5}),
+    ("failure", {"kind": "OUTPUT_SCHEMA", "producingSkillName": 42}),
     ("failure", {"kind": "X", "issues": {}}), ("failure", {"kind": "X", "issues": [None]}),
     ("failure", {"kind": "X", "issues": [{"path": []}]}), ("events", {}), ("events", [None]),
     ("events", [{"level": "INFO", "type": "X", "details": {}, "timestamp": "today"}]),
