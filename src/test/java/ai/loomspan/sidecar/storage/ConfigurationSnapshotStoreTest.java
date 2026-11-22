@@ -377,13 +377,12 @@ class ConfigurationSnapshotStoreTest
             }
             first.setAutoCommit(false);
             first.createStatement().executeUpdate("INSERT INTO configuration_snapshot(local_id, document_count, "
-                    + "execution_configuration_yaml, effective_execution_yaml) "
-                    + "VALUES ('held', 0, 'loomspan: {executor-config: {default: {http: {}}}}', 'loomspan: {executor-config: {default: {http: {}}}}')");
+                    + "execution_configuration_yaml) "
+                    + "VALUES ('held', 0, 'loomspan: {executor-config: {default: {http: {}}}}')");
             long start = System.nanoTime();
             assertThatThrownBy(() -> second.createStatement().executeUpdate("INSERT INTO configuration_snapshot"
-                    + "(local_id, document_count, execution_configuration_yaml, "
-                    + "effective_execution_yaml) "
-                    + "VALUES ('blocked', 0, 'loomspan: {executor-config: {default: {http: {}}}}', 'loomspan: {executor-config: {default: {http: {}}}}')"))
+                    + "(local_id, document_count, execution_configuration_yaml) "
+                    + "VALUES ('blocked', 0, 'loomspan: {executor-config: {default: {http: {}}}}')"))
                     .isInstanceOf(java.sql.SQLException.class);
             long elapsed = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
             assertThat(elapsed).isBetween(4000L, 15000L);

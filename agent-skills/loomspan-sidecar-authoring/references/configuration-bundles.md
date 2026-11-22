@@ -5,7 +5,7 @@ Use **Download current configuration** on the current-configuration page, or
 a configuration-only transfer by default, with optional encrypted credentials. It carries the complete
 authored skill YAML, source labels, execution YAML including shared executor targets from the snapshot
 running when export begins. An active empty configuration yields an empty skill
-list and an explicitly empty `loomspan.executor-config.default.http` map. If no runtime snapshot exists, export
+list and empty `http` and `typesafe` maps under `loomspan.executor-config.default`. If no runtime snapshot exists, export
 is unavailable. The intended database pointer, retained history, private drafts,
 accounts, sessions, leases, resolved environment values, SMTP
 settings, and SSL bundles are excluded. Editors and administrators can import
@@ -21,7 +21,7 @@ validation feedback without changing state. `POST
 `baseSnapshotId`, plus optional `credentialMode` (`included` or `configuration-only`). The caller must hold the lease; the load advances the saved
 revision and preserves the bundle source UUID as provenance. The runtime is
 unchanged until the caller validates and publishes through the shared editing
-contract. A failed upload or load leaves the prior draft intact.
+contract. Configuration-only import preserves the destination draft values. An included encrypted import replaces the supplied names and preserves unrelated destination values. A failed upload or load leaves the prior draft intact.
 
 Imported executor data is opaque to management. HTTP-specific errors may first
 appear on invocation; review target recipients and permissions before publishing.
@@ -42,7 +42,10 @@ The ZIP contains `manifest.json`, `execution.json`, optional `credentials.json`,
 skill under `skills/`. All entry names are fixed or generated, never taken from
 source labels. JSON and YAML entry bytes are UTF-8. `execution.json` is
 `{"executionConfigurationYaml":"<exact authored YAML>","credentialIdentifiers":[]}`
-and contains identifier inventory, never resolved credential values or the encryption key.
+and contains the published installation's configured names. The exact authored
+YAML includes literals and whole-node references. Separately supplied managed
+values are absent from each configuration-only entry. The encryption key remains
+outside every bundle.
 Optional `credentials.json` contains `cipherFormat: "AES-256-GCM-v1"` and a
 `credentials` array of exact `identifier`, `version`, `ciphertext` records. It is
 inventoried and bounded like other payloads; identifiers and versions authenticate

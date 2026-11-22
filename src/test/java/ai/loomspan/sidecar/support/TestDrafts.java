@@ -14,7 +14,7 @@ public final class TestDrafts {
     public static ConfigurationValidationResult validate(RuntimeConfigurationService runtime, ConfigurationDraft draft,
             java.util.List<ai.loomspan.sidecar.storage.EncryptedCredential> credentials) {
         var frozen = draft.freeze();
-        var result = runtime.validateWithCandidate(frozen.configuration(), credentials).result();
+        var result = runtime.validateWithCandidate(frozen.configuration(), () -> credentials).result();
         draft.recordValidation(frozen, result);
         return result;
     }

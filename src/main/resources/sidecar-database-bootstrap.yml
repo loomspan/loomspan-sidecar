@@ -2,3 +2,4 @@ loomspan:
   executor-config:
     default:
       http: {}
+      typesafe: {}

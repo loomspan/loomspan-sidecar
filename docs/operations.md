@@ -234,8 +234,10 @@ The protected console links this procedure from **Configuration recovery
 guidance**. That page is explanatory and read-only: it does not execute SQL,
 retry or cancel publication, or provide import, export, or rollback controls.
 Local retained-history rollback loads one snapshot still held by this server
-into a saved draft for later validation and publication; it cannot recover
-accounts, settings, or a damaged database. Configuration
+into a saved draft with the currently published installation values. Validate
+and publish the draft to activate it. Supply replacements in that draft if the
+historical documents reference names you removed. Recover accounts, process
+settings, or a damaged database from the appropriate backup. Configuration
 ZIP import also cannot bypass a mutation fault.
 
 Stop the sole Sidecar instance and wait for process exit before either copy.

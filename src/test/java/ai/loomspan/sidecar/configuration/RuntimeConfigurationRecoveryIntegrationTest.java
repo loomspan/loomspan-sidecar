@@ -172,6 +172,25 @@ class RuntimeConfigurationRecoveryIntegrationTest {
     }
 
     @Test
+    void selectedConfigurationReportsEachMissingVariableLocationAtStartup() {
+        Path database = directory.resolve("missing-values.db");
+        var store = open(database);
+        var selected = store.submit(new ManagedConfiguration(List.of(new SkillDocument("records.yaml", """
+                name: records
+                description: Records fixture
+                executor: http
+                config:
+                  path: { $var: records.path }
+                  nested: [ { $var: records.path } ]
+                """)), ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), null, store.current().localId());
+
+        assertThatThrownBy(() -> start(database))
+                .hasMessageContaining("records.yaml [config.path]: missing-value for variable records.path")
+                .hasMessageContaining("records.yaml [config.nested[0]]: missing-value for variable records.path");
+        assertThat(open(database).current().localId()).isEqualTo(selected.localId());
+    }
+
+    @Test
     void failedAttemptBeforeCommitRestartsOriginalSelection() {
         Path database = directory.resolve("before-commit.db");
         ConfigurationSnapshot a;

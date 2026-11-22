@@ -130,7 +130,7 @@ class MountedSkillRegistrationIntegrationTest
                     fixture:
                       driver: openai
                       base-url: http://127.0.0.1:9/v1
-                      api-key-ref: fixture-key
+                      api-key: { $var: fixture-key }
                   models:
                     fixture-model:
                       connection: fixture

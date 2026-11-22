@@ -13,18 +13,19 @@ including shared HTTP targets under `loomspan.executor-config.default.http`.
 HTTP operations belong in their skill documents. Add or remove a skill document
 with the adjacent controls. Use the
 [publishable execution fields](execution-configuration.md) and
-[managed credential references](configuration-modes.md). Save secret values through
-the separate write-only credential form and use their identifiers in YAML.
+[managed variable references](configuration-modes.md). The separate write-only
+value form supplies values for whole-node markers such as `{ $var: provider.key }`.
+Literals and markers appear in authorized YAML reads and configuration-only
+exports. Supplied values stay encrypted in the installation's value inventory.
 Process settings remain deployment-owned.
 
 Edits save automatically to the user's durable draft after a short pause.
 The draft status distinguishes unsent local text, a saved revision and the
 published runtime. A failed save keeps the local text visible for explicit
-retry. Execution YAML must be syntactically readable before saving so every
-provider credential field can be checked; a syntax error preserves the last saved
-draft. Framework semantic validation still happens on the saved revision.
-Validation runs on the exact saved revision and shows labelled issues;
-warnings alone permit publication. HTTP-specific configuration and input checks
+retry. The editor can save incomplete authored YAML while you work. Validate
+checks the exact saved revision for authored structural errors before looking up
+any values. It then prepares the candidate without activation. Publication
+requires successful validation of that same revision. HTTP-specific configuration and input checks
 run only on invocation before dispatch; validation does not certify HTTP validity
 or destination reachability. Publish becomes available only for the
 current saved, successfully validated revision. Successful publication changes
@@ -111,10 +112,11 @@ reconciliation.
 ### Protected configuration API
 
 Management viewers, editors and admins can inspect authored snapshot
-content and masked provider-credential identifiers, including pending or failed
-submissions. Provider secret values are never returned; ciphertext is returned
-only by the explicit encrypted-export option requiring Edit authority. Authored
-YAML may contain literal sensitive values, so protect viewer accounts accordingly.
+content and configured variable names, including pending or failed
+submissions. Authorized reads and configuration-only exports show authored
+literals and variable markers verbatim. Separately supplied values stay
+write-only. The explicit encrypted-export option requires Edit authority and
+includes those values as ciphertext. Protect access to authored literals.
 Every response is private and `Cache-Control:
 no-store`; an execution JWT does not grant access. Browser mutations require a
 management session and CSRF token; scoped bearer tokens use the same API.
@@ -127,14 +129,13 @@ management session and CSRF token; scoped bearer tokens use the same API.
 | `GET /api/management/configuration/history/{localId}` | None | Full retained snapshot or 404 after pruning. |
 | `GET /api/management/configuration/file-startups` | None; Read or higher token or management session | Redacted retained file-startup metadata in file mode; empty list in database mode. |
 | `POST /api/management/configuration/rollback/{localId}/review` | Empty body; Edit authority; browser sessions require CSRF | Read-only source summary and destination validation. |
-| `POST /api/management/configuration/rollback/{localId}/load` | Capability, draft ID/revision, current base ID | Load the retained source into the caller's saved draft; no publication. |
+| `POST /api/management/configuration/rollback/{localId}/load` | Capability, draft ID/revision, current base ID | Load historical authored documents with the current published values into the caller's saved draft. |
 | `POST /api/management/configuration/publish` | Capability, draft ID/revision/base ID | Publish only the exact successfully validated saved revision, then return the full snapshot. |
 
 A full snapshot contains `localId`, nullable `sourceId`, `submissionSequence`,
 `status`, and `configuration` with authored `skillDocuments`,
-`executionConfigurationYaml`, and configured credential
-identifiers. Captured effective execution YAML remains internal and is omitted
-from inspection responses; it can contain encrypted HTTP credential records.
+`executionConfigurationYaml`, and `credentialIdentifiers` for the configured
+variable names.
 The framework's validation returns `successful` and issues with `severity`
 (`ERROR` or `WARNING`), `sourceLabel`, optional `skillName` and `location`, and
 `message`. Warning-only results can be published; an error cannot. Every save, including identical content, advances the revision and clears validation.

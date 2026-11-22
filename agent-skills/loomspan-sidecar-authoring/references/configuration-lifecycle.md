@@ -4,8 +4,8 @@
 Sidecar migrates and validates a file-backed SQLite database at startup. In
 `database` mode it atomically creates one empty current snapshot on a new database, then activates
 and records it as **published** before opening execution dispatch.
-The empty content contains no skill documents and an explicitly empty
-`loomspan.executor-config.default.http` map for the registered executor.
+The initial snapshot contains no skill documents and has empty `http` and
+`typesafe` maps under `loomspan.executor-config.default`.
 Reopening retains that snapshot; an inconsistent
 initialized store or existing database without migration history fails startup.
 On restart the committed current pointer is prepared and published as a new
@@ -20,11 +20,11 @@ Labels are nonblank and unique. Snapshots exclude accounts, sessions, leases,
 process identity/trust, SMTP and arbitrary Spring settings. No omitted managed
 value inherits earlier or startup content.
 
-Captured effective YAML remains internal and may contain encrypted HTTP records.
-Ordinary inspection and configuration-only bundles expose authored YAML and
-credential identifiers, never stored ciphertext or plaintext values. Explicit
-authorized exports can include authenticated ciphertext, with the encryption key
-kept separate. Protect SQLite and authored business data in exported bundles.
+Ordinary inspection and configuration-only bundles expose authored YAML and the
+configured names. Literals are visible exactly as authored. Whole-node markers
+stay in the YAML, while separately supplied values remain encrypted and write-only.
+Explicit authorized exports can include authenticated ciphertext, with the
+encryption key kept separate. Protect SQLite and authored data in exported bundles.
 HTTP-specific configuration errors are checked only at invocation before dispatch;
 Framework validation and readiness do not certify operational HTTP validity.
 
@@ -45,14 +45,16 @@ version and application version are not transfer compatibility rules.
 
 Sidecar stores one saved draft per management account, with ordered complete
 skill documents, execution YAML, encrypted
-provider and HTTP service credential versions, base snapshot UUID, source provenance and a
+installation value versions, base snapshot UUID, source provenance and a
 monotonic revision. The saved content is in the same SQLite database and must
 be included in stopped-instance backups. Leases and successful validation
 proofs remain process-local, so restart requires reacquisition and revalidation.
 Logout and credential changes revoke editing access without deleting content.
 A successful publication deletes only its owner's saved draft after framework
 activation. Other users' drafts remain stored and become stale by base UUID
-comparison. Failure before activation leaves the publishing draft intact.
+comparison. Failure before activation leaves the publishing draft intact. Rollback loads historical
+documents with the current publication's encrypted value inventory. The rollback
+draft can be edited and validated before publication.
 
 The current database pointer records **intended production**, not the framework
 generation that handled an execution or the source for an export. A publication

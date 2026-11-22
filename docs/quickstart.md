@@ -75,17 +75,17 @@ automatically. See the [fixture notes](../examples/quickstart/README.md).
      connections:
        primary:
          driver: openai
-         api-key-ref: provider.primary.key
+         api-key: { $var: provider.primary.key }
      models:
        assistant:
          connection: primary
          provider-model: YOUR_PROVIDER_MODEL_ID
    ```
 
-4. Wait until the draft is saved. Under **Managed provider credentials**, enter
+4. Wait until the draft is saved. Under **Managed variables**, enter
    `provider.primary.key` as **Identifier**, paste your provider key into **New
-   value**, and choose **Save or replace credential**. Do not place the key in
-   the YAML, skill input, or an assistant prompt.
+   value**, and choose **Save or replace credential**. The reference remains in
+   the YAML shown to authorized readers and in configuration-only exports.
 5. Wait for the saved revision, then choose **Retry validation**. Resolve any
    errors and validate again, then choose **Publish validated draft**.
    If the lease expires, reacquire editing and validate the saved revision again.

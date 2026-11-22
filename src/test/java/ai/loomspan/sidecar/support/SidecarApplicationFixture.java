@@ -60,7 +60,7 @@ public final class SidecarApplicationFixture implements AutoCloseable {
             var candidate = new ai.loomspan.sidecar.configuration.EffectiveExecutionConfiguration(
                     new ai.loomspan.sidecar.configuration.ProviderCredentialCipher(CREDENTIAL_KEY))
                     .assemble(authored, encrypt(credentials));
-            store.submit(authored, null, initial.localId(), candidate.yaml(), candidate.retained());
+            store.submit(authored, null, initial.localId(), candidate.retained());
         } catch (java.io.IOException failure) { throw new IllegalStateException(failure); }
         return database;
     }
@@ -137,7 +137,7 @@ public final class SidecarApplicationFixture implements AutoCloseable {
     public String executionWithProvider() {
         try {
             return Files.readString(routes) + "  connections:\n    fixture:\n      driver: openai\n      base-url: http://127.0.0.1:"
-                    + modelPort() + "/v1\n      api-key-ref: fixture.model.key\n  models:\n    fixture-model:\n      connection: fixture\n      provider-model: fixture-provider-model\n";
+                    + modelPort() + "/v1\n      api-key: { $var: fixture.model.key }\n  models:\n    fixture-model:\n      connection: fixture\n      provider-model: fixture-provider-model\n";
         } catch (java.io.IOException failure) { throw new java.io.UncheckedIOException(failure); }
     }
     public ConcurrentLinkedQueue<String> modelResponses() { return modelResponses; }

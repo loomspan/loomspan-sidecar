@@ -10,12 +10,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 /** Transactional, account-owned saved content. Editing grants and validation never enter this store. */
 public final class ConfigurationDraftStore {
     public record Saved(long accountId, UUID draftId, UUID baseSnapshotId, UUID sourceSnapshotId,
-            long revision, ManagedConfiguration configuration, boolean retainedSource) {
-        public Saved(long accountId, UUID draftId, UUID baseSnapshotId, UUID sourceSnapshotId,
-                long revision, ManagedConfiguration configuration) {
-            this(accountId, draftId, baseSnapshotId, sourceSnapshotId, revision, configuration, false);
-        }
-    }
+            long revision, ManagedConfiguration configuration) {}
 
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transactions;
@@ -28,11 +23,11 @@ public final class ConfigurationDraftStore {
     public Saved read(long accountId) {
         return transactions.execute(ignored -> {
             var rows = jdbc.query("SELECT draft_id, base_snapshot_id, source_snapshot_id, revision, "
-                    + "document_count, execution_configuration_yaml, retained_source "
+                    + "document_count, execution_configuration_yaml "
                     + "FROM management_draft WHERE account_id = ?",
                     (rs, row) -> new Header(UUID.fromString(rs.getString(1)), UUID.fromString(rs.getString(2)),
                             rs.getString(3) == null ? null : UUID.fromString(rs.getString(3)),
-                            rs.getLong(4), rs.getInt(5), rs.getString(6), rs.getInt(7) == 1), accountId);
+                            rs.getLong(4), rs.getInt(5), rs.getString(6)), accountId);
             if (rows.isEmpty()) return null;
             Header header = rows.getFirst();
             var documents = jdbc.query("SELECT ordinal, label, yaml FROM management_draft_document "
@@ -42,10 +37,11 @@ public final class ConfigurationDraftStore {
             if (documents.size() != header.count) throw new IllegalStateException("Incomplete saved draft");
             for (int i = 0; i < documents.size(); i++)
                 if (documents.get(i).ordinal != i) throw new IllegalStateException("Invalid saved draft document order");
-            var identifiers = requiredCredentialIdentifiers(accountId);
+            var identifiers = jdbc.queryForList("SELECT identifier FROM management_draft_credential "
+                    + "WHERE account_id = ? ORDER BY identifier", String.class, accountId);
             return new Saved(accountId, header.id, header.baseId, header.sourceId, header.revision,
                     new ManagedConfiguration(documents.stream().map(Document::content).toList(),
-                            header.execution, identifiers), header.retainedSource);
+                            header.execution, identifiers));
         });
     }
 
@@ -59,12 +55,9 @@ public final class ConfigurationDraftStore {
                     base.configuration().executionConfigurationYaml());
             if (inserted == 1) {
                 insertDocuments(accountId, base.configuration());
-                    jdbc.update("INSERT INTO management_draft_credential(account_id, identifier, version, ciphertext) "
-                            + "SELECT ?, identifier, version, ciphertext FROM configuration_snapshot_credential "
-                            + "WHERE snapshot_sequence = ?", accountId, base.submissionSequence());
-                for (String identifier : base.configuration().credentialIdentifiers())
-                    jdbc.update("INSERT INTO management_draft_credential_requirement(account_id, identifier) VALUES (?, ?)",
-                            accountId, identifier);
+                jdbc.update("INSERT INTO management_draft_credential(account_id, identifier, version, ciphertext) "
+                        + "SELECT ?, identifier, version, ciphertext FROM configuration_snapshot_credential "
+                        + "WHERE snapshot_sequence = ?", accountId, base.submissionSequence());
             }
         });
         return read(accountId);
@@ -73,45 +66,28 @@ public final class ConfigurationDraftStore {
     public Saved replace(long accountId, UUID draftId, long expectedRevision, UUID expectedBaseId,
             UUID nextBaseId, ManagedConfiguration configuration, UUID sourceId) {
         return replace(accountId, draftId, expectedRevision, expectedBaseId, nextBaseId,
-                configuration, sourceId, null);
+                configuration, sourceId, List.of(), false);
     }
 
     public Saved replace(long accountId, UUID draftId, long expectedRevision, UUID expectedBaseId,
             UUID nextBaseId, ManagedConfiguration configuration, UUID sourceId,
-            List<EncryptedCredential> credentials) {
+            List<EncryptedCredential> credentials, boolean replaceInventory) {
         Objects.requireNonNull(configuration);
         transactions.executeWithoutResult(ignored -> {
             int changed = jdbc.update("UPDATE management_draft SET base_snapshot_id = ?, source_snapshot_id = ?, "
                     + "revision = revision + 1, document_count = ?, "
-                    + "execution_configuration_yaml = ?, retained_source = ? "
+                    + "execution_configuration_yaml = ? "
                     + "WHERE account_id = ? AND draft_id = ? AND revision = ? AND base_snapshot_id = ?",
                     nextBaseId.toString(), sourceId == null ? null : sourceId.toString(),
                     configuration.skillDocuments().size(),
                     configuration.executionConfigurationYaml(),
-                    credentials == null ? 0 : 1,
                     accountId, draftId.toString(), expectedRevision, expectedBaseId.toString());
             if (changed != 1) throw new IllegalStateException("Saved draft changed");
             jdbc.update("DELETE FROM management_draft_document WHERE account_id = ?", accountId);
             insertDocuments(accountId, configuration);
-            if (credentials != null) {
+            if (replaceInventory)
                 jdbc.update("DELETE FROM management_draft_credential WHERE account_id = ?", accountId);
-                for (EncryptedCredential credential : credentials)
-                    jdbc.update("INSERT INTO management_draft_credential(account_id, identifier, version, ciphertext) "
-                            + "VALUES (?, ?, ?, ?)", accountId, credential.identifier(),
-                            credential.version(), credential.ciphertext());
-            }
-            if (sourceId != null) {
-                if (credentials == null) {
-                    for (var retained : credentialVersions(accountId))
-                        if (!configuration.credentialIdentifiers().contains(retained.identifier()))
-                            jdbc.update("DELETE FROM management_draft_credential WHERE account_id = ? AND identifier = ?",
-                                    accountId, retained.identifier());
-                }
-                jdbc.update("DELETE FROM management_draft_credential_requirement WHERE account_id = ?", accountId);
-                for (String identifier : configuration.credentialIdentifiers())
-                    jdbc.update("INSERT INTO management_draft_credential_requirement(account_id, identifier) VALUES (?, ?)",
-                            accountId, identifier);
-            }
+            for (EncryptedCredential credential : credentials) upsertCredential(accountId, credential);
         });
         return read(accountId);
     }
@@ -128,11 +104,6 @@ public final class ConfigurationDraftStore {
                 (rs, row) -> new EncryptedCredential(rs.getString(1), rs.getString(2), rs.getString(3)), accountId);
     }
 
-    public List<String> requiredCredentialIdentifiers(long accountId) {
-        return jdbc.queryForList("SELECT identifier FROM management_draft_credential_requirement "
-                + "WHERE account_id = ? ORDER BY identifier", String.class, accountId);
-    }
-
     public Saved replaceCredential(long accountId, UUID draftId, long revision, UUID baseId,
             EncryptedCredential credential) {
         transactions.executeWithoutResult(ignored -> {
@@ -140,12 +111,7 @@ public final class ConfigurationDraftStore {
                     + "WHERE account_id = ? AND draft_id = ? AND revision = ? AND base_snapshot_id = ?",
                     accountId, draftId.toString(), revision, baseId.toString());
             if (changed != 1) throw new IllegalStateException("Saved draft changed");
-            jdbc.update("INSERT INTO management_draft_credential(account_id, identifier, version, ciphertext) "
-                    + "VALUES (?, ?, ?, ?) ON CONFLICT(account_id, identifier) DO UPDATE SET "
-                    + "version = excluded.version, ciphertext = excluded.ciphertext",
-                    accountId, credential.identifier(), credential.version(), credential.ciphertext());
-            jdbc.update("INSERT OR IGNORE INTO management_draft_credential_requirement(account_id, identifier) "
-                    + "VALUES (?, ?)", accountId, credential.identifier());
+            upsertCredential(accountId, credential);
         });
         return read(accountId);
     }
@@ -159,11 +125,16 @@ public final class ConfigurationDraftStore {
             if (changed != 1) throw new IllegalStateException("Saved draft changed");
             int removed = jdbc.update("DELETE FROM management_draft_credential WHERE account_id = ? AND identifier = ?",
                     accountId, identifier);
-            removed += jdbc.update("DELETE FROM management_draft_credential_requirement WHERE account_id = ? AND identifier = ?",
-                    accountId, identifier);
-            if (removed == 0) throw new IllegalArgumentException("Credential identifier is not configured or required");
+            if (removed == 0) throw new IllegalArgumentException("Managed variable is not configured");
         });
         return read(accountId);
+    }
+
+    private void upsertCredential(long accountId, EncryptedCredential credential) {
+        jdbc.update("INSERT INTO management_draft_credential(account_id, identifier, version, ciphertext) "
+                + "VALUES (?, ?, ?, ?) ON CONFLICT(account_id, identifier) DO UPDATE SET "
+                + "version = excluded.version, ciphertext = excluded.ciphertext",
+                accountId, credential.identifier(), credential.version(), credential.ciphertext());
     }
 
     private void insertDocuments(long accountId, ManagedConfiguration configuration) {
@@ -174,6 +145,6 @@ public final class ConfigurationDraftStore {
     }
 
     private record Header(UUID id, UUID baseId, UUID sourceId, long revision, int count,
-            String execution, boolean retainedSource) {}
+            String execution) {}
     private record Document(int ordinal, SkillDocument content) {}
 }

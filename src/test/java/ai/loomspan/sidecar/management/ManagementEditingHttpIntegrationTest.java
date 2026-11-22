@@ -94,29 +94,109 @@ class ManagementEditingHttpIntegrationTest {
                 .path("executionConfigurationYaml").asText()).isEqualTo("loomspan: {executor-config: {default: {http: {}}}}\n# exact authored settings\n");
     }
 
-    @Test void invalidYamlCannotPersistOrEchoInlineProviderSecrets() throws Exception {
-        String email = "inline-secret-" + UUID.randomUUID() + "@example.test";
-        long account = seed(email, "editor");
+    @Test void authorizedReadsAndConfigurationOnlyExportPreserveLiteralsAndMarkers() throws Exception {
+        String email = "authored-" + UUID.randomUUID() + "@example.test";
+        seed(email, "editor");
         Browser client = login(email);
-        JsonNode grant = ok(client.post("/api/management/editing/lease", "{\"label\":\"Secret boundary\"}"));
-        JsonNode draft = grant.path("draft");
-        String sentinel = "inline-secret-" + UUID.randomUUID();
-        for (String yaml : java.util.List.of(
-                "loomspan: {connections: {primary: {\"api-key\": " + sentinel + "}}}\nloomspan: {executor-config: {default: {http: {}}}}\n",
-                "loomspan: {connections: {primary: {'api-key': " + sentinel + "}}\n",
-                "loomspan: [}\nconnections: {primary: {'api-key': " + sentinel + "}}\n",
-                "loomspan: [}\nconnections: {primary: {\"api\\x2dkey\": " + sentinel + "}}\n")) {
-            var body = (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(save(grant, draft, ""));
-            body.put("executionConfigurationYaml", yaml);
-            var rejected = client.put("/api/management/editing/draft", mapper.writeValueAsString(body));
-            assertThat(rejected.statusCode()).isEqualTo(400);
-            assertThat(rejected.body()).doesNotContain(sentinel);
-            var stored = ok(client.get("/api/management/editing/draft"));
-            assertThat(stored.path("revision").asLong()).isEqualTo(draft.path("revision").asLong());
-            assertThat(stored.toString()).doesNotContain(sentinel);
-            assertThat(jdbc.queryForObject("SELECT execution_configuration_yaml FROM management_draft WHERE account_id = ?",
-                    String.class, account)).doesNotContain(sentinel);
+        JsonNode grant = ok(client.post("/api/management/editing/lease", "{\"label\":\"Authored values\"}"));
+        String literal = "literal-api-key-fixture";
+        String supplied = "managed-header-fixture";
+        String yaml = """
+                loomspan:
+                  connections:
+                    primary:
+                      driver: openai
+                      base-url: http://127.0.0.1:9/v1
+                      api-key: literal-api-key-fixture
+                      headers: { X-Credential: { $var: service.header } }
+                  executor-config: {default: {http: {}}}
+                """;
+        var body = (com.fasterxml.jackson.databind.node.ObjectNode)
+                mapper.readTree(save(grant, grant.path("draft"), ""));
+        body.put("executionConfigurationYaml", yaml);
+        JsonNode saved = ok(client.put("/api/management/editing/draft", body.toString()));
+        saved = writeValue(client, grant, saved, "service.header", supplied);
+        var read = ok(client.get("/api/management/editing/draft"));
+        assertThat(read.path("configuration").path("executionConfigurationYaml").asText()).isEqualTo(yaml);
+        assertThat(read.toString()).contains(literal, "$var").doesNotContain(supplied);
+        assertThat(ok(client.post("/api/management/editing/draft/validate", candidate(grant, saved)))
+                .path("validation").path("successful").asBoolean()).isTrue();
+        ok(client.post("/api/management/configuration/publish", candidate(grant, saved)));
+        assertThat(client.get("/api/management/configuration/current").body())
+                .contains(literal, "$var").doesNotContain(supplied);
+        var archive = client.getBytes("/api/management/configuration/export");
+        assertThat(archive.statusCode()).isEqualTo(200);
+        try (var zip = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(archive.body()))) {
+            boolean sawYaml = false;
+            for (var entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {
+                String content = new String(zip.readAllBytes(), StandardCharsets.UTF_8);
+                assertThat(content).doesNotContain(supplied);
+                if (content.contains(literal)) {
+                    assertThat(mapper.readTree(content).path("executionConfigurationYaml").asText()).isEqualTo(yaml);
+                    sawYaml = true;
+                }
+            }
+            assertThat(sawYaml).isTrue();
         }
+        assertThat(jdbc.queryForObject("SELECT ciphertext FROM configuration_snapshot_credential "
+                + "WHERE identifier = 'service.header' ORDER BY snapshot_sequence DESC LIMIT 1", String.class))
+                .doesNotContain(supplied);
+    }
+
+    @Test void missingSkillValueBlocksValidationBeforePublishingDraft() throws Exception {
+        String email = "skill-variable-" + UUID.randomUUID() + "@example.test";
+        seed(email, "editor");
+        Browser client = login(email);
+        JsonNode grant = ok(client.post("/api/management/editing/lease", "{\"label\":\"Skill variable\"}"));
+        JsonNode a = ok(client.put("/api/management/editing/draft", save(grant, grant.path("draft"), "# revision A")));
+        assertThat(ok(client.post("/api/management/editing/draft/validate", candidate(grant, a)))
+                .path("validation").path("successful").asBoolean()).isTrue();
+        String active = ok(client.get("/api/management/configuration/current")).path("published").path("localId").asText();
+        assertThat(active).isNotBlank();
+        var saveB = (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(save(grant, a, "# revision B"));
+        saveB.putArray("skillDocuments").addObject().put("sourceName", "variable.yaml").put("yaml", """
+                name: variable
+                description: Managed fixture
+                executor: http
+                config:
+                  target: app
+                  method: GET
+                  path: /records
+                  existing: true
+                  ? { $var: region/name }
+                  : true
+                """);
+        JsonNode b = ok(client.put("/api/management/editing/draft", saveB.toString()));
+        var failed = ok(client.post("/api/management/editing/draft/validate", candidate(grant, b)));
+        assertThat(failed.path("validation").path("successful").asBoolean()).isFalse();
+        assertThat(failed.path("validation").toString()).contains("missing-value", "variable.yaml", "config{key#4}", "region/name");
+        assertThat(client.post("/api/management/configuration/publish", candidate(grant, b)).statusCode()).isEqualTo(409);
+        assertThat(ok(client.get("/api/management/configuration/current")).path("published").path("localId").asText()).isEqualTo(active);
+        assertThat(ok(client.get("/api/management/editing/draft")).path("revision").asLong()).isEqualTo(b.path("revision").asLong());
+
+        var unique = writeValue(client, grant, b, "region/name", "unique");
+        assertThat(unique.path("revision").asLong()).isEqualTo(b.path("revision").asLong() + 1);
+        assertThat(client.post("/api/management/configuration/publish", candidate(grant, unique)).statusCode()).isEqualTo(409);
+        assertThat(ok(client.post("/api/management/editing/draft/validate", candidate(grant, unique)))
+                .path("validation").path("successful").asBoolean()).isTrue();
+
+        var colliding = writeValue(client, grant, unique, "region/name", "existing");
+        var collision = ok(client.post("/api/management/editing/draft/validate", candidate(grant, colliding)))
+                .path("validation");
+        assertThat(collision.path("successful").asBoolean()).isFalse();
+        assertThat(collision.toString()).contains("key-collision", "config.existing", "config{key#4}");
+        var repaired = writeValue(client, grant, colliding, "region/name", "distinct");
+        assertThat(ok(client.post("/api/management/editing/draft/validate", candidate(grant, repaired)))
+                .path("validation").path("successful").asBoolean()).isTrue();
+        JsonNode published = ok(client.post("/api/management/configuration/publish", candidate(grant, repaired)));
+        assertThat(published.path("configuration").path("skillDocuments").get(0).path("yaml").asText())
+                .isEqualTo(saveB.path("skillDocuments").get(0).path("yaml").asText());
+    }
+
+    private JsonNode writeValue(Browser client, JsonNode grant, JsonNode draft, String name, String value) throws Exception {
+        var body = (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(candidate(grant, draft));
+        body.put("identifier", name).put("value", value);
+        return ok(client.put("/api/management/editing/draft/credentials", body.toString()));
     }
 
     @Test void referencedApiKeyHeaderAndCredentialNamedAliasesCanBeSavedAndValidated() throws Exception {
@@ -126,8 +206,8 @@ class ManagementEditingHttpIntegrationTest {
         JsonNode grant = ok(client.post("/api/management/editing/lease", "{\"label\":\"Header reference\"}"));
         var body = (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(save(grant, grant.path("draft"), ""));
         body.put("executionConfigurationYaml", "loomspan:\n  executor-config: {default: {http: {}}}\n  connections:\n    headers:\n      driver: openai\n"
-                + "      base-url: http://127.0.0.1:9/v1\n      api-key-ref: provider.key\n"
-                + "      header-refs:\n        api-key: provider.key\n"
+                + "      base-url: http://127.0.0.1:9/v1\n      api-key: { $var: provider.key }\n"
+                + "      headers:\n        api-key: { $var: provider.key }\n"
                 + "  models:\n    credentials-json: {connection: headers, provider-model: fixture}\n");
         JsonNode saved = ok(client.put("/api/management/editing/draft", mapper.writeValueAsString(body)));
         var replacement = (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(candidate(grant, saved));
@@ -342,6 +422,10 @@ class ManagementEditingHttpIntegrationTest {
                 .followRedirects(HttpClient.Redirect.NEVER).build();
         private String csrf;
         HttpResponse<String> get(String path) throws Exception { return send("GET", path, null, true); }
+        HttpResponse<byte[]> getBytes(String path) throws Exception {
+            return client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path)).GET().build(),
+                    HttpResponse.BodyHandlers.ofByteArray());
+        }
         HttpResponse<String> post(String path, String body) throws Exception { return send("POST", path, body, true); }
         HttpResponse<String> postWithoutCsrf(String path, String body) throws Exception { return send("POST", path, body, false); }
         HttpResponse<String> put(String path, String body) throws Exception { return send("PUT", path, body, true); }

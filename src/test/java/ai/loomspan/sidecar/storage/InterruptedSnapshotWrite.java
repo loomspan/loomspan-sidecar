@@ -15,8 +15,7 @@ public final class InterruptedSnapshotWrite
         {
             connection.setAutoCommit(false);
             try (var insert = connection.prepareStatement("INSERT INTO configuration_snapshot"
-                    + "(local_id, document_count, execution_configuration_yaml, "
-                    + "effective_execution_yaml) VALUES (?, 1, ?, 'loomspan: {executor-config: {default: {http: {}}}}')"))
+                    + "(local_id, document_count, execution_configuration_yaml) VALUES (?, 1, ?)"))
             {
                 insert.setString(1, args[2]);
                 insert.setString(2, ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);

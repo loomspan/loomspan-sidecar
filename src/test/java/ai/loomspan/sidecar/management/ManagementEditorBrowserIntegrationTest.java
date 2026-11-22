@@ -76,10 +76,11 @@ class ManagementEditorBrowserIntegrationTest {
             first.locator("#editor-execution").fill("loomspan: {executor-config: {default: {http: {}}}}\n# saved-execution\n");
             waitText(first, "editor-save", "Saved draft revision");
             first.locator("#editor-execution").fill("loomspan: [}\n");
-            waitText(first, "editor-message", "Save failed.");
+            waitText(first, "editor-save", "Saved draft revision");
+            first.locator("#editor-recheck").click();
+            waitText(first, "editor-message", "Validation found errors.");
             assertThat(first.locator("#editor-execution").inputValue()).isEqualTo("loomspan: [}\n");
-            assertThat(first.locator("#editor-saved-content").textContent()).contains("saved-execution")
-                    .doesNotContain("loomspan: [}");
+            assertThat(first.locator("#editor-saved-content").textContent()).contains("loomspan: [}");
             first.locator("#editor-execution").fill("loomspan: {executor-config: {default: {http: {}}}}\n# saved-execution\n");
             waitText(first, "editor-save", "Saved draft revision");
             first.locator("#editor-execution").fill("loomspan: {executor-config: {default: {http: {}}}}\n# saved-from-first\n");
@@ -143,19 +144,19 @@ class ManagementEditorBrowserIntegrationTest {
             waitText(page, "editor-owner", "You hold editing control.");
             assertThat(page.locator("#editor-provider-override").count()).isZero();
             assertThat(page.locator("#editor-gemini-credentials-ref").count()).isZero();
-            assertThat(page.locator("#editor-gemini-credentials-json-ref").count()).isEqualTo(1);
+            assertThat(page.locator("#editor-gemini-credentials-json-variable").count()).isEqualTo(1);
             page.locator("#editor-credential-id").fill("provider.browser.key");
             String sentinel = "browser-secret-" + UUID.randomUUID();
             page.locator("#editor-credential-value").fill(sentinel);
             page.locator("#editor-credential-replace").click();
-            waitText(page, "editor-credential-status", "provider.browser.key (configured)");
+            waitText(page, "editor-credential-status", "provider.browser.key");
             assertThat(page.locator("#editor-credential-value").inputValue()).isEmpty();
             assertThat(page.content()).doesNotContain(sentinel);
-            page.locator("#editor-api-key-ref").fill("provider.browser.key");
+            page.locator("#editor-api-key-variable").fill("provider.browser.key");
             page.locator("#editor-provider-model").fill("fixture-model");
             page.onceDialog(dialog -> dialog.accept());
             page.locator("#editor-generate-execution").click();
-            assertThat(page.locator("#editor-execution").inputValue()).contains("provider.browser.key", "fixture-model");
+            assertThat(page.locator("#editor-execution").inputValue()).contains("api-key: { $var:", "provider.browser.key", "fixture-model");
             waitText(page, "editor-save", "Saved draft revision");
             page.reload();
             waitText(page, "editor-message", "Saved draft and published configuration loaded.");

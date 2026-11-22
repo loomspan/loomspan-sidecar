@@ -1,94 +1,111 @@
 package ai.loomspan.sidecar.configuration;
 
-import ai.loomspan.sidecar.storage.ConfigurationSnapshot;
+import ai.loomspan.sidecar.storage.ConfigurationValidationIssue;
 import ai.loomspan.sidecar.storage.EncryptedCredential;
 import ai.loomspan.sidecar.storage.ManagedConfiguration;
+import org.snakeyaml.engine.v2.api.LoadSettings;
+import org.snakeyaml.engine.v2.api.lowlevel.Compose;
+import org.snakeyaml.engine.v2.nodes.MappingNode;
+import org.snakeyaml.engine.v2.nodes.Node;
+import org.snakeyaml.engine.v2.nodes.ScalarNode;
+import org.snakeyaml.engine.v2.nodes.SequenceNode;
+import org.snakeyaml.engine.v2.nodes.Tag;
+import org.snakeyaml.engine.v2.schema.CoreSchema;
+import tools.jackson.core.json.JsonWriteFeature;
+import tools.jackson.databind.json.JsonMapper;
+
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import tools.jackson.core.StreamReadFeature;
-import tools.jackson.dataformat.yaml.YAMLMapper;
+import java.util.Set;
 
-/** Builds one reference-only framework candidate from complete database content. */
+/** Reads authored markers after Framework validation. Framework owns substitution and binding. */
 public final class EffectiveExecutionConfiguration {
-    private static final YAMLMapper YAML = YAMLMapper.builder()
-            .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
-            .enable(tools.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build();
-    private static final YAMLMapper CREDENTIAL_SCAN = YAMLMapper.builder().build();
-    private static final java.util.Set<String> DIRECT_CREDENTIAL_FIELDS = java.util.Set.of(
-            "api-key", "headers", "credentials-json", "credentials-uri", "credentials-ref");
+    private static final String EXECUTION_SOURCE = "<configuration>";
+    private static final LoadSettings YAML = LoadSettings.builder().setSchema(new CoreSchema())
+            .setAllowNonScalarKeys(true).setMaxAliasesForCollections(Integer.MAX_VALUE)
+            .setCodePointLimit(Integer.MAX_VALUE).build();
+    private static final JsonMapper PATH_KEYS = JsonMapper.builder()
+            .disable(JsonWriteFeature.WRITE_HEX_UPPER_CASE, JsonWriteFeature.ESCAPE_FORWARD_SLASHES).build();
+
     private final ProviderCredentialCipher cipher;
 
     public EffectiveExecutionConfiguration(ProviderCredentialCipher cipher) {
         this.cipher = cipher;
     }
 
-    /** Secret values are process-local and never serialized. */
-    public static final class Candidate {
-        private final String yaml;
-        private final Map<String, String> values;
-        private final List<EncryptedCredential> retained;
+    record Location(String source, String path) {
+        ConfigurationValidationIssue error(String message) {
+            return new ConfigurationValidationIssue(ConfigurationValidationIssue.Severity.ERROR,
+                    source, null, path, message);
+        }
+    }
 
-        Candidate(String yaml, Map<String, String> values, List<EncryptedCredential> retained) {
-            this.yaml = yaml;
-            this.values = Map.copyOf(values);
-            this.retained = List.copyOf(retained);
+    static final class UnavailableValues extends IllegalArgumentException {
+        private final List<ConfigurationValidationIssue> issues;
+
+        UnavailableValues(List<ConfigurationValidationIssue> issues) {
+            super("Managed variable values are unavailable");
+            this.issues = List.copyOf(issues);
         }
-        public String yaml() { return yaml; }
-        public Map<String, String> values() { return values; }
-        public List<EncryptedCredential> retained() { return retained; }
-        public boolean sameContent(Candidate other) {
-            if (other == null || !yaml.equals(other.yaml) || !values.equals(other.values)) return false;
-            return new java.util.HashSet<>(retained).equals(new java.util.HashSet<>(other.retained));
+
+        List<ConfigurationValidationIssue> issues() { return issues; }
+    }
+
+    /** Preparation state is short lived and must never be serialized. */
+    public record Candidate(String yaml, Map<String, String> values, List<EncryptedCredential> retained) {
+        public Candidate {
+            values = Map.copyOf(values);
+            retained = List.copyOf(retained);
         }
+
         @Override public String toString() { return "Effective execution candidate [redacted]"; }
     }
 
     public Candidate assemble(ManagedConfiguration authored, List<EncryptedCredential> managed) {
-        assertNoDirectAuthoredCredentials(authored.executionConfigurationYaml());
-        Map<String, Object> root = yaml(authored.executionConfigurationYaml());
-        Map<String, Object> loomspan = child(root, "loomspan");
-        rejectAuthoredValues(loomspan);
-        var retained = new ArrayList<EncryptedCredential>();
-        Map<String, String> decrypted = new LinkedHashMap<>();
-        for (EncryptedCredential credential : managed.stream()
-                .sorted(java.util.Comparator.comparing(EncryptedCredential::identifier)).toList()) {
-            if (decrypted.put(credential.identifier(), cipher.decrypt(credential.identifier(),
-                    credential.version(), credential.ciphertext())) != null)
-                throw new IllegalArgumentException("Duplicate credential identifier");
-            retained.add(credential);
+        var references = new LinkedHashMap<String, List<Location>>();
+        scan(authored, references, null);
+        var records = new LinkedHashMap<String, EncryptedCredential>();
+        for (var credential : managed) {
+            if (records.put(credential.identifier(), credential) != null)
+                throw new IllegalArgumentException("Duplicate managed value identifier");
         }
-        if (!decrypted.keySet().containsAll(authored.credentialIdentifiers()))
-            throw new IllegalArgumentException("Required credentials are not configured");
-        Map<String, String> values = new LinkedHashMap<>();
-        Object connections = loomspan.get("connections");
-        if (connections instanceof Map<?, ?> providers) for (Object provider : providers.values()) {
-            if (!(provider instanceof Map<?, ?> fields)) continue;
-            reference(fields.get("api-key-ref"), decrypted, values);
-            if (fields.get("header-refs") instanceof Map<?, ?> headers)
-                headers.values().forEach(ref -> reference(ref, decrypted, values));
-            if (fields.get("gemini") instanceof Map<?, ?> options)
-                reference(options.get("credentials-json-ref"), decrypted, values);
-        }
-        boolean attached = false;
-        if (!retained.isEmpty() && loomspan.get("executor-config") instanceof Map<?, ?> namespaces
-                && namespaces.get("default") instanceof Map<?, ?> executors
-                && executors.get("http") instanceof Map<?, ?> http) {
-            var selected = new LinkedHashMap<String, Object>();
-            http.forEach((key, value) -> selected.put((String) key, value));
-            var executorCopy = new LinkedHashMap<Object, Object>(executors);
-            executorCopy.put("http", ai.loomspan.sidecar.http.HttpExecutorConfiguration.withCredentials(selected, retained));
-            var namespaceCopy = new LinkedHashMap<Object, Object>(namespaces);
-            namespaceCopy.put("default", executorCopy);
-            loomspan.put("executor-config", namespaceCopy);
-            attached = true;
-        }
-        return new Candidate(attached ? YAML.writeValueAsString(root) : authored.executionConfigurationYaml(), values, retained);
+        var issues = new ArrayList<ConfigurationValidationIssue>();
+        var values = new LinkedHashMap<String, String>();
+        references.forEach((name, locations) -> {
+            var record = records.get(name);
+            String value = record == null ? null : cipher.decrypt(name, record.version(), record.ciphertext());
+            if (value == null || EncryptedCredential.blank(value)) {
+                String message = (value == null ? "missing-value" : "blank-value") + " for variable " + name;
+                locations.forEach(location -> issues.add(location.error(message)));
+            } else {
+                values.put(name, value);
+            }
+        });
+        if (!issues.isEmpty()) throw new UnavailableValues(issues);
+        return new Candidate(authored.executionConfigurationYaml(), values, managed);
     }
 
-    private static void reference(Object ref, Map<String, String> records, Map<String, String> values) {
-        if (ref instanceof String id && records.containsKey(id)) values.put(id, records.get(id));
+    /** Accept only the fixed Framework diagnostic with key origins from these documents. */
+    static List<ConfigurationValidationIssue> collision(ManagedConfiguration authored, String diagnostic) {
+        String prefix = "Failed to prepare skill generation: key-collision at [";
+        if (diagnostic == null || !diagnostic.startsWith(prefix) || !diagnostic.endsWith("]")) return List.of();
+        String pair = diagnostic.substring(prefix.length(), diagnostic.length() - 1);
+        var origins = new LinkedHashSet<Location>();
+        scan(authored, new LinkedHashMap<>(), origins);
+        var known = new LinkedHashMap<String, Location>();
+        origins.forEach(location -> known.put(location.toString(), location));
+        for (var origin : known.entrySet()) {
+            String first = origin.getKey() + ", ";
+            if (pair.startsWith(first)) {
+                Location second = known.get(pair.substring(first.length()));
+                if (second != null) return List.of(origin.getValue().error("key-collision"),
+                        second.error("key-collision"));
+            }
+        }
+        return List.of();
     }
 
     public void authenticate(List<EncryptedCredential> credentials) {
@@ -96,91 +113,67 @@ public final class EffectiveExecutionConfiguration {
             cipher.decrypt(credential.identifier(), credential.version(), credential.ciphertext());
     }
 
-    /** Require readable, reference-only YAML before storage; the framework validates its semantics. */
-    public static void assertNoDirectAuthoredCredentials(String yaml) {
-        boolean direct = false;
-        // Scan every document and duplicate mapping before ordinary draft validation.
-        // A tree parse can discard a secret behind a duplicate key or fail after it.
-        try (var parser = CREDENTIAL_SCAN.createParser(yaml)) {
-            while (parser.nextToken() != null) {
-                if (parser.currentToken() != tools.jackson.core.JsonToken.PROPERTY_NAME) continue;
-                var path = new ArrayList<String>();
-                for (var context = parser.streamReadContext(); context != null; context = context.getParent())
-                    if (context.currentName() != null) path.addFirst(context.currentName());
-                // Exempt named aliases and referenced header names, while rejecting literal
-                // credential fields even elsewhere in an invalid draft.
-                boolean alias = path.size() == 3 && path.get(0).equals("loomspan")
-                        && java.util.Set.of("connections", "models").contains(path.get(1));
-                boolean headerName = path.size() == 5 && path.get(0).equals("loomspan")
-                        && path.get(1).equals("connections") && path.get(3).equals("header-refs");
-                boolean httpTarget = path.size() >= 6 && path.get(0).equals("loomspan")
-                        && path.get(1).equals("executor-config") && path.get(2).equals("default")
-                        && path.get(3).equals("http") && path.get(4).equals("targets");
-                boolean httpHeaders = httpTarget && path.size() == 7 && path.get(6).equals("headers");
-                boolean httpTargetAlias = httpTarget && path.size() == 6;
-                boolean httpHeaderName = httpTarget && ((path.size() == 8 && path.get(6).equals("headers"))
-                        || (path.size() == 9 && path.get(6).equals("auth") && path.get(7).equals("header-refs")));
-                boolean httpInventory = path.equals(List.of("loomspan", "executor-config", "default", "http", "credentials"));
-                if (httpInventory || (DIRECT_CREDENTIAL_FIELDS.contains(parser.currentName())
-                        && !alias && !headerName && !httpTargetAlias && !httpHeaders && !httpHeaderName)) {
-                    direct = true;
-                    break;
-                }
+    private static void scan(ManagedConfiguration authored, Map<String, List<Location>> references,
+            Set<Location> keyOrigins) {
+        var yaml = new Compose(YAML);
+        Node execution = yaml.composeString(authored.executionConfigurationYaml()).orElse(null);
+        Node loomspan = field(execution, "loomspan");
+        for (String section : List.of("connections", "executor-config")) {
+            if (!(field(loomspan, section) instanceof MappingNode items)) continue;
+            for (int i = 0; i < items.getValue().size(); i++) {
+                var item = items.getValue().get(i);
+                walk(item.getValueNode(), EXECUTION_SOURCE, valuePath("loomspan." + section, item.getKeyNode(), i),
+                        references, keyOrigins);
             }
-        } catch (RuntimeException invalidDraft) {
-            // Once parsing fails, later fields cannot be classified safely (including
-            // quoted or escaped YAML keys). Never persist content we could not inspect.
-            throw new IllegalArgumentException("Execution configuration YAML must be syntactically valid before saving");
         }
-        if (direct) throw new IllegalArgumentException("Authored credentials must use managed references");
-    }
-
-    public Candidate restore(ConfigurationSnapshot snapshot, List<EncryptedCredential> retained) {
-        Candidate candidate = assemble(snapshot.configuration(), retained);
-        // Mapping order is not configuration content; immutable map iteration may
-        // differ across JVMs when generated credential fields are serialized.
-        if (!yaml(candidate.yaml()).equals(yaml(snapshot.effectiveExecutionYaml())))
-            throw new IllegalArgumentException("Stored effective configuration is inconsistent");
-        return candidate;
-    }
-
-    private static void rejectAuthoredValues(Map<String, Object> loomspan) {
-        Object connections = loomspan.get("connections");
-        if (!(connections instanceof Map<?, ?> map)) return;
-        for (Object value : map.values()) {
-            if (!(value instanceof Map<?, ?> fields)) continue;
-            if (fields.containsKey("api-key") || fields.containsKey("headers"))
-                throw new IllegalArgumentException("Authored provider credentials must use references");
-            Object gemini = fields.get("gemini");
-            if (gemini instanceof Map<?, ?> options
-                    && (options.containsKey("credentials-json") || options.containsKey("credentials-uri")
-                        || options.containsKey("credentials-ref")))
-                throw new IllegalArgumentException("Authored provider credentials must use references");
-            // Vertex otherwise uses the SDK's application-default credentials from
-            // deployment files/environment, outside this database publication.
-            if (gemini instanceof Map<?, ?> options && !options.containsKey("credentials-json-ref"))
-                throw new IllegalArgumentException("Database Gemini configuration requires credentials-json-ref");
+        for (var document : authored.skillDocuments()) {
+            Node root = yaml.composeString(document.yaml()).orElse(null);
+            if (field(root, "executor") != null && field(root, "config") instanceof MappingNode config)
+                walk(config, document.sourceName(), "config", references, keyOrigins);
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> yaml(String text) {
-        try {
-            Object parsed = YAML.readValue(text, Object.class);
-            if (!(parsed instanceof Map<?, ?> map)) throw new IllegalArgumentException();
-            Map<String, Object> root = new LinkedHashMap<>((Map<String, Object>) map);
-            root.put("loomspan", new LinkedHashMap<>(child(root, "loomspan")));
-            return root;
-        } catch (RuntimeException failure) {
-            throw new IllegalArgumentException("Invalid execution configuration YAML");
+    private static void walk(Node node, String source, String path, Map<String, List<Location>> references,
+            Set<Location> keyOrigins) {
+        // The authored validator has already checked names, cycles and expanded document size.
+        if (node instanceof MappingNode map) {
+            var entries = map.getValue();
+            if (entries.size() == 1 && "$var".equals(string(entries.getFirst().getKeyNode()))) {
+                String name = string(entries.getFirst().getValueNode());
+                references.computeIfAbsent(name, ignored -> new ArrayList<>()).add(new Location(source, path));
+                return;
+            }
+            for (int i = 0; i < entries.size(); i++) {
+                var entry = entries.get(i);
+                Node key = entry.getKeyNode();
+                String keyPath = path + "{key#" + i + "}";
+                String nextPath = valuePath(path, key, i);
+                if (keyOrigins != null) keyOrigins.add(new Location(source, string(key) == null ? keyPath : nextPath));
+                walk(key, source, keyPath, references, keyOrigins);
+                walk(entry.getValueNode(), source, nextPath, references, keyOrigins);
+            }
+        } else if (node instanceof SequenceNode sequence) {
+            for (int i = 0; i < sequence.getValue().size(); i++)
+                walk(sequence.getValue().get(i), source, path + "[" + i + "]", references, keyOrigins);
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> child(Map<String, Object> parent, String key) {
-        Object value = parent.get(key);
-        if (!(value instanceof Map<?, ?> map)) throw new IllegalArgumentException("Execution configuration requires loomspan mapping");
-        return (Map<String, Object>) map;
+    private static Node field(Node node, String name) {
+        if (node instanceof MappingNode map) {
+            for (var entry : map.getValue())
+                if (name.equals(string(entry.getKeyNode()))) return entry.getValueNode();
+        }
+        return null;
     }
 
+    private static String string(Node node) {
+        return node instanceof ScalarNode scalar && Tag.STR.equals(scalar.getTag()) ? scalar.getValue() : null;
+    }
+
+    private static String valuePath(String path, Node key, int index) {
+        String name = string(key);
+        if (name == null) return path + "{value#" + index + "}";
+        if (name.matches("[A-Za-z_][A-Za-z0-9_-]*")) return path + "." + name;
+        return path + "[" + PATH_KEYS.writeValueAsString(name) + "]";
+    }
 }

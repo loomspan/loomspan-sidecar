@@ -3,6 +3,7 @@ package ai.loomspan.sidecar.configuration;
 import ai.loomspan.api.PreparedSkillUpdate;
 import ai.loomspan.api.ExecutionConfiguration;
 import ai.loomspan.api.SkillReloader;
+import ai.loomspan.api.SkillReloadException;
 import ai.loomspan.api.SkillValidationIssue;
 import ai.loomspan.sidecar.execution.ExecutionCoordinator;
 import ai.loomspan.sidecar.management.ManagementEditingState;
@@ -18,10 +19,12 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.concurrent.locks.ReentrantLock;
 
 /** Serializes durable selection with framework publication; the database pointer is restart authority. */
@@ -102,8 +105,10 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
             String phase = "skill preparation";
             try {
                 hooks.beforeStartupActivation();
-                prepared = prepare(selected.configuration().skillDocuments(),
-                        effective.restore(selected, store.credentialVersions(selected)));
+                List<ConfigurationValidationIssue> issues = authoredIssues(selected.configuration());
+                if (hasErrors(issues)) throw new InvalidAuthored(issues);
+                prepared = prepare(selected.configuration(),
+                        effective.assemble(selected.configuration(), store.credentialVersions(selected)));
                 generation = prepared.generationId();
                 generations.stage(generation, selected.localId());
                 phase = "framework publication";
@@ -117,18 +122,19 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                 executions.openAfterActivation();
             } catch (RuntimeException failure) {
                 if (published == null && generation != null) generations.discard(generation);
-                ConfigurationValidationIssue issue = switch (phase) {
-                    case "skill preparation" -> skillValidationIssue(failure, selected.configuration());
-                    default -> null;
-                };
-                String location = issue == null ? "" : " at " + issue.sourceLabel()
-                        + (issue.location() == null ? "" : " [" + issue.location() + "]");
-                LOG.error("Selected configuration {} failed during {}{}", selected.localId(), phase, location);
+                String locations = "skill preparation".equals(phase)
+                        ? preparationIssues(failure, selected.configuration()).stream().map(issue -> issue.sourceLabel()
+                                + (issue.location() == null ? "" : " [" + issue.location() + "]")
+                                + (failure instanceof EffectiveExecutionConfiguration.UnavailableValues
+                                        ? ": " + issue.message() : ""))
+                                .collect(java.util.stream.Collectors.joining(", ", " at ", ""))
+                        : "";
+                LOG.error("Selected configuration {} failed during {}{}", selected.localId(), phase, locations);
                 if (failure instanceof ProviderCredentialCipher.Failure keyFailure)
                     throw new IllegalStateException("Selected configuration " + selected.localId()
                             + " cannot be restored: " + keyFailure.getMessage());
                 throw new IllegalStateException("Selected configuration activation or bookkeeping failed for "
-                        + selected.localId() + " during " + phase + location
+                        + selected.localId() + " during " + phase + locations
                         + "; inspect the database selection and restore a consistent backup if needed");
             } finally {
                 if (published == null && prepared != null) prepared.close();
@@ -139,7 +145,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     }
 
     public ConfigurationValidationResult validate(ManagedConfiguration configuration) {
-        return validateWithCandidate(configuration, List.of()).result();
+        return validateWithCandidate(configuration, List::of).result();
     }
 
     public ConfigurationMode mode() { return mode; }
@@ -171,10 +177,6 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
             inspection.put("skills", catalog.skills().stream().map(skill -> java.util.Map.of(
                     "name", skill.name(), "kind", skill.kind().name())).toList());
             var binder = org.springframework.boot.context.properties.bind.Binder.get(environment);
-            var connectionValues = binder.bind("loomspan.connections",
-                    org.springframework.boot.context.properties.bind.Bindable.mapOf(String.class, Object.class))
-                    .orElse(java.util.Map.of());
-            inspection.put("connections", redactFileSettings(connectionValues));
             inspection.put("models", binder.bind("loomspan.models",
                     org.springframework.boot.context.properties.bind.Bindable.mapOf(String.class, Object.class))
                     .orElse(java.util.Map.of()));
@@ -196,74 +198,64 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
         return mode == ConfigurationMode.FILE ? fileStarts.history() : List.of();
     }
 
-    private static Object redactFileSettings(Object value) {
-        if (!(value instanceof java.util.Map<?, ?> fields)) return value;
-        var safe = new java.util.LinkedHashMap<String, Object>();
-        fields.forEach((key, entry) -> {
-            String name = key.toString();
-            String normalized = name.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9]", "");
-            safe.put(name, java.util.Set.of("apikey", "headers", "credentialsjson", "credentialsuri",
-                    "credentialsref", "credentialsjsonref", "apikeyref", "headerrefs").contains(normalized)
-                    ? "Configured (value hidden)" : redactFileSettings(entry));
-        });
-        return safe;
-    }
+    public record ValidationAttempt(ConfigurationValidationResult result, ValidationProof candidate) {}
 
-    public record ValidationAttempt(ConfigurationValidationResult result,
-            EffectiveExecutionConfiguration.Candidate candidate) {}
+    /** The validation proof retains authored content and encrypted identities only. */
+    public record ValidationProof(ManagedConfiguration configuration, List<EncryptedCredential> credentials) {
+        public ValidationProof {
+            credentials = List.copyOf(credentials);
+        }
 
-    public ValidationAttempt validateWithCandidate(ManagedConfiguration configuration,
-            List<EncryptedCredential> credentials) {
-        return validateWithCandidate(configuration, credentials, null);
+        @Override public String toString() { return "Configuration validation proof [redacted]"; }
     }
 
     public ValidationAttempt validateWithCandidate(ManagedConfiguration configuration,
-            List<EncryptedCredential> credentials, UUID sourceId) {
-        return validateWithCandidate(configuration, credentials, sourceId, false);
-    }
-
-    public ValidationAttempt validateWithCandidate(ManagedConfiguration configuration,
-            List<EncryptedCredential> credentials, UUID sourceId, boolean retainedSource) {
+            Supplier<List<EncryptedCredential>> credentials) {
         requireDatabase();
-        EffectiveExecutionConfiguration.Candidate candidate;
-        try { candidate = candidateFor(configuration, credentials, sourceId, retainedSource); }
-        catch (RuntimeException failure) {
-            return new ValidationAttempt(new ConfigurationValidationResult(false,
-                    List.of(new ConfigurationValidationIssue(ConfigurationValidationIssue.Severity.ERROR,
-                            "execution-configuration.yaml", null, null,
-                            failure instanceof ProviderCredentialCipher.Failure keyFailure
-                                    ? keyFailure.getMessage()
-                                    : "Credential preparation failed; check the draft credentials and encryption key"))), null);
-        }
-        ai.loomspan.api.SkillValidationResult checked;
+        var issues = new ArrayList<>(authoredIssues(configuration));
+        if (hasErrors(issues)) return new ValidationAttempt(new ConfigurationValidationResult(false, issues), null);
         try {
-            checked = reloader.validate("default", configuration.skillDocuments(), new ExecutionConfiguration(candidate.yaml()));
-        } catch (RuntimeException failure) {
-            return new ValidationAttempt(new ConfigurationValidationResult(false, List.of(new ConfigurationValidationIssue(
-                    ConfigurationValidationIssue.Severity.ERROR, "execution-configuration.yaml",
-                    null, null, "Execution configuration validation failed"))), null);
-        }
-        var issues = new java.util.ArrayList<ConfigurationValidationIssue>();
-        checked.issues().forEach(issue -> issues.add(new ConfigurationValidationIssue(
-                issue.severity() == SkillValidationIssue.Severity.WARNING
-                        ? ConfigurationValidationIssue.Severity.WARNING : ConfigurationValidationIssue.Severity.ERROR,
-                issue.sourceName(), issue.skillName(), issue.fieldPath(), issue.message())));
-        if (!checked.valid()) return new ValidationAttempt(new ConfigurationValidationResult(false, issues), null);
-        try {
-            try (PreparedSkillUpdate ignored = prepare(configuration.skillDocuments(), candidate)) {
-                // Resolve external references and verify provider construction without activation.
+            var candidate = effective.assemble(configuration, credentials.get());
+            try (PreparedSkillUpdate ignored = prepare(configuration, candidate)) {
+                return new ValidationAttempt(new ConfigurationValidationResult(true, issues),
+                        new ValidationProof(configuration, candidate.retained()));
             }
         } catch (RuntimeException failure) {
-            issues.add(skillValidationIssue(failure, configuration));
+            issues.addAll(preparationIssues(failure, configuration));
         }
-        var result = new ConfigurationValidationResult(issues.stream().noneMatch(issue ->
-                issue.severity() == ConfigurationValidationIssue.Severity.ERROR), issues);
-        return new ValidationAttempt(result, result.successful() ? candidate : null);
+        return new ValidationAttempt(new ConfigurationValidationResult(false, issues), null);
+    }
+
+    private List<ConfigurationValidationIssue> authoredIssues(ManagedConfiguration configuration) {
+        try {
+            return reloader.validate("default", configuration.skillDocuments(),
+                    new ExecutionConfiguration(configuration.executionConfigurationYaml())).issues().stream()
+                    .map(issue -> new ConfigurationValidationIssue(
+                            issue.severity() == SkillValidationIssue.Severity.WARNING
+                                    ? ConfigurationValidationIssue.Severity.WARNING
+                                    : ConfigurationValidationIssue.Severity.ERROR,
+                            issue.sourceName(), issue.skillName(), issue.fieldPath(), issue.message()))
+                    .toList();
+        } catch (RuntimeException failure) {
+            return List.of(error("execution-configuration.yaml", "Execution configuration validation failed"));
+        }
+    }
+
+    private static boolean hasErrors(List<ConfigurationValidationIssue> issues) {
+        return issues.stream().anyMatch(issue -> issue.severity() == ConfigurationValidationIssue.Severity.ERROR);
+    }
+
+    private static final class InvalidAuthored extends IllegalArgumentException {
+        private final List<ConfigurationValidationIssue> issues;
+
+        private InvalidAuthored(List<ConfigurationValidationIssue> issues) {
+            this.issues = issues.stream()
+                    .filter(issue -> issue.severity() == ConfigurationValidationIssue.Severity.ERROR).toList();
+        }
     }
 
     public record PublicationAdmission(long accountId, UUID draftId, long revision,
-            ManagedConfiguration configuration, UUID sourceId, UUID baseId,
-            EffectiveExecutionConfiguration.Candidate validated, boolean retainedSource) {}
+            ManagedConfiguration configuration, UUID sourceId, UUID baseId, ValidationProof validated) {}
 
     /** Admission is re-evaluated after the publication gate is acquired. */
     public ConfigurationSnapshot publish(java.util.function.Supplier<PublicationAdmission> admission) {
@@ -276,9 +268,8 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                 UUID predecessor = published == null ? null : published.localId();
                 if (predecessor == null || !predecessor.equals(candidate.baseId()))
                     throw new IllegalStateException("Draft is based on a stale runtime snapshot");
-                var fresh = candidateFor(candidate.configuration(), drafts.credentialVersions(candidate.accountId()),
-                        candidate.sourceId(), candidate.retainedSource());
-                if (!fresh.sameContent(candidate.validated()))
+                var fresh = new ValidationProof(candidate.configuration(), drafts.credentialVersions(candidate.accountId()));
+                if (!fresh.equals(candidate.validated()))
                     throw new ai.loomspan.sidecar.management.ManagementEditingService.Conflict("validation_required");
                 return publishCandidate(candidate.configuration(), candidate.sourceId(), predecessor, candidate);
             } finally { transition.unlock(); }
@@ -291,7 +282,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
             PreparedSkillUpdate prepared = null;
             try {
                 hooks.beforePreparation();
-                prepared = prepare(configuration.skillDocuments(), admission.validated());
+                prepared = prepare(configuration, effective.assemble(configuration, admission.validated().credentials()));
             } catch (RuntimeException failure) {
                 if (prepared != null) prepared.close();
                 throw new PublicationFailure("preparation_failed", "Configuration preparation failed before activation");
@@ -301,7 +292,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
             try {
                 hooks.beforeCommit();
                 submitted = store.submit(configuration, sourceId, predecessor,
-                        admission.validated().yaml(), admission.validated().retained());
+                        admission.validated().credentials());
             } catch (RuntimeException failure) {
                 generations.discard(generation);
                 prepared.close();
@@ -370,8 +361,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
                     !draftCleared ? "draft_cleanup_failed"
                             : statusRecorded ? "history_pruning_failed" : "outcome_recording_failed", mutationFault);
             return new ConfigurationSnapshot(submitted.localId(), submitted.sourceId(),
-                    submitted.submissionSequence(), submitted.configuration(),
-                    submitted.effectiveExecutionYaml(), SnapshotStatus.PUBLISHED);
+                    submitted.submissionSequence(), submitted.configuration(), SnapshotStatus.PUBLISHED);
     }
 
     public Inspection inspect() {
@@ -435,24 +425,10 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
         }
     }
 
-    private PreparedSkillUpdate prepare(List<ai.loomspan.api.SkillDocument> documents,
+    private PreparedSkillUpdate prepare(ManagedConfiguration configuration,
             EffectiveExecutionConfiguration.Candidate candidate) {
-        return reloader.prepare("default", documents, new ExecutionConfiguration(candidate.yaml()), candidate.values());
-    }
-
-    private EffectiveExecutionConfiguration.Candidate candidateFor(ManagedConfiguration configuration,
-            List<EncryptedCredential> credentials, UUID sourceId, boolean retainedSource) {
-        if (retainedSource && sourceId != null) {
-            ConfigurationSnapshot source = store.findByLocalId(sourceId);
-            if (source != null && source.configuration().equals(configuration)
-                    && sameCredentials(credentials, store.credentialVersions(source)))
-                return effective.restore(source, store.credentialVersions(source));
-        }
-        return effective.assemble(configuration, credentials);
-    }
-
-    private static boolean sameCredentials(List<EncryptedCredential> left, List<EncryptedCredential> right) {
-        return new java.util.HashSet<>(left).equals(new java.util.HashSet<>(right));
+        return reloader.prepare("default", configuration.skillDocuments(),
+                new ExecutionConfiguration(candidate.yaml()), candidate.values());
     }
 
     public List<EncryptedCredential> retainedCredentials(ConfigurationSnapshot snapshot) {
@@ -460,8 +436,8 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
     }
 
     public ConfigurationValidationResult validateRetained(ConfigurationSnapshot snapshot) {
-        return validateWithCandidate(snapshot.configuration(), store.credentialVersions(snapshot),
-                snapshot.localId(), true).result();
+        return withEditingState(false, current -> validateWithCandidate(snapshot.configuration(),
+                () -> store.credentialVersions(current)).result());
     }
 
     private void pruneAfterAttempt() {
@@ -503,21 +479,21 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
         if (mutationFault != null) throw new IllegalStateException("Configuration mutations are stopped: " + mutationFault);
     }
 
-    private ConfigurationValidationIssue skillValidationIssue(RuntimeException failure, ManagedConfiguration configuration) {
-        Throwable cause = failure;
-        while (cause != null) {
-            String message = cause.getMessage();
-            if (message != null && message.endsWith(" references a missing or blank external property")) {
-                String path = message.substring(0, message.indexOf(" references"));
-                if (path.matches("[A-Za-z0-9_.\\[\\]-]+"))
-                    return new ConfigurationValidationIssue(ConfigurationValidationIssue.Severity.ERROR,
-                            "execution-configuration.yaml", null, path,
-                            "External property reference is missing or blank");
-            }
-            cause = cause.getCause();
+    private static List<ConfigurationValidationIssue> preparationIssues(RuntimeException failure,
+            ManagedConfiguration configuration) {
+        if (failure instanceof InvalidAuthored invalid) return invalid.issues;
+        if (failure instanceof EffectiveExecutionConfiguration.UnavailableValues unavailable) return unavailable.issues();
+        if (failure instanceof ProviderCredentialCipher.Failure keyFailure)
+            return List.of(error("execution-configuration.yaml", keyFailure.getMessage()));
+        if (failure instanceof SkillReloadException) {
+            var collision = EffectiveExecutionConfiguration.collision(configuration, failure.getMessage());
+            if (!collision.isEmpty()) return collision;
         }
-        return new ConfigurationValidationIssue(ConfigurationValidationIssue.Severity.ERROR,
-                "candidate", null, null, "Skill preparation failed");
+        return List.of(error("candidate", "Skill preparation failed"));
+    }
+
+    private static ConfigurationValidationIssue error(String source, String message) {
+        return new ConfigurationValidationIssue(ConfigurationValidationIssue.Severity.ERROR, source, null, null, message);
     }
 
     @Override @jakarta.annotation.PreDestroy public void close() {

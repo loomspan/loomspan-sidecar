@@ -24,7 +24,7 @@ Commands are `current`, `history`, `draft`, `lease-status`, `acquire`, `handoff`
 Sample save body for an isolated record lookup (use actual IDs and revision from
 fresh reads, replace the example target with your application's endpoint, and
 retain all other content needed in your complete candidate). If replacing a
-model-backed draft, remove now-unused credential identifiers with
+model-backed draft, optionally remove retained values with
 `remove-credential` before validation; replacing YAML does not delete them:
 
 ```json
@@ -39,7 +39,7 @@ model-backed draft, remove now-unused credential identifiers with
 }
 ```
 
-The `validate` and `publish` bodies contain only the first five fields. `replace-credential` sends those five fields plus `identifier` and write-only `value`; `remove-credential` sends them plus `identifier`. Both increment draft revision and invalidate validation. Save and reconcile replace the **whole** candidate, including execution YAML; neither merges changes. Import load also uses exactly those five fields. The submitted base for reconcile must be the current published base after reviewing both configurations. Validation proof is tied to the saved revision, base, lease generation, effective provider candidate and credential versions; after a handoff or credential replacement, validate again before publication. Use the same client to read current, read your private draft, save, validate, publish, and read current again to verify the selected snapshot.
+The `validate` and `publish` bodies contain only the first five fields. `replace-credential` sends those five fields plus `identifier` and write-only `value`; `remove-credential` sends them plus `identifier`. Both increment draft revision and invalidate validation. Save and reconcile replace the **whole** candidate, including execution YAML; neither merges changes. Import load also uses exactly those five fields. The submitted base for reconcile must be the current published base after reviewing both configurations. Validation proof is tied to the saved revision, base, lease generation, authored candidate and encrypted value versions; after a handoff or credential replacement, validate again before publication. Use the same client to read current, read your private draft, save, validate, publish, and read current again to verify the selected snapshot.
 
 An Edit token can save and validate, then the same user signs into the console, reads the saved draft, explicitly takes control, revalidates and publishes. A Publish token can run `handoff`, `validate`, and `publish` directly. The server enforces both paths; labels and IDs alone never grant authority.
 

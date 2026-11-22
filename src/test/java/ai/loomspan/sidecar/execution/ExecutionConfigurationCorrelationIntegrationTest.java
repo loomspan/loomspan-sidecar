@@ -128,7 +128,7 @@ class ExecutionConfigurationCorrelationIntegrationTest {
                     fixture:
                       driver: openai
                       base-url: http://127.0.0.1:%d/v1
-                      api-key-ref: fixture.model.key
+                      api-key: { $var: fixture.model.key }
                   models:
                     fixture-model:
                       connection: fixture
@@ -154,7 +154,7 @@ class ExecutionConfigurationCorrelationIntegrationTest {
                                 fixture:
                                   driver: openai
                                   base-url: http://127.0.0.1:%d/v1
-                                  api-key-ref: fixture.model.key
+                                  api-key: { $var: fixture.model.key }
                               models:
                                 fixture-model:
                                   connection: fixture

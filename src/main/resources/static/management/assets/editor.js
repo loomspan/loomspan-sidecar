@@ -5,7 +5,6 @@
   const $ = id => document.getElementById(id);
   const state = { session: null, runtimeId: null, draft: null, grant: null, ownership: null,
     docs: [], execution: '', credentialIdentifiers: [],
-    configuredCredentialIdentifiers: [],
     dirty: false, busy: false, failed: false, valid: false, fault: false,
     editing: false, timer: null, lastActivity: 0, localVersion: 0 };
   const message = (text, error = false) => { $('editor-message').textContent = text; $('editor-message').classList.toggle('error', error); };
@@ -38,7 +37,7 @@
     for (const node of root.querySelectorAll('#editor-fields select')) node.disabled = !editable;
     $('editor-generate-execution').disabled = !editable;
     $('editor-credential-status').textContent = state.credentialIdentifiers.length
-      ? `Identifiers: ${state.credentialIdentifiers.map(id => `${id} (${state.configuredCredentialIdentifiers.includes(id) ? 'configured' : 'required'})`).join(', ')}. Values are never shown.`
+      ? `Identifiers: ${state.credentialIdentifiers.join(', ')}. Supplied values are write-only.`
       : 'No Console credentials are configured in this draft.';
     $('editor-credential-replace').disabled = !editable || state.dirty || !state.draft;
     $('editor-credential-remove').disabled = !editable || state.dirty || !state.draft;
@@ -87,7 +86,6 @@
     state.draft = draft;
     state.valid = !!draft?.validation?.successful && !draft?.stale;
     state.credentialIdentifiers = draft?.configuration.credentialIdentifiers || [];
-    state.configuredCredentialIdentifiers = draft?.configuredCredentialIdentifiers || [];
     $('editor-saved-preview').hidden = !draft;
     $('editor-saved-content').textContent = draft ?
       `Revision ${draft.revision}${draft.stale ? ' (stale)' : ''}\n`
@@ -162,7 +160,6 @@
         state.docs = current.published.configuration.skillDocuments.map(d => ({ ...d }));
         state.execution = current.published.configuration.executionConfigurationYaml;
         state.credentialIdentifiers = current.published.configuration.credentialIdentifiers || [];
-        state.configuredCredentialIdentifiers = state.credentialIdentifiers;
         draw();
       }
       $('editor-outcome').textContent = `Published configuration: ${current.published.localId}. ${draft ? `Your saved draft: revision ${draft.revision}${draft.stale ? ' (stale)' : ''}.` : 'No saved draft.'}`;
@@ -213,7 +210,7 @@
   $('editor-execution').addEventListener('input', event => { state.execution = event.target.value; changed(); });
   $('editor-credential-replace').addEventListener('click', async () => {
     if (!state.grant || !state.editing || state.dirty || state.busy) return;
-    const identifier = $('editor-credential-id').value.trim();
+    const identifier = $('editor-credential-id').value;
     const valueField = $('editor-credential-value');
     const value = valueField.value;
     if (!identifier || !value) { message('Enter a credential identifier and new value.', true); return; }
@@ -222,7 +219,6 @@
       const draft = await api('/editing/draft/credentials', 'PUT', { ...candidate(), identifier, value });
       setDraft(draft, false);
       state.credentialIdentifiers = draft.configuration.credentialIdentifiers || [];
-      state.configuredCredentialIdentifiers = draft.configuredCredentialIdentifiers || [];
       message(`Credential ${identifier} saved to the draft. Validate again before publishing.`);
     } catch (error) {
       if (error.status === 409) await poll();
@@ -231,9 +227,9 @@
   });
   $('editor-credential-remove').addEventListener('click', async () => {
     if (!state.grant || !state.editing || state.dirty || state.busy) return;
-    const identifier = $('editor-credential-id').value.trim();
+    const identifier = $('editor-credential-id').value;
     if (!state.credentialIdentifiers.includes(identifier)) {
-      message('Select a configured or required identifier to remove.', true); return;
+      message('Enter a configured variable name to remove.', true); return;
     }
     if (!confirm(`Remove credential ${identifier} from this draft?`)) return;
     state.busy = true; render();
@@ -241,7 +237,6 @@
       const draft = await api('/editing/draft/credentials', 'DELETE', { ...candidate(), identifier });
       setDraft(draft, false);
       state.credentialIdentifiers = draft.configuration.credentialIdentifiers || [];
-      state.configuredCredentialIdentifiers = draft.configuredCredentialIdentifiers || [];
       message(`Credential ${identifier} removed from the draft. Validate again before publishing.`);
     } catch (error) {
       if (error.status === 409) await poll();
@@ -253,21 +248,22 @@
     if (state.execution.trim() && !confirm('Replace the visible execution YAML with YAML generated from these fields?')) return;
     const value = id => $(id).value.trim();
     const scalar = text => JSON.stringify(text);
+    const marker = name => '{ $var: ' + scalar(name) + ' }';
     const connection = value('editor-connection-name') || 'primary';
     const model = value('editor-model-alias') || 'default';
     const lines = ['loomspan:', '  executor-config: {default: {http: {}}}', '  connections:', `    ${scalar(connection)}:`,
       `      driver: ${scalar(value('editor-driver'))}`];
     if (value('editor-base-url')) lines.push(`      base-url: ${scalar(value('editor-base-url'))}`);
-    if (value('editor-api-key-ref')) lines.push(`      api-key-ref: ${scalar(value('editor-api-key-ref'))}`);
-    const headers = value('editor-header-refs').split('\n').map(line => line.trim()).filter(Boolean);
+    if ($('editor-api-key-variable').value) lines.push(`      api-key: ${marker($('editor-api-key-variable').value)}`);
+    const headers = $('editor-header-variables').value.split('\n').filter(line => line.trim());
     if (headers.length) {
-      lines.push('      header-refs:');
+      lines.push('      headers:');
       for (const header of headers) {
         const split = header.indexOf('=');
         if (split <= 0 || !header.slice(split + 1).trim()) {
           message('Header references must use Header=identifier, one per line.', true); return;
         }
-        lines.push(`        ${scalar(header.slice(0, split).trim())}: ${scalar(header.slice(split + 1).trim())}`);
+        lines.push(`        ${scalar(header.slice(0, split).trim())}: ${marker(header.slice(split + 1))}`);
       }
     }
     const openai = [['compatibility-profile', 'editor-openai-profile'],
@@ -277,11 +273,13 @@
       lines.push('      openai:');
       openai.forEach(([key, id]) => lines.push(`        ${key}: ${scalar(value(id))}`));
     }
-    const gemini = [['project-id', 'editor-gemini-project'], ['location', 'editor-gemini-location'],
-      ['credentials-json-ref', 'editor-gemini-credentials-json-ref']].filter(([, id]) => value(id));
-    if (gemini.length || $('editor-gemini-vertex').checked) {
+    const gemini = [['project-id', 'editor-gemini-project'], ['location', 'editor-gemini-location']]
+      .filter(([, id]) => value(id));
+    const geminiCredential = $('editor-gemini-credentials-json-variable').value;
+    if (gemini.length || geminiCredential || $('editor-gemini-vertex').checked) {
       lines.push('      gemini:');
       if ($('editor-gemini-vertex').checked) lines.push('        vertex-ai: true');
+      if (geminiCredential) lines.push('        credentials-json: ' + marker(geminiCredential));
       gemini.forEach(([key, id]) => lines.push(`        ${key}: ${scalar(value(id))}`));
     }
     const retry = [['max-attempts', 'editor-retry-attempts'], ['initial-backoff', 'editor-retry-initial'],

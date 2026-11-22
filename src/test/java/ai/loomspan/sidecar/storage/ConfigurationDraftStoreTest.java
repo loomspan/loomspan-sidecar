@@ -80,62 +80,31 @@ class ConfigurationDraftStoreTest {
                 .isInstanceOf(IllegalStateException.class);
     }
 
-    @Test void importedCredentialRequirementsRemainVisibleUntilDestinationProvisionsThem() {
-        Path db = directory.resolve("import-requirements.db");
+    @Test void valueInventorySurvivesDocumentChangesAndImportMergesByExactName() {
+        Path db = directory.resolve("import.db");
         var data = StorageConfiguration.dataSource(db);
         StorageConfiguration.migrate(data);
         var jdbc = new JdbcTemplate(data);
         long account = new ManagementAccountRepository(jdbc).insert("destination@example.test", "editor", 1);
         var store = new ConfigurationDraftStore(jdbc, new TransactionTemplate(new DataSourceTransactionManager(data)));
         var base = new ConfigurationSnapshot(UUID.randomUUID(), null, 1,
-                new ManagedConfiguration(List.of(),
-                        ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), SnapshotStatus.PUBLISHED);
-        var draft = store.createIfAbsent(account, base);
-        var imported = new ManagedConfiguration(List.of(),
-                "loomspan:\n  executor-config: {default: {http: {}}}\n  connections:\n    primary:\n      driver: openai\n      api-key-ref: destination.key\n", List.of("destination.key"));
-        var loaded = store.replace(account, draft.draftId(), draft.revision(), base.localId(),
+                new ManagedConfiguration(List.of(), ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION),
+                SnapshotStatus.PUBLISHED);
+        var cipher = new ProviderCredentialCipher(Base64.getEncoder().encodeToString(new byte[32]));
+        var kept = new EncryptedCredential("region/Name", "v1", cipher.encrypt("region/Name", "v1", "west"));
+        var added = new EncryptedCredential("region/name", "v1", cipher.encrypt("region/name", "v1", "east"));
+        var loaded = store.createIfAbsent(account, base);
+        loaded = store.replaceCredential(account, loaded.draftId(), loaded.revision(), base.localId(), kept);
+        var imported = new ManagedConfiguration(List.of(), "loomspan: {}\\n", List.of("unconfigured"));
+        loaded = store.replace(account, loaded.draftId(), loaded.revision(), base.localId(),
                 base.localId(), imported, UUID.randomUUID());
-        assertThat(loaded.retainedSource()).isFalse();
-        assertThat(loaded.configuration().credentialIdentifiers()).containsExactly("destination.key");
-        assertThat(store.credentialVersions(account)).isEmpty();
-        var removed = store.removeCredential(account, loaded.draftId(), loaded.revision(), base.localId(), "destination.key");
-        assertThat(removed.configuration().credentialIdentifiers()).isEmpty();
-        assertThat(removed.revision()).isEqualTo(loaded.revision() + 1);
-        assertThatThrownBy(() -> store.removeCredential(account, removed.draftId(), removed.revision(),
-                base.localId(), "destination.key")).isInstanceOf(IllegalArgumentException.class);
-        assertThat(store.read(account).revision()).isEqualTo(removed.revision());
-        loaded = removed;
-        String version = UUID.randomUUID().toString();
-        String ciphertext = new ProviderCredentialCipher(Base64.getEncoder().encodeToString(new byte[32]))
-                .encrypt("destination.key", version, "destination-value");
-        var provisioned = store.replaceCredential(account, loaded.draftId(), loaded.revision(), base.localId(),
-                new EncryptedCredential("destination.key", version, ciphertext));
-        assertThat(provisioned.configuration().credentialIdentifiers()).containsExactly("destination.key");
-        assertThat(store.credentialVersions(account)).hasSize(1);
-    }
-
-    @Test void onlyExplicitRollbackRetainsEffectiveSourceAcrossRestart() {
-        Path db = directory.resolve("retained-source.db");
-        var data = StorageConfiguration.dataSource(db);
-        StorageConfiguration.migrate(data);
-        var jdbc = new JdbcTemplate(data);
-        long account = new ManagementAccountRepository(jdbc).insert("rollback@example.test", "editor", 1);
-        var store = new ConfigurationDraftStore(jdbc, new TransactionTemplate(new DataSourceTransactionManager(data)));
-        var base = new ConfigurationSnapshot(UUID.randomUUID(), null, 1,
-                new ManagedConfiguration(List.of(),
-                        ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION), SnapshotStatus.PUBLISHED);
-        var draft = store.createIfAbsent(account, base);
-        var source = UUID.randomUUID();
-        var rollback = store.replace(account, draft.draftId(), draft.revision(), base.localId(),
-                base.localId(), base.configuration(), source, List.of());
-        assertThat(rollback.retainedSource()).isTrue();
-        var reopenedData = StorageConfiguration.dataSource(db);
-        StorageConfiguration.migrate(reopenedData);
-        var reopened = new ConfigurationDraftStore(new JdbcTemplate(reopenedData),
-                new TransactionTemplate(new DataSourceTransactionManager(reopenedData)));
-        assertThat(reopened.read(account).retainedSource()).isTrue();
-        var saved = reopened.replace(account, rollback.draftId(), rollback.revision(), base.localId(),
-                base.localId(), base.configuration(), source);
-        assertThat(saved.retainedSource()).isFalse();
+        assertThat(loaded.configuration().credentialIdentifiers()).containsExactly("region/Name");
+        loaded = store.replace(account, loaded.draftId(), loaded.revision(), base.localId(),
+                base.localId(), imported, UUID.randomUUID(), List.of(added), false);
+        assertThat(loaded.configuration().credentialIdentifiers()).containsExactly("region/Name", "region/name");
+        var rolledBack = store.replace(account, loaded.draftId(), loaded.revision(), base.localId(),
+                base.localId(), base.configuration(), UUID.randomUUID(), List.of(kept), true);
+        assertThat(rolledBack.configuration().credentialIdentifiers()).containsExactly("region/Name");
+        assertThat(store.credentialVersions(account)).containsExactly(kept);
     }
 }

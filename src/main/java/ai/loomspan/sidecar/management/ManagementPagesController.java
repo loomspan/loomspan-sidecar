@@ -238,7 +238,7 @@ public class ManagementPagesController
                         + "<label><input id='current-export-credentials' type='checkbox'> Include encrypted credentials (requires Edit)</label>"
                         + "<button id='current-export' class='btn-primary' type='button'>Download current configuration</button>",
                 "<section data-console='current'><p id='current-status' class='notice' role='status' aria-live='polite'>Loading runtime snapshot…</p>"
-                        + "<p class='notice warning'>Bundles exclude credentials by default. Include encrypted credentials only for a destination using the same encryption key. Keep credential-bearing bundles secure. Authored YAML may contain sensitive values.</p>"
+                        + "<p class='notice warning'>Configuration-only bundles include authored literals and variable markers. Include separately encrypted values only for a destination using the same encryption key.</p>"
                         + "<div id='current-content' class='stack-lg'></div></section>");
     }
 
@@ -253,7 +253,7 @@ public class ManagementPagesController
                         + "<p id='rollback-status' class='notice' role='status' aria-live='polite' tabindex='-1'>Select a retained snapshot to review.</p>"
                         + "<div id='rollback-summary' hidden><h4>Rollback review</h4><dl id='rollback-details' class='facts'></dl>"
                         + "<h4>Destination validation</h4><ul id='rollback-issues' class='issues'></ul>"
-                        + "<p class='notice warning'>Loading replaces only your saved draft. Review, validate, then publish it from the editor. The retained source status does not establish destination validity.</p>"
+                        + "<p class='notice warning'>Loading selects the historical documents and the currently published values in your saved draft. Review, validate, then publish it from the editor. The retained source status does not establish destination validity.</p>"
                         + "<button id='rollback-confirm' type='button' disabled>Load into my draft</button></div></section>";
         return console("Configuration history", "Retained submissions, oldest first. Select one to inspect its exact content.", user, request,
                 "<button id='history-refresh' type='button'>Refresh retained history</button>",
@@ -307,8 +307,8 @@ public class ManagementPagesController
                         + "<button id='editor-add' type='button'>Add skill document</button></div><div id='editor-skills' class='stack'></div></div>"
                          + "<section class='card stack'><h2 class='section-title'>Database configuration</h2>"
                          + "<p class='hint'>All execution settings and encrypted credentials belong to this database draft. Save, validate, then publish.</p>"
-                         + "<div id='editor-credential-controls' class='stack'><h3>Managed provider credentials</h3>"
-                         + "<p class='hint'>Use a credential identifier in an api-key-ref, header-refs or Gemini credential reference. Saved values cannot be read back.</p>"
+                         + "<div id='editor-credential-controls' class='stack'><h3>Managed variables</h3>"
+                         + "<p class='hint'>Use a whole-node reference such as { $var: provider.primary.key } to look up a separately supplied value. Authorized YAML reads and configuration exports show literals and the authored reference markers. Separately supplied values are encrypted and write-only.</p>"
                          + "<p id='editor-credential-status' class='hint'></p>"
                          + "<label class='field'>Identifier<input id='editor-credential-id' autocomplete='off' spellcheck='false'></label>"
                          + "<label class='field'>New value<input id='editor-credential-value' type='password' autocomplete='new-password'></label>"
@@ -320,21 +320,21 @@ public class ManagementPagesController
                          + "<label class='field'>Connection name<input id='editor-connection-name' value='primary'></label>"
                          + "<label class='field'>Driver<select id='editor-driver'><option value='openai'>OpenAI</option><option value='anthropic'>Anthropic</option><option value='gemini'>Gemini</option><option value='ollama'>Ollama</option></select></label>"
                          + "<label class='field'>Base URL<input id='editor-base-url' placeholder='https://provider.example/v1'></label>"
-                         + "<label class='field'>API key reference<input id='editor-api-key-ref' placeholder='provider.primary.key'></label>"
+                         + "<label class='field'>API key variable name<input id='editor-api-key-variable' placeholder='provider.primary.key'></label>"
                          + "<label class='field'>Model alias<input id='editor-model-alias' value='default'></label>"
                          + "<label class='field'>Provider model<input id='editor-provider-model' placeholder='model-name'></label>"
                          + "<label class='field'>Thinking levels, comma separated<input id='editor-thinking-levels'></label>"
                          + "<label class='field'>Session maximum depth<input id='editor-max-depth' type='number' min='1' value='8'></label>"
                          + "<label class='field'>Trace persistence<select id='editor-trace'><option value='ONERROR'>On error</option><option value='ALWAYS'>Always</option><option value='NEVER'>Never</option></select></label>"
                          + "</div><details><summary>Additional execution fields</summary><div class='editor-config-grid'>"
-                         + "<label class='field'>Header references (Header=identifier, one per line)<textarea id='editor-header-refs'></textarea></label>"
+                         + "<label class='field'>Header variables (Header=name, one per line)<textarea id='editor-header-variables'></textarea></label>"
                          + "<label class='field'>OpenAI compatibility profile<input id='editor-openai-profile'></label>"
                          + "<label class='field'>OpenAI organization ID<input id='editor-openai-org'></label>"
                          + "<label class='field'>OpenAI project ID<input id='editor-openai-project'></label>"
                          + "<label class='field'>Gemini Vertex AI<input id='editor-gemini-vertex' type='checkbox'></label>"
                          + "<label class='field'>Gemini project ID<input id='editor-gemini-project'></label>"
                          + "<label class='field'>Gemini location<input id='editor-gemini-location'></label>"
-                         + "<label class='field'>Gemini credentials JSON reference<input id='editor-gemini-credentials-json-ref'></label>"
+                         + "<label class='field'>Gemini credentials JSON variable name<input id='editor-gemini-credentials-json-variable'></label>"
                          + "<label class='field'>Provider retry enabled<input id='editor-retry-enabled' type='checkbox'></label>"
                          + "<label class='field'>Provider retry maximum attempts<input id='editor-retry-attempts' type='number' min='1' max='10'></label>"
                          + "<label class='field'>Provider retry initial backoff<input id='editor-retry-initial' placeholder='200ms'></label>"
@@ -352,7 +352,7 @@ public class ManagementPagesController
                          + "</div></details><button id='editor-generate-execution' type='button'>Generate execution YAML from fields</button></section>"
                          + "<div class='editor-document'><label for='editor-execution' class='section-title'>Framework execution settings YAML</label>"
                          + "<p class='hint'>Publishable connections, model aliases, executor configuration, session limits, and execution trace policy. "
-                         + "Use credential references. Process settings still require a restart. HTTP settings are checked only on invocation; validation and readiness do not establish HTTP validity or reachability.</p>"
+                         + "Use literals or whole-node variable references. Process settings still require a restart. The HTTP executor checks its settings on invocation.</p>"
                          + "<textarea id='editor-execution' class='code' spellcheck='false'></textarea></div></div>"
                         + "<div class='editor-bar'><div class='editor-bar-state'>"
                         + "<span class='editor-bar-item'><span class='editor-bar-label'>Draft</span><span id='editor-save' class='badge' role='status' aria-live='polite'>Not editing</span>"

@@ -56,6 +56,31 @@ class ConfigurationBundleV4Test {
         } finally { Files.deleteIfExists(empty); }
     }
 
+    @Test void authoredVariableMappingKeysSurviveArchiveRoundTrip() throws Exception {
+        var skill = new SkillDocument("key.yaml", """
+                name: fixture
+                executor: http
+                config:
+                  ? { $var: region/name }
+                  : example
+                """);
+        String execution = """
+                loomspan:
+                  executor-config:
+                    default:
+                      http:
+                        ? { $var: target/name }
+                        : { api-key: test-literal }
+                """;
+        var configuration = new ManagedConfiguration(List.of(skill), execution);
+        Path archive = ConfigurationBundleV4.write(snapshot(configuration));
+        try {
+            assertThat(ConfigurationBundleV4.read(archive).configuration()).isEqualTo(configuration);
+        } finally {
+            Files.delete(archive);
+        }
+    }
+
     @Test void generatedArchivePathsUseAsciiDigitsAcrossLocales() throws Exception {
         java.util.Locale original = java.util.Locale.getDefault();
         try {

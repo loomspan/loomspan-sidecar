@@ -38,6 +38,11 @@
 
   <dependencies>
     <dependency>
+      <groupId>org.snakeyaml</groupId>
+      <artifactId>snakeyaml-engine</artifactId>
+      <version>3.0.1</version>
+    </dependency>
+    <dependency>
       <groupId>ai.loomspan</groupId>
       <artifactId>loomspan-spring-boot-starter</artifactId>
       <version>${loomspan.version}</version>

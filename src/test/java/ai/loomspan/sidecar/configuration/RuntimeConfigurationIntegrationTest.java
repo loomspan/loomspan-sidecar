@@ -5,6 +5,7 @@ import ai.loomspan.api.SkillReloader;
 import ai.loomspan.sidecar.LoomspanSidecarApplication;
 import ai.loomspan.sidecar.execution.ExecutionCoordinator;
 import ai.loomspan.sidecar.execution.ExecutionUnavailableException;
+import ai.loomspan.sidecar.storage.EncryptedCredential;
 import ai.loomspan.sidecar.storage.ConfigurationDraft;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshot;
 import ai.loomspan.sidecar.storage.ConfigurationSnapshotRepository;
@@ -58,7 +59,7 @@ class RuntimeConfigurationIntegrationTest {
                     primary:
                       driver: openai
                       base-url: http://127.0.0.1:9/v1
-                      api-key-ref: provider.primary.key
+                      api-key: { $var: provider.primary.key }
                   models:
                     editor:
                       connection: primary
@@ -108,22 +109,22 @@ class RuntimeConfigurationIntegrationTest {
             var base = runtime.publishedSnapshot();
             var candidate = new ManagedConfiguration(List.of(),
                     "loomspan:\n  executor-config: {default: {http: {}}}\n  session:\n    max-depth: 9\n");
-            var validated = runtime.validateWithCandidate(candidate, List.of());
+            var validated = runtime.validateWithCandidate(candidate, List::of);
             assertThat(validated.result().successful()).isTrue();
             context.getEnvironment().getPropertySources().addFirst(new org.springframework.core.env.MapPropertySource(
                     "changed-file-provider", Map.of("loomspan.connections.primary.base-url", selectedUrl)));
-            assertThat(runtime.validateWithCandidate(candidate, List.of()).candidate().sameContent(validated.candidate())).isTrue();
+            assertThat(runtime.validateWithCandidate(candidate, List::of).candidate()).isEqualTo(validated.candidate());
             assertThat(runtime.publishedSnapshot().localId()).isEqualTo(base.localId());
             assertThat(context.getBean(ConfigurationSnapshotStore.class).current().localId()).isEqualTo(base.localId());
             var draft = new ConfigurationDraft(base);
             draft.replaceContent(candidate);
             assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(runtime, draft).successful()).isTrue();
             var published = context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class).publish(draft);
-            assertThat(published.effectiveExecutionYaml()).doesNotContain(selectedUrl).contains("max-depth: 9");
+            assertThat(published.configuration().executionConfigurationYaml()).doesNotContain(selectedUrl).contains("max-depth: 9");
         }
         try (var restarted = startWithProvider(path)) {
             var restored = restarted.getBean(RuntimeConfigurationService.class).publishedSnapshot();
-            assertThat(restored.effectiveExecutionYaml()).doesNotContain(selectedUrl).contains("max-depth: 9");
+            assertThat(restored.configuration().executionConfigurationYaml()).doesNotContain(selectedUrl).contains("max-depth: 9");
         }
     }
 
@@ -138,13 +139,13 @@ class RuntimeConfigurationIntegrationTest {
                       connections:
                         primary:
                           driver: openai
-                          api-key-ref: provider.missing.key
+                          api-key: { $var: provider.missing.key }
                     """, List.of());
             var reference = service.validate(missing);
             assertThat(reference.successful()).isFalse();
             assertThat(reference.issues()).anySatisfy(issue -> {
-                assertThat(issue.sourceLabel()).isEqualTo("execution-configuration.yaml");
-                assertThat(issue.location()).contains("api-key-ref");
+                assertThat(issue.sourceLabel()).isEqualTo("<configuration>");
+                assertThat(issue.location()).contains("api-key");
                 assertThat(issue.message()).doesNotContain("fixture-only-secret");
             });
             var processSetting = service.validate(new ManagedConfiguration(List.of(),
@@ -153,6 +154,80 @@ class RuntimeConfigurationIntegrationTest {
             assertThat(service.publishedSnapshot().localId()).isEqualTo(before.localId());
             assertThat(context.getBean(ConfigurationSnapshotStore.class).current().localId())
                     .isEqualTo(before.localId());
+        }
+    }
+
+    @Test
+    void geminiServiceAccountJsonPreparesAsAnAuthoredLiteralOrManagedValue() throws Exception {
+        var keys = java.security.KeyPairGenerator.getInstance("RSA");
+        keys.initialize(2048);
+        String pem = "-----BEGIN PRIVATE KEY-----\n"
+                + java.util.Base64.getMimeEncoder(64, new byte[] {'\n'})
+                        .encodeToString(keys.generateKeyPair().getPrivate().getEncoded())
+                + "\n-----END PRIVATE KEY-----\n";
+        String json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(Map.of(
+                "type", "service_account", "project_id", "fixture-project", "private_key_id", "test",
+                "private_key", pem, "client_email", "test@fixture-project.iam.gserviceaccount.com",
+                "client_id", "123456789", "token_uri", "http://127.0.0.1:9/token"));
+        String yaml = """
+                loomspan:
+                  executor-config: { default: { http: {} } }
+                  connections:
+                    vertex:
+                      driver: gemini
+                      gemini:
+                        vertex-ai: true
+                        project-id: fixture-project
+                        location: us-central1
+                        credentials-json: %s
+                """;
+        try (var context = startWithProvider(directory.resolve("gemini-credentials.db"))) {
+            var runtime = context.getBean(RuntimeConfigurationService.class);
+            var literal = runtime.validate(new ManagedConfiguration(List.of(), yaml.formatted("'" + json + "'")));
+            assertThat(literal.successful()).as(literal.toString()).isTrue();
+            var managed = runtime.validateWithCandidate(
+                    new ManagedConfiguration(List.of(), yaml.formatted("{ $var: vertex.json }")),
+                    () -> ai.loomspan.sidecar.support.SidecarApplicationFixture.encrypt(Map.of("vertex.json", json)));
+            assertThat(managed.result().successful()).as(managed.result().toString()).isTrue();
+        }
+    }
+
+    @Test
+    void malformedNamesAndStructuralErrorsPrecedeManagedValueLookup() {
+        try (var context = start(directory.resolve("structural-first.db"))) {
+            var runtime = context.getBean(RuntimeConfigurationService.class);
+            var calls = new java.util.concurrent.atomic.AtomicInteger();
+            java.util.function.Supplier<List<EncryptedCredential>> values = () -> {
+                calls.incrementAndGet();
+                return List.of();
+            };
+            for (var entry : Map.of("42", "name-must-be-string", "''", "blank-name", "' padded '", "padded-name").entrySet()) {
+                var authored = new ManagedConfiguration(List.of(new SkillDocument("invalid-marker.yaml", """
+                        name: malformed
+                        description: Marker validation fixture
+                        executor: http
+                        config:
+                          path: { $var: %s }
+                        """.formatted(entry.getKey()))), httpExecution());
+                var result = runtime.validateWithCandidate(authored, values).result();
+                assertThat(result.successful()).isFalse();
+                assertThat(result.issues()).anySatisfy(issue -> {
+                    assertThat(issue.sourceLabel()).isEqualTo("invalid-marker.yaml");
+                    assertThat(issue.message()).contains(entry.getValue(), "config.path");
+                });
+            }
+            var broken = new ManagedConfiguration(List.of(new SkillDocument("invalid-structure.yaml", """
+                    name: malformed
+                    executor: missingExecutor
+                    config: { path: { $var: missing } }
+                    """)), httpExecution());
+            var result = runtime.validateWithCandidate(broken, values).result();
+            assertThat(result.successful()).isFalse();
+            assertThat(result.issues()).anySatisfy(issue -> {
+                assertThat(issue.sourceLabel()).isEqualTo("invalid-structure.yaml");
+                assertThat(issue.message()).doesNotContain("missing-value");
+            });
+            assertThat(calls).hasValue(0);
         }
     }
 
@@ -254,7 +329,7 @@ class RuntimeConfigurationIntegrationTest {
             draft.replaceContent(new ManagedConfiguration(List.of(new SkillDocument("bad.yaml", "name: [")), httpExecution()));
             var malformed = ai.loomspan.sidecar.support.TestDrafts.validate(service, draft);
             assertThat(malformed.successful()).isFalse();
-            assertThat(malformed.issues()).singleElement().satisfies(issue -> {
+            assertThat(malformed.issues()).isNotEmpty().allSatisfy(issue -> {
                 assertThat(issue.sourceLabel()).isEqualTo("bad.yaml");
                 assertThat(issue.severity()).isEqualTo(ConfigurationValidationIssue.Severity.ERROR);
             });

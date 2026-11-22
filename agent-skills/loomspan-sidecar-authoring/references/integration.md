@@ -22,7 +22,7 @@ loomspan:
     primary:
       driver: openai
       base-url: https://model.example.test/v1
-      api-key-ref: provider.primary.key
+      api-key: { $var: provider.primary.key }
   models:
     primary:
       connection: primary
@@ -30,7 +30,7 @@ loomspan:
 ```
 
 Save `provider.primary.key` through the write-only draft credential control or API;
-never put the resolved credential in authored YAML. Publish complete
+this keeps the key out of ordinary reads and configuration-only exports. Publish complete
 [execution settings](execution-configuration.md) with skills. The
 [management API](management-api.md) owns draft, validation and publication checks.
 

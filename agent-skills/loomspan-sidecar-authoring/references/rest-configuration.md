@@ -59,6 +59,11 @@ the host's Spring properties at startup. For example, set `orders.update-path`
 to `/orders/{id}` and `app.region` to `west`. Set `orders.authorization`
 to the complete value the service expects, including its scheme and prefix.
 Another installation can use the same documents with different property values.
+In database mode, supply the same names through the managed variable controls in
+the draft. Publish the authored settings, skill, and values together. Fixed headers
+and the route also accept literals. The authored YAML appears in authorized reads
+and configuration-only exports. Separately supplied values are write-only.
+
 At invocation, `pathParams` fills `{id}` from the skill input.
 
 The settings map accepts `targets`. A target accepts exactly the fields shown

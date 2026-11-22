@@ -15,7 +15,7 @@ class CredentialEnvironmentIntegrationTest {
     @Test void productionKeyEnvironmentRestoresOrFailsWithoutChangingCiphertext() throws Exception {
         var database = directory.resolve("retained.db");
         SidecarApplicationFixture.seedDatabase(database, List.of(),
-                "loomspan:\n  executor-config: {default: {http: {}}}\n  connections:\n    fixture:\n      driver: openai\n      base-url: http://127.0.0.1:9/v1\n      api-key-ref: fixture.key\n",
+                "loomspan:\n  executor-config: {default: {http: {}}}\n  connections:\n    fixture:\n      driver: openai\n      base-url: http://127.0.0.1:9/v1\n      api-key: { $var: fixture.key }\n",
                 Map.of("fixture.key", "retained-test-secret"));
         var jdbc = new JdbcTemplate(StorageConfiguration.dataSource(database));
         var before = jdbc.queryForList("SELECT * FROM configuration_snapshot_credential");

@@ -51,18 +51,19 @@ matching connection reference in your Framework checkout at
 `agent-skills/loomspan-docs/references/skill-authoring/model-selection-and-connections.md`
 for driver-specific settings. For real model access, choose a connection and a model your
 account can use. Model aliases referenced by skills belong in the same complete
-configuration. Database mode uses write-only credential controls and an external
-encryption key. See [execution configuration](../agent-skills/loomspan-sidecar-authoring/references/execution-configuration.md).
+configuration. In database mode, the write-only variable controls encrypt
+separately supplied values with an external key. See
+[execution configuration](../agent-skills/loomspan-sidecar-authoring/references/execution-configuration.md).
 
-## TypeSafe executor in file mode
+## TypeSafe executor
 
 The Sidecar JAR includes the Decisions extension. Activate the `typesafe` Spring
-profile for a file-mode deployment that uses it, for example with
-`SPRING_PROFILES_ACTIVE=typesafe`. Include the `loomspan.executor-config.default.typesafe`
-map in the mounted execution configuration alongside the existing `http` map.
-The executor reads resolved `base_url` and `api_key` values from configuration.
-Keep live credentials in protected deployment configuration. The two-host replay
-uses a local fixture endpoint and a dummy key.
+profile when you use it, for example with `SPRING_PROFILES_ACTIVE=typesafe`.
+Include the `loomspan.executor-config.default.typesafe` map alongside the
+`http` map in your mounted file or managed execution YAML. The executor
+reads resolved `base_url` and `api_key` values. For a whole-node `$var`
+reference, supply the value through the host in file mode or the installation's
+encrypted variable inventory in database mode.
 
 Declare leaves with `executor: typesafe`, a native `config.request` and optional
 JSON Pointer `config.bindings`. Successful calls return the full provider envelope.

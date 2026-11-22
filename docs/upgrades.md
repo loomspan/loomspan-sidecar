@@ -37,7 +37,7 @@ dependency; the local development snapshot is not a release artifact.
 ## Configuration and recovery
 
 Use complete file startup configuration or the selected database publication.
-Retained-history rollback loads complete content into a draft for validation and
+Retained-history rollback loads historical documents and current installation values into a draft for validation and
 new publication; it does not restore accounts or change runtime binaries.
 Configuration bundles use format 4 and transfer authored skill/execution content,
 with optional authenticated encrypted credentials. See

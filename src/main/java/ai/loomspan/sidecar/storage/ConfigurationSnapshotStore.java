@@ -10,7 +10,7 @@ import java.util.UUID;
 /** Transaction boundary for durable intended selection and snapshot history. */
 public final class ConfigurationSnapshotStore
 {
-    public static final String EMPTY_EXECUTION_CONFIGURATION = "loomspan: {executor-config: {default: {http: {}}}}\n";
+    public static final String EMPTY_EXECUTION_CONFIGURATION = "loomspan: {executor-config: {default: {http: {}, typesafe: {}}}}\n";
 
     private final ConfigurationSnapshotRepository repository;
     private final TransactionTemplate transactions;
@@ -74,12 +74,11 @@ public final class ConfigurationSnapshotStore
     /** Commit a complete pending candidate as intended production, guarded by the caller's expected selection. */
     public ConfigurationSnapshot submit(ManagedConfiguration configuration, UUID sourceId, UUID expectedCurrentLocalId)
     {
-        return submit(configuration, sourceId, expectedCurrentLocalId,
-                configuration.executionConfigurationYaml(), List.of());
+        return submit(configuration, sourceId, expectedCurrentLocalId, List.of());
     }
 
     public ConfigurationSnapshot submit(ManagedConfiguration configuration, UUID sourceId,
-            UUID expectedCurrentLocalId, String effectiveYaml, List<EncryptedCredential> credentials)
+            UUID expectedCurrentLocalId, List<EncryptedCredential> credentials)
     {
         Objects.requireNonNull(expectedCurrentLocalId, "expectedCurrentLocalId");
         return Objects.requireNonNull(transactions.execute(ignored -> {
@@ -88,7 +87,7 @@ public final class ConfigurationSnapshotStore
             {
                 throw new IllegalStateException("Current configuration snapshot changed unexpectedly");
             }
-            ConfigurationSnapshot candidate = repository.insert(configuration, sourceId, effectiveYaml, credentials);
+            ConfigurationSnapshot candidate = repository.insert(configuration, sourceId, credentials);
             repository.switchCurrent(current.submissionSequence(), candidate.submissionSequence());
             return candidate;
         }));

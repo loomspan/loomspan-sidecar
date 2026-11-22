@@ -117,8 +117,6 @@ public final class ManagementEditingController {
         if (body.skillDocuments() == null
                 || body.executionConfigurationYaml() == null)
             throw new IllegalArgumentException("Complete configuration required");
-        ai.loomspan.sidecar.configuration.EffectiveExecutionConfiguration
-                .assertNoDirectAuthoredCredentials(body.executionConfigurationYaml());
         return new ManagedConfiguration(body.skillDocuments(),
                 body.executionConfigurationYaml(), List.of());
     }

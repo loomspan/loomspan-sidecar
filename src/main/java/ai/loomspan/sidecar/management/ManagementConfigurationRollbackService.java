@@ -32,7 +32,7 @@ public final class ManagementConfigurationRollbackService {
         runtime.requireDatabase();
         var source = runtime.history(sourceId);
         if (source == null) throw new SourceMissing();
-        return editing.loadRetained(session, user, editingSessionId, generation, draftId, revision, baseId,
-                source.configuration(), source.localId(), runtime.retainedCredentials(source));
+        return editing.loadRollback(session, user, editingSessionId, generation, draftId, revision, baseId,
+                source.configuration(), source.localId());
     }
 }

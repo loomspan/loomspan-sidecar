@@ -3,6 +3,7 @@ package ai.loomspan.sidecar.configuration;
 import ai.loomspan.api.*;
 import ai.loomspan.sidecar.LoomspanSidecarApplication;
 import ai.loomspan.sidecar.storage.*;
+import ai.loomspan.sidecar.management.ManagementEditingService;
 import ai.loomspan.sidecar.support.*;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
@@ -59,47 +60,148 @@ class HttpConfigurationIntegrationTest {
         } finally { server.stop(0); }
     }
 
-    @Test void retainedAdmissionUsesOldTargetAndCredentialWhileNewAndRestartUseReplacement() throws Exception {
-        var seen = new ArrayList<String>();
+    @Test void managedValuesFollowPublicationRollbackAndRestartWhileAdmittedWorkKeepsItsGeneration() throws Exception {
+        var seen = new java.util.concurrent.ConcurrentLinkedQueue<String>();
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange -> {
-            synchronized (seen) { seen.add(exchange.getRequestURI().getPath() + ":" + exchange.getRequestHeaders().getFirst("Authorization")); }
-            byte[] bytes = exchange.getRequestURI().getPath().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            String path = exchange.getRequestURI().getPath();
+            seen.add(path + ":" + exchange.getRequestHeaders().getFirst("Authorization"));
+            byte[] bytes = path.getBytes(java.nio.charset.StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "text/plain");
             exchange.sendResponseHeaders(200, bytes.length);
             try (var output = exchange.getResponseBody()) { output.write(bytes); }
         });
         server.start();
         Path database = directory.resolve("captured.db");
-        String settings = execution(server.getAddress().getPort(), "auth: {mode: fixed, header-refs: {Authorization: service.key}}");
-        UUID replacement;
+        int port = server.getAddress().getPort();
+        String fixed = execution(port, "auth: {mode: fixed}, headers: { Authorization: { $var: service.token } }");
+        String noHeader = execution(port, "auth: {mode: none}");
+        UUID a;
+        UUID rolledBack;
+        String email = "rollback@fixture.test";
         try {
             try (var context = start(database)) {
-                var first = publish(context, skill("{target: app, method: GET, path: /old}"), settings,
-                        SidecarApplicationFixture.encrypt(Map.of("service.key", "old-fixture")));
+                context.getBean(org.springframework.jdbc.core.JdbcTemplate.class).update(
+                        "INSERT INTO management_account(email,role,enabled,password_hash,created_at) VALUES (?,'editor',1,'fixture',?)",
+                        email, System.currentTimeMillis());
+                var editor = editor(context, email);
+                var grant = editor.acquire();
+                var draft = editor.save(grant, "{target: app, method: GET, path: { $var: records.a }}", fixed);
+                draft = editor.value(grant, draft, "records.a", "/records/a");
+                draft = editor.value(grant, draft, "service.token", "v1");
+                a = editor.publish(grant, draft).localId();
+                invoke(context, "/records/a");
+                grant = editor.acquire();
+                draft = editor.save(grant, "{target: app, method: GET, path: { $var: records.b }}", fixed);
+                draft = editor.value(grant, draft, "service.token", "v2");
+                assertThat(editor.validate(grant, draft).validation().issues()).anySatisfy(issue -> {
+                    assertThat(issue.location()).isEqualTo("config.path");
+                    assertThat(issue.message()).contains("missing-value", "records.b");
+                });
+                invoke(context, "/records/a");
+            }
+            try (var context = start(database)) {
+                var editor = editor(context, email);
+                var grant = editor.acquire();
+                invoke(context, "/records/a");
+                var draft = editor.value(grant, grant.draft(), "records.b", "/records/b");
                 var admitted = context.getBean(SkillInvocationHandoff.class).handoff("call", Map.of());
                 try {
-                    replacement = publish(context, skill("{target: app, method: GET, path: /new}"), settings,
-                            SidecarApplicationFixture.encrypt(Map.of("service.key", "new-fixture"))).localId();
-                    var registry = context.getBean(ConfigurationGenerationRegistry.class);
-                    assertThat(registry.snapshotId(admitted.generationId())).isEqualTo(first.localId());
-                    assertThat(admitted.invoke()).isEqualTo("/old");
-                    assertThat(context.getBean(SkillTemplate.class).invoke("call", Map.of())).isEqualTo("/new");
+                    editor.publish(grant, draft);
+                    assertThat(context.getBean(ConfigurationGenerationRegistry.class).snapshotId(admitted.generationId()))
+                            .isEqualTo(a);
+                    invoke(context, "/records/b");
+                    grant = editor.acquire();
+                    rolledBack = editor.publish(grant, editor.rollback(grant, a)).localId();
+                    invoke(context, "/records/a");
+                    assertThat(admitted.invoke()).isEqualTo("/records/a");
                 } finally { admitted.release(); }
-                var runtime = context.getBean(RuntimeConfigurationService.class);
-                runtime.hooks(new RuntimeConfigurationService.Hooks() {
-                    @Override public void beforeFrameworkPublish() { throw new IllegalStateException("injected"); }
+            }
+            try (var context = start(database)) {
+                assertThat(context.getBean(RuntimeConfigurationService.class).publishedSnapshot().localId())
+                        .isEqualTo(rolledBack);
+                invoke(context, "/records/a");
+                var editor = editor(context, email);
+                var grant = editor.acquire();
+                var withoutReference = editor.save(grant, "{target: app, method: GET, path: /records/unreferenced}", noHeader);
+                assertThat(editor.publish(grant, withoutReference).configuration().credentialIdentifiers())
+                        .contains("service.token");
+                invoke(context, "/records/unreferenced");
+                grant = editor.acquire();
+                editor.publish(grant, editor.rollback(grant, a));
+                invoke(context, "/records/a");
+
+                grant = editor.acquire();
+                var removal = editor.save(grant, "{target: app, method: GET, path: /records/removed}", noHeader);
+                removal = editor.editing().removeCredential(editor.session(), editor.user(), grant.editingSessionId(),
+                        grant.generation(), removal.draftId(), removal.revision(), removal.baseSnapshotId(), "service.token");
+                assertThat(editor.publish(grant, removal).configuration().credentialIdentifiers())
+                        .doesNotContain("service.token");
+                grant = editor.acquire();
+                assertThat(editor.rollbackService().review(a).validation().successful()).isFalse();
+                var rollback = editor.rollback(grant, a);
+                var failed = editor.validate(grant, rollback).validation();
+                assertThat(failed.successful()).isFalse();
+                assertThat(failed.issues()).anySatisfy(issue -> {
+                    assertThat(issue.message()).contains("missing-value", "service.token");
+                    assertThat(issue.location()).endsWith("headers.Authorization");
                 });
-                assertThatThrownBy(() -> publish(context, skill("{target: app, method: GET, path: /failed}"), settings,
-                        runtime.retainedCredentials(runtime.publishedSnapshot()))).hasMessageContaining("publication failed");
-                assertThat(context.getBean(SkillTemplate.class).invoke("call", Map.of())).isEqualTo("/new");
+                assertThat(editor.editing().read(editor.session(), editor.user()).draftId()).isEqualTo(rollback.draftId());
+                invoke(context, "/records/removed");
+                editor.publish(grant, editor.value(grant, rollback, "service.token", "v3"));
+                invoke(context, "/records/a");
             }
-            try (var context = start(database, "--loomspan.executor-config.default.http.targets.poison.base-url=invalid")) {
-                assertThat(context.getBean(RuntimeConfigurationService.class).publishedSnapshot().localId()).isEqualTo(replacement);
-                assertThat(context.getBean(SkillTemplate.class).invoke("call", Map.of())).isEqualTo("/new");
-            }
-            assertThat(seen).containsExactly("/old:old-fixture", "/new:new-fixture", "/new:new-fixture", "/new:new-fixture");
+            assertThat(seen).containsExactly("/records/a:v1", "/records/a:v1", "/records/a:v1",
+                    "/records/b:v2", "/records/a:v2", "/records/a:v1", "/records/a:v2",
+                    "/records/unreferenced:null", "/records/a:v2", "/records/removed:null", "/records/a:v3");
         } finally { server.stop(0); }
+    }
+
+    private static void invoke(ConfigurableApplicationContext context, String path) {
+        assertThat(context.getBean(SkillTemplate.class).invoke("call", Map.of())).isEqualTo(path);
+    }
+
+    private record Editor(ai.loomspan.sidecar.management.ManagementEditingService editing,
+            ai.loomspan.sidecar.management.ManagementConfigurationRollbackService rollbackService,
+            org.springframework.mock.web.MockHttpSession session,
+            ai.loomspan.sidecar.management.ManagementUserDetailsService.Principal user) {
+        ManagementEditingService.Grant acquire() {
+            return editing.acquire(session, user, "HTTP lifecycle", false, false);
+        }
+        ManagementEditingService.Draft save(ManagementEditingService.Grant grant, String operation, String yaml) {
+            var draft = grant.draft();
+            return editing.save(session, user, grant.editingSessionId(), grant.generation(), draft.draftId(),
+                    draft.revision(), draft.baseSnapshotId(), new ManagedConfiguration(List.of(skill(operation)), yaml));
+        }
+        ManagementEditingService.Draft value(ManagementEditingService.Grant grant, ManagementEditingService.Draft draft,
+                String name, String value) {
+            return editing.replaceCredential(session, user, grant.editingSessionId(), grant.generation(), draft.draftId(),
+                    draft.revision(), draft.baseSnapshotId(), name, value);
+        }
+        ManagementEditingService.Draft validate(ManagementEditingService.Grant grant, ManagementEditingService.Draft draft) {
+            return editing.validate(session, user, grant.editingSessionId(), grant.generation(), draft.draftId(),
+                    draft.revision(), draft.baseSnapshotId());
+        }
+        ConfigurationSnapshot publish(ManagementEditingService.Grant grant, ManagementEditingService.Draft draft) {
+            var validation = validate(grant, draft).validation();
+            assertThat(validation.successful()).as(validation.toString()).isTrue();
+            return editing.publish(session, user, grant.editingSessionId(), grant.generation(), draft.draftId(),
+                    draft.revision(), draft.baseSnapshotId());
+        }
+        ManagementEditingService.Draft rollback(ManagementEditingService.Grant grant, UUID source) {
+            var draft = grant.draft();
+            return rollbackService.load(session, user, source, grant.editingSessionId(), grant.generation(),
+                    draft.draftId(), draft.revision(), draft.baseSnapshotId());
+        }
+    }
+
+    private Editor editor(ConfigurableApplicationContext context, String email) {
+        var session = new org.springframework.mock.web.MockHttpSession();
+        session.setAttribute("management.activity", System.currentTimeMillis());
+        var user = (ai.loomspan.sidecar.management.ManagementUserDetailsService.Principal)
+                context.getBean(ai.loomspan.sidecar.management.ManagementUserDetailsService.class).loadUserByUsername(email);
+        return new Editor(context.getBean(ManagementEditingService.class),
+                context.getBean(ai.loomspan.sidecar.management.ManagementConfigurationRollbackService.class), session, user);
     }
 
     @Test void fileStartupAcceptsInvalidHttpSettingsWithoutDomainChecks() throws Exception {
@@ -184,15 +286,19 @@ class HttpConfigurationIntegrationTest {
         } finally { server.stop(0); }
     }
 
-    @Test void missingHttpCredentialAndOmittedTargetsDoNotInheritEarlierPublication() {
-        try (var context = start(directory.resolve("omission.db"))) {
-            publish(context, skill("{target: app, method: GET, path: /}"), execution(1,
-                    "auth: {mode: fixed, header-refs: {Authorization: service.key}}"),
-                    SidecarApplicationFixture.encrypt(Map.of("service.key", "omitted-fixture")));
-            publish(context, skill("{target: app, method: GET, path: /}"), execution(1,
-                    "auth: {mode: fixed, header-refs: {Authorization: service.key}}"), List.of());
-            assertThatThrownBy(() -> context.getBean(SkillTemplate.class).invoke("call", Map.of())).hasMessageContaining("credential reference");
+    @Test void missingManagedValuesAndOmittedTargetsDoNotInheritSpringOrEarlierPublication() {
+        try (var context = start(directory.resolve("omission.db"), "--service.key=host-value")) {
+            var operation = skill("{target: app, method: GET, path: /}");
+            String settings = execution(1, "auth: {mode: fixed}, headers: {Authorization: { $var: service.key }}");
+            publish(context, operation, settings,
+                    SidecarApplicationFixture.encrypt(Map.of("service.key", "first-publication-value")));
             var runtime = context.getBean(RuntimeConfigurationService.class);
+            var missing = runtime.validate(new ManagedConfiguration(List.of(operation), settings));
+            assertThat(missing.successful()).isFalse();
+            assertThat(missing.issues()).anySatisfy(issue -> {
+                assertThat(issue.message()).contains("missing-value", "service.key").doesNotContain("host-value");
+                assertThat(issue.location()).endsWith("headers.Authorization");
+            });
             var previous = runtime.publishedSnapshot().localId();
             assertThat(runtime.validate(new ManagedConfiguration(List.of(skill("{target: app, method: GET, path: /}")),
                     "loomspan: {}")).successful()).isFalse();

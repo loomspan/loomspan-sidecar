@@ -149,7 +149,7 @@ class ManagementPersonalTokenHttpIntegrationTest {
         assertThat(response.body()).doesNotContain(secret);
         var saved = mapper.readTree(response.body());
         assertThat(saved.path("revision").asLong()).isEqualTo(grant.path("draft").path("revision").asLong() + 1);
-        assertThat(saved.path("configuredCredentialIdentifiers").get(0).asText()).isEqualTo("provider.remote.key");
+        assertThat(saved.path("configuration").path("credentialIdentifiers").get(0).asText()).isEqualTo("provider.remote.key");
         long account = jdbc.queryForObject("SELECT id FROM management_account WHERE email=?", Long.class, email);
         assertThat(jdbc.queryForObject("SELECT ciphertext FROM management_draft_credential WHERE account_id=?",
                 String.class, account)).doesNotContain(secret);
@@ -160,7 +160,7 @@ class ManagementPersonalTokenHttpIntegrationTest {
         assertThat(bearer(read, "DELETE", path, request).statusCode()).isEqualTo(403);
         var removed = bearer(token, "DELETE", path, request);
         assertThat(removed.statusCode()).as(removed.body()).isEqualTo(200);
-        assertThat(mapper.readTree(removed.body()).path("configuredCredentialIdentifiers").isEmpty()).isTrue();
+        assertThat(mapper.readTree(removed.body()).path("configuration").path("credentialIdentifiers").isEmpty()).isTrue();
         assertThat(bearer(token, "GET", "/api/management/configuration/current", null).body()).isEqualTo(before);
     }
 

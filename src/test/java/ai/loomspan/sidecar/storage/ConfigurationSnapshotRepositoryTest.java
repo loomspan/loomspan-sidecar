@@ -117,9 +117,9 @@ class ConfigurationSnapshotRepositoryTest
         var encrypted = new EncryptedCredential("provider.snapshot.key", version,
                 cipher.encrypt("provider.snapshot.key", version, sentinel));
         var authored = new ManagedConfiguration(List.of(),
-                "loomspan:\n  executor-config: {default: {http: {}}}\n  connections:\n    primary:\n      driver: openai\n      api-key-ref: provider.snapshot.key\n", List.of("provider.snapshot.key"));
+                "loomspan:\n  executor-config: {default: {http: {}}}\n  connections:\n    primary:\n      driver: openai\n      api-key: { $var: provider.snapshot.key }\n", List.of("provider.snapshot.key"));
         var snapshot = fixture.store.submit(authored, null, fixture.store.current().localId(),
-                authored.executionConfigurationYaml(), List.of(encrypted));
+                List.of(encrypted));
         assertThat(fixture.store.credentialVersions(snapshot)).containsExactly(encrypted);
         var jdbc = new JdbcTemplate(fixture.source);
         assertThat(jdbc.queryForObject("SELECT ciphertext FROM configuration_snapshot_credential WHERE snapshot_sequence = ?",

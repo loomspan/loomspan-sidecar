@@ -56,6 +56,6 @@ public final class RuntimePublicationFixture {
                 draft.baseSnapshotId(), draft.freeze().configuration(), sourceId);
         return new RuntimeConfigurationService.PublicationAdmission(account,
                 saved.draftId(), saved.revision(), saved.configuration(), sourceId, saved.baseSnapshotId(),
-                runtime.validateWithCandidate(saved.configuration(), drafts.credentialVersions(account)).candidate(), false);
+                runtime.validateWithCandidate(saved.configuration(), () -> drafts.credentialVersions(account)).candidate());
     }
 }

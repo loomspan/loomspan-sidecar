@@ -42,7 +42,7 @@ public final class ManagementConfigurationImportService {
         var bundle = parse(file);
         if (bundle.includesCredentials() && credentialMode.equals("included")) {
             runtime.authenticateCredentials(bundle.credentials());
-            return editing.loadRetained(session, user, editingSessionId, generation, draftId, revision, baseId,
+            return editing.loadIncluded(session, user, editingSessionId, generation, draftId, revision, baseId,
                     bundle.configuration(), bundle.sourceSnapshotId(), bundle.credentials());
         }
         return editing.load(session, user, editingSessionId, generation, draftId, revision, baseId,

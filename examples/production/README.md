@@ -137,7 +137,7 @@ The default `database` mode requires `LOOMSPAN_SIDECAR_CREDENTIAL_KEY` before sa
 provider credentials: supply the Base64 encoding of 32 random bytes through your
 protected deployment environment. Back up that key separately from SQLite.
 In the Console, save the write-only value for `provider.primary.key`, then author
-`api-key-ref: provider.primary.key` with the driver, base URL, model alias,
+`api-key: { $var: provider.primary.key }` with the driver, base URL, model alias,
 session limits and trace policy. Validate and publish the complete draft.
 Credential replacement and configuration publication need no restart. Same-key
 destinations can import an optional encrypted export; different-key destinations

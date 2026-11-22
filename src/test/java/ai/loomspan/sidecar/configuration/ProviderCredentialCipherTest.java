@@ -9,11 +9,15 @@ import org.junit.jupiter.api.Test;
 class ProviderCredentialCipherTest {
     private static final String KEY = Base64.getEncoder().encodeToString(new byte[32]);
 
-    @Test void rejectsAmbiguousOrUnboundedAuthenticatedMetadata() {
+    @Test void validatesNamesWithoutTheLegacyCharacterOrLengthRestriction() {
         var cipher = new ProviderCredentialCipher(KEY);
-        for (String identifier : java.util.List.of("", "bad\u0000id", "x".repeat(201)))
+        for (String identifier : java.util.List.of("", " padded", "padded ", "\u00a0padded"))
             assertThatThrownBy(() -> cipher.encrypt(identifier, "v1", "fixture-secret"))
                     .isInstanceOf(IllegalArgumentException.class).hasMessageNotContaining("fixture-secret");
+        for (String name : java.util.List.of("region/Name", "two words", "x".repeat(201), "with\u0000separator")) {
+            String ciphertext = cipher.encrypt(name, "v1", "fixture-secret");
+            assertThat(cipher.decrypt(name, "v1", ciphertext)).isEqualTo("fixture-secret");
+        }
         assertThatThrownBy(() -> cipher.encrypt("valid.key", "bad\u0000version", "fixture-secret"))
                 .isInstanceOf(IllegalArgumentException.class);
     }

@@ -26,9 +26,9 @@ class CredentialPortabilityIntegrationTest {
             return new ProviderCredentialCipher(environment.getProperty("fixture.key"));
         }
     }
-    @Test void removedImportedProviderRequiresExplicitIdentifierRemovalBeforePublication() throws Exception {
+    @Test void unreferencedImportedNameDoesNotCreateRequiredInventory() throws Exception {
         var configuration = new ManagedConfiguration(List.of(),
-                "loomspan:\n  executor-config: {default: {http: {}}}\n  connections:\n    primary: {driver: openai, api-key-ref: source.key}\n",
+                "loomspan:\n  executor-config: {default: {http: {}}}\n  connections:\n    primary: {driver: openai, api-key: { $var: source.key }}\n",
                 List.of("source.key"));
         Path zip = ConfigurationBundleV4.write(new ConfigurationSnapshot(UUID.randomUUID(), null, 1,
                 configuration, SnapshotStatus.PUBLISHED));
@@ -40,11 +40,7 @@ class CredentialPortabilityIntegrationTest {
             var loaded = load(destination, operator, grant, archive, "configuration-only");
             var edited = operator.editing.save(operator.session, operator.user, grant.editingSessionId(), grant.generation(),
                     loaded.draftId(), loaded.revision(), loaded.baseSnapshotId(), new ManagedConfiguration(List.of(), "loomspan: {executor-config: {default: {http: {}}}}\n"));
-            assertThat(operator.editing.validate(operator.session, operator.user, grant.editingSessionId(), grant.generation(),
-                    edited.draftId(), edited.revision(), edited.baseSnapshotId()).validation().successful()).isFalse();
-            var removed = operator.editing.removeCredential(operator.session, operator.user, grant.editingSessionId(),
-                    grant.generation(), edited.draftId(), edited.revision(), edited.baseSnapshotId(), "source.key");
-            var published = publish(operator, grant, removed);
+            var published = publish(operator, grant, edited);
             assertThat(published.configuration().credentialIdentifiers()).isEmpty();
             var capture = destination.getBean(RuntimeConfigurationService.class).captureExport(true, () -> {});
             Path exported = ConfigurationBundleV4.write(capture.snapshot(), capture.credentials(), true);
@@ -56,7 +52,7 @@ class CredentialPortabilityIntegrationTest {
     @Test void sameKeyImportsCiphertextAndDifferentKeyRequiresExplicitReplacement() throws Exception {
         try (var provider = new SidecarApplicationFixture()) {
         byte[] archive;
-        String execution = "loomspan:\n  executor-config: {default: {http: {}}}\n  connections:\n    primary:\n      driver: openai\n      base-url: http://127.0.0.1:9/v1\n      api-key-ref: provider.key\n  models:\n    fixture-model: {connection: primary, provider-model: portable-model}\n"
+        String execution = "loomspan:\n  executor-config: {default: {http: {}}}\n  connections:\n    primary:\n      driver: openai\n      base-url: http://127.0.0.1:9/v1\n      api-key: { $var: provider.key }\n  models:\n    fixture-model: {connection: primary, provider-model: portable-model}\n"
                 .replace("127.0.0.1:9", "127.0.0.1:" + provider.modelPort());
         try (var source = start("source", SidecarApplicationFixture.CREDENTIAL_KEY)) {
             var operator = operator(source);
@@ -92,7 +88,7 @@ class CredentialPortabilityIntegrationTest {
             assertThat(operator.editing.read(operator.session, operator.user).revision()).isEqualTo(grant.draft().revision());
             var loaded = load(destination, operator, grant, archive, "included");
             assertThat(destination.getBean(RuntimeConfigurationService.class).inspect().publishedId()).isEqualTo(before);
-            assertThat(loaded.configuredCredentialIdentifiers()).containsExactly("provider.key");
+            assertThat(loaded.configuration().credentialIdentifiers()).containsExactly("provider.key");
             publish(operator, grant, loaded);
             execute(destination, provider, "portable-secret");
         }
@@ -119,7 +115,7 @@ class CredentialPortabilityIntegrationTest {
             assertThat(operator.editing.read(operator.session, operator.user).revision()).isEqualTo(grant.draft().revision());
             assertThat(runtime.inspect().publishedId()).isEqualTo(before);
             var loaded = load(destination, operator, grant, archive, "configuration-only");
-            assertThat(loaded.configuredCredentialIdentifiers()).isEmpty();
+            assertThat(loaded.configuration().credentialIdentifiers()).isEmpty();
             assertThat(operator.editing.validate(operator.session, operator.user, grant.editingSessionId(), grant.generation(),
                     loaded.draftId(), loaded.revision(), loaded.baseSnapshotId()).validation().successful()).isFalse();
             loaded = operator.editing.replaceCredential(operator.session, operator.user, grant.editingSessionId(), grant.generation(),

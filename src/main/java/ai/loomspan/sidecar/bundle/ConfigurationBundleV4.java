@@ -34,9 +34,12 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.json.JsonMapper;
-import tools.jackson.dataformat.yaml.YAMLMapper;
+import org.snakeyaml.engine.v2.api.LoadSettings;
+import org.snakeyaml.engine.v2.api.lowlevel.Compose;
+import org.snakeyaml.engine.v2.nodes.MappingNode;
+import org.snakeyaml.engine.v2.schema.CoreSchema;
 
-/** Portable format 4 ZIP. Optional authenticated ciphertext; never plaintext credentials or encryption keys. */
+/** Portable format 4 ZIP with authored YAML and optional authenticated ciphertext. */
 public final class ConfigurationBundleV4 {
     public static final long MAX_ZIP_BYTES = 100L * 1_048_576;
     public static final long MAX_EXPANDED_BYTES = 512L * 1_048_576;
@@ -44,9 +47,9 @@ public final class ConfigurationBundleV4 {
     private static final ObjectMapper JSON = JsonMapper.builder()
             .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build();
-    private static final YAMLMapper YAML = YAMLMapper.builder()
-            .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
-            .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build();
+    private static final LoadSettings YAML = LoadSettings.builder().setSchema(new CoreSchema())
+            .setAllowNonScalarKeys(true).setMaxAliasesForCollections(Integer.MAX_VALUE)
+            .setCodePointLimit((int) MAX_EXPANDED_BYTES).build();
 
     public record Bundle(UUID sourceSnapshotId, String sidecarVersion, String frameworkVersion,
             ManagedConfiguration configuration, List<ai.loomspan.sidecar.storage.EncryptedCredential> credentials,
@@ -211,8 +214,6 @@ public final class ConfigurationBundleV4 {
                         fields(executionNode, Set.of("executionConfigurationYaml",
                                 "credentialIdentifiers"));
                         execution = text(executionNode, "executionConfigurationYaml");
-                        ai.loomspan.sidecar.configuration.EffectiveExecutionConfiguration
-                                .assertNoDirectAuthoredCredentials(execution);
                         JsonNode ids = executionNode.get("credentialIdentifiers");
                         if (ids == null || !ids.isArray()) throw new InvalidBundle("Invalid credential inventory");
                         var collected = new ArrayList<String>();
@@ -323,11 +324,10 @@ public final class ConfigurationBundleV4 {
         try { return JSON.readTree(utf8(bytes)); }
         catch (RuntimeException failure) { throw new InvalidBundle("Malformed JSON payload", failure); }
     }
-    private static JsonNode yamlObject(String yaml) {
+    private static void yamlObject(String yaml) {
         try {
-            JsonNode node = YAML.readTree(yaml);
-            if (node == null || !node.isObject()) throw new InvalidBundle("YAML root must be an object");
-            return node;
+            if (!(new Compose(YAML).composeString(yaml).orElse(null) instanceof MappingNode))
+                throw new InvalidBundle("YAML root must be a mapping");
         } catch (RuntimeException failure) { throw new InvalidBundle("Invalid YAML payload", failure); }
     }
     private static void fields(JsonNode node, Set<String> expected) {

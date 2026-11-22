@@ -12,9 +12,17 @@ public record EncryptedCredential(String identifier, String version, String ciph
         } catch (IllegalArgumentException failure) { throw new IllegalArgumentException("Invalid encrypted credential"); }
     }
     public static void requireMetadata(String identifier, String version) {
-        if (identifier == null || !identifier.matches("[A-Za-z_][A-Za-z0-9_.-]{0,199}")
+        if (!validIdentifier(identifier)
                 || version == null || !version.matches("[A-Za-z0-9_.-]{1,200}"))
             throw new IllegalArgumentException("Invalid credential metadata");
+    }
+    public static boolean validIdentifier(String name) {
+        return name != null && !name.isEmpty()
+                && !whitespace(name.codePointAt(0)) && !whitespace(name.codePointBefore(name.length()));
+    }
+    public static boolean blank(String value) { return value.codePoints().allMatch(EncryptedCredential::whitespace); }
+    private static boolean whitespace(int codePoint) {
+        return Character.isWhitespace(codePoint) || Character.isSpaceChar(codePoint);
     }
     @Override public String toString() { return "Encrypted credential [redacted]"; }
 }

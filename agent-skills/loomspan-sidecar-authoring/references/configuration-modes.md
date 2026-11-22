@@ -13,35 +13,41 @@ Framework structural/reference errors fail startup; HTTP domain errors first fai
 on invocation before dispatch. Deploy changes and restart to apply them. Literal
 provider credentials and external references follow Framework's file-mode contract.
 
-The Console displays redacted startup inspection and retained startup metadata;
-configuration mutations return `409 configuration_read_only`. Accounts, tokens and
+The Console displays the startup skill catalog, model aliases, session and trace
+settings, and retained startup metadata. Connection settings stay in the deployment
+files. Configuration mutations return `409 configuration_read_only`. Accounts, tokens and
 execution retain their normal permissions. File startup does not initialize or
 change the selected database publication, decrypt its credentials, or alter drafts.
 Its separate durable startup UUID correlates executions; metadata retention uses
 `loomspan-sidecar.snapshots.max-retained` and is not a recovery source.
 
-In **database** mode, all authored skills and execution settings and encrypted
-provider and HTTP service credentials form one complete candidate. New databases start empty.
-Deployment provider/model/session values do not seed or merge into that candidate,
-including at framework bootstrap. No provider credential is resolved from deployment
-files or the environment. Save or replace each referenced credential with
-`PUT /api/management/editing/draft/credentials` under the current Edit grant, then
-validate and publish. The Console shows identifiers only. Saving never activates;
-credential replacement increments the draft revision and invalidates validation.
-If an imported credential is no longer needed, remove its YAML references and its
-required identifier from the draft. Required identifiers must be configured or
-explicitly removed before validation can succeed.
-Rotate a provider key by saving the replacement, validating, publishing, waiting for
-old work to finish, then revoking the old provider key. Early provider-side revocation
-can invalidate captured work. Rollback republishes complete retained settings and
-credential versions under a new ID. Restart restores the database selection exclusively.
+In **database** mode, authored skill and execution YAML and separately supplied
+encrypted variable values belong to one installation. Deployment provider, model,
+and session properties do not contribute to a managed candidate. Its exact
+reference map comes from the selected documents and the installation's values.
 
-Database credential fields use `api-key-ref`, `gemini.credentials-json-ref`, or
-`header-refs`. Save their values through the write-only control, never ordinary
-YAML save bodies. Gemini Vertex requires managed `credentials-json-ref` material;
-application-default credentials and credential file/URI references are prohibited
-in database candidates. See [execution settings](execution-configuration.md) for
-the publishable fields and a complete connection example.
+Use a literal or a whole-node marker such as `{ $var: service.key }` at a supported
+setting. For example, `api-key`, items in `headers`, and
+`gemini.credentials-json` accept values. In an HTTP executor skill, a marker can
+supply its operation's `config.path`. Authorized management reads and
+configuration-only exports show the authored YAML, including any literal values
+and markers. Supply separately managed values using
+`PUT /api/management/editing/draft/credentials` under the current Edit grant.
+These values stay encrypted in storage and are write-only through management.
+
+Saving YAML or editing a value changes the draft revision. Validate checks authored
+structure first, then reads the values needed to prepare that revision without
+activation. Only publication changes the current installation values. If a
+reference is missing or its value is blank, supply a value or edit the documents,
+then validate again. Removing the last reference leaves the encrypted value in
+the installation. To delete it, remove the value explicitly and publish.
+
+Rotate a provider key by saving the replacement, validating, publishing, waiting
+for old work to finish, then revoking the old key. Rollback selects historical
+authored documents and the currently published values. If a historical reference
+was removed from the value inventory, supply its replacement in the rollback
+draft before publishing. Restart restores the published documents and values.
+See [execution settings](execution-configuration.md) for the publishable fields.
 
 Supply `LOOMSPAN_SIDECAR_CREDENTIAL_KEY` through the process environment as a
 base64-encoded cryptographically random 32-byte key. Generate it with
@@ -50,10 +56,10 @@ normal deployment secret handling. It is never stored alongside ciphertext in SQ
 or bundles. Back it up separately and keep it stable across provider-key rotations.
 Missing/wrong material fails explicitly without plaintext fallback or ciphertext loss.
 Restore the original key and a consistent database backup; losing the key makes retained
-credentials unrecoverable. File mode requires this key when invoking fixed HTTP authentication using encrypted records; unused database credentials are not decrypted.
+credentials unrecoverable. Candidate preparation decrypts only referenced values.
 Encryption-key/environment changes require restart. There is no automatic key rotation.
 
-Default exports carry configuration and required identifiers. Select **Include
+Default exports carry authored configuration and configured names. Select **Include
 encrypted credentials** or `?includeEncryptedCredentials=true` to capture retained
 AES-256-GCM ciphertext and authenticated identifiers/versions atomically. This needs
 current Edit authority, including the live account and PAT intersection. Users may

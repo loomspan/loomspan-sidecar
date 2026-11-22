@@ -35,7 +35,7 @@ class ManagementEditingServiceTest {
         when(runtime.withEditingState(anyBoolean(), any())).thenAnswer(call -> {
             Function<ConfigurationSnapshot, ?> action = call.getArgument(1); return action.apply(base);
         });
-        when(runtime.validateWithCandidate(any(ManagedConfiguration.class), anyList(), nullable(UUID.class), eq(false)))
+        when(runtime.validateWithCandidate(any(ManagedConfiguration.class), any()))
                 .thenReturn(new RuntimeConfigurationService.ValidationAttempt(new ConfigurationValidationResult(false, List.of()), null));
         when(runtime.publish(any())).thenThrow(new RuntimeConfigurationService.PublicationFailure(
                 "draft_cleanup_failed", "Published configuration draft could not be cleared"));
@@ -83,7 +83,7 @@ class ManagementEditingServiceTest {
         when(runtime.withEditingState(anyBoolean(), any())).thenAnswer(call -> {
             Function<ConfigurationSnapshot, ?> action = call.getArgument(1); return action.apply(base);
         });
-        when(runtime.validateWithCandidate(any(ManagedConfiguration.class), anyList(), nullable(UUID.class), eq(false))).thenReturn(new RuntimeConfigurationService.ValidationAttempt(new ConfigurationValidationResult(true, List.of()), null));
+        when(runtime.validateWithCandidate(any(ManagedConfiguration.class), any())).thenReturn(new RuntimeConfigurationService.ValidationAttempt(new ConfigurationValidationResult(true, List.of()), null));
         var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
         when(runtime.publish(any())).thenAnswer(call -> {
             entered.countDown(); assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
@@ -136,7 +136,7 @@ class ManagementEditingServiceTest {
             Function<ConfigurationSnapshot, ?> action = call.getArgument(1); return action.apply(base);
         });
         var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
-        when(runtime.validateWithCandidate(any(ManagedConfiguration.class), anyList(), nullable(UUID.class), eq(false))).thenAnswer(call -> {
+        when(runtime.validateWithCandidate(any(ManagedConfiguration.class), any())).thenAnswer(call -> {
             entered.countDown(); assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
             return new RuntimeConfigurationService.ValidationAttempt(new ConfigurationValidationResult(true, List.of()), null);
         });
@@ -182,7 +182,7 @@ class ManagementEditingServiceTest {
             Function<ConfigurationSnapshot, ?> action = call.getArgument(1); return action.apply(base);
         });
         var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
-        when(runtime.validateWithCandidate(any(ManagedConfiguration.class), anyList(), nullable(UUID.class), eq(false))).thenAnswer(call -> {
+        when(runtime.validateWithCandidate(any(ManagedConfiguration.class), any())).thenAnswer(call -> {
             entered.countDown(); assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
             return new RuntimeConfigurationService.ValidationAttempt(new ConfigurationValidationResult(true, List.of()), null);
         });
@@ -194,7 +194,7 @@ class ManagementEditingServiceTest {
                 1, base.configuration()));
         when(store.createIfAbsent(eq(1L), any())).thenAnswer(call -> saved.get());
         when(store.read(1L)).thenAnswer(call -> saved.get());
-        when(store.replace(eq(1L), any(), anyLong(), any(), any(), any(), any(), nullable(List.class))).thenAnswer(call -> {
+        when(store.replace(eq(1L), any(), anyLong(), any(), any(), any(), any(), anyList(), eq(false))).thenAnswer(call -> {
             var old = saved.get();
             var next = new ConfigurationDraftStore.Saved(1, old.draftId(), old.baseSnapshotId(), null,
                     old.revision() + 1, call.getArgument(5));
