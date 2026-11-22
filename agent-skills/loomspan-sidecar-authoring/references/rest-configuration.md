@@ -19,7 +19,7 @@ executor: http
 config:
   target: orders
   method: PATCH
-  path: /orders/{id}
+  path: { $var: orders.update-path }
   pathParams: {id: /order/id}
   queryParams: {tag: /tags}
   body: {source: field, field: /order/changes}
@@ -44,15 +44,25 @@ loomspan:
         targets:
           orders:
             base-url: https://orders.example/api/v1
-            headers: {Accept: application/json, X-Application: support}
-            auth: {mode: caller-passthrough}
+            headers:
+              Accept: application/json
+              X-Region: { $var: app.region }
+              Authorization: { $var: orders.authorization }
+            auth: {mode: fixed}
             connect-timeout: 5s
             read-timeout: 60s
             max-response-size: 1MB
 ```
 
-The settings map accepts `targets` and optional `credentials`. A target accepts
-exactly the fields shown above. Authentication defaults to `none`, timeouts to
+In file mode, Framework resolves whole-node `{ $var: name }` references from
+the host's Spring properties at startup. For example, set `orders.update-path`
+to `/orders/{id}` and `app.region` to `west`. Set `orders.authorization`
+to the complete value the service expects, including its scheme and prefix.
+Another installation can use the same documents with different property values.
+At invocation, `pathParams` fills `{id}` from the skill input.
+
+The settings map accepts `targets`. A target accepts exactly the fields shown
+above. Authentication defaults to `none`, timeouts to
 5s/60s, response size to 1MB (1,048,576 bytes), and ordinary headers to empty.
 Timeouts are duration strings of 1 through 2,147,483,647 milliseconds; sizes are
 size strings of 1 through 2,147,483,647 bytes. Limits cannot be overridden by a
@@ -93,36 +103,25 @@ strings produce empty values, and zero/false are preserved. Scalar arrays produc
 repeated names in array order. Objects, nested arrays and null array elements fail.
 Required input belongs in the skill's Framework input schema.
 
-## Headers and credentials
+## Headers and authentication
 
-Target headers are fixed ordinary metadata. Names use HTTP token syntax, names
-cannot conflict case-insensitively, and values cannot contain invalid controls.
-Host, Content-Length and Transfer-Encoding belong to transport. Authorization,
-Proxy-Authorization and Cookie cannot be ordinary headers; cookies are not an
-authentication mode. JSON requests default to `Content-Type: application/json`.
+Target headers use captured settings. Names use HTTP token syntax and must be
+unique case-insensitively. Values cannot contain invalid controls. Host,
+Content-Length and Transfer-Encoding belong to transport. Proxy-Authorization
+and Cookie are prohibited. JSON requests default to `Content-Type: application/json`.
 An explicit body Content-Type must be application/json or application/*+json
 using UTF-8. Accept and other ordinary metadata may be set explicitly.
 
 The three authentication modes are:
 
-- `none`: sends no authentication credential.
-- `fixed`: `auth: {mode: fixed, header-refs: {Authorization: serviceToken}}` uses
-  a captured encrypted credential for each service header. Semantically secret
-  custom headers belong here. It cannot supply framing, cookie or payload metadata.
+- `none` sends no `Authorization` and rejects that header in the target.
+- `fixed` sends any configured `Authorization` as supplied, including its
+  scheme and prefix. The header is optional. A target can configure a custom
+  header such as `X-API-Key` with an ordinary header value.
 - `caller-passthrough`: sends the original captured Spring Security JWT as a bearer
-  token, checking strict expiry immediately before dispatch. Missing, unauthenticated
-  or expired JWTs fail. There is no refresh, exchange, fallback or input identity.
-
-For fixed auth, `credentials.serviceToken` contains `version` and `ciphertext`
-from an existing `EncryptedCredential`, not plaintext or a Framework provider
-reference. `HttpExecutorConfiguration.withCredentials(selectedMap, records)`
-attaches retained encrypted records before preparation. Invocation decrypts them
-using `ProviderCredentialCipher` and the external `LOOMSPAN_SIDECAR_CREDENTIAL_KEY`,
-in either configuration mode. Missing references/key and invalid ciphertext fail.
-In database mode, save service values through the existing write-only draft
-credential API/control; publication captures retained encrypted records, identities
-and versions. Ordinary authored YAML contains references only. File mode supplies
-the encrypted inventory directly. The external key never belongs in an export or payload.
+  token, checking strict expiry immediately before dispatch. The target cannot
+  declare `Authorization`. Missing, unauthenticated or expired JWTs fail. The
+  JWT belongs to the request and stays outside installation settings.
 
 Targets must be approved by the configuration's authorized publisher. The
 destination independently validates JWT audience, trust, roles and record access.

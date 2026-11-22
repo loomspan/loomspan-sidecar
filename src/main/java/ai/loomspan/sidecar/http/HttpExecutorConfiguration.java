@@ -1,7 +1,6 @@
 package ai.loomspan.sidecar.http;
 
 import ai.loomspan.api.SkillException;
-import ai.loomspan.sidecar.storage.EncryptedCredential;
 import org.springframework.boot.convert.DurationStyle;
 import org.springframework.http.MediaType;
 import org.springframework.util.unit.DataSize;
@@ -9,14 +8,14 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.*;
 
-/** Network-free HTTP-specific validation, shared by invocation and configuration consumers. */
+/** Network-free validation of captured HTTP settings at invocation. */
 public final class HttpExecutorConfiguration {
     private HttpExecutorConfiguration() {}
-    public record Settings(Map<String,Target> targets, Map<String,EncryptedCredential> credentials) {
-        public Settings { targets=Map.copyOf(targets); credentials=Map.copyOf(credentials); }
+    public record Settings(Map<String,Target> targets) {
+        public Settings { targets=Map.copyOf(targets); }
         @Override public String toString() { return "HTTP settings [redacted]"; }
     }
-    public record Target(URI baseUrl, Map<String,String> headers, String authMode, Map<String,String> headerRefs,
+    public record Target(URI baseUrl, Map<String,String> headers, String authMode,
                          int connectMillis, int readMillis, int maxResponseSize) {
         @Override public String toString() { return "HTTP target [redacted]"; }
     }
@@ -29,12 +28,7 @@ public final class HttpExecutorConfiguration {
         catch (RuntimeException failure) { throw invalid("settings"); }
     }
     private static Settings parse(Map<String,Object> source) {
-        keys(source,"targets","credentials");
-        var credentials=new LinkedHashMap<String,EncryptedCredential>();
-        for(var entry: optionalMap(source,"credentials").entrySet()) {
-            var value=map(entry.getValue()); keys(value,"version","ciphertext");
-            credentials.put(entry.getKey(),new EncryptedCredential(entry.getKey(),string(value.get("version")),string(value.get("ciphertext"))));
-        }
+        keys(source,"targets");
         var targets=new LinkedHashMap<String,Target>();
         for(var entry: map(source.get("targets")).entrySet()) {
             string(entry.getKey()); var value=map(entry.getValue());
@@ -44,20 +38,16 @@ public final class HttpExecutorConfiguration {
                     || base.getRawUserInfo()!=null || base.getRawQuery()!=null || base.getRawFragment()!=null
                     || base.getPort() < -1 || base.getPort()>65535) throw invalid("base URL");
             safePath(base.getRawPath(),false);
-            var headers=stringMap(optionalMap(value,"headers")); validateHeaders(headers,false);
             var auth=value.containsKey("auth")?map(value.get("auth")):Map.<String,Object>of("mode","none");
-            keys(auth,"mode","header-refs"); String mode=string(auth.get("mode"));
+            keys(auth,"mode"); String mode=string(auth.get("mode"));
             if(!Set.of("none","fixed","caller-passthrough").contains(mode)) throw invalid("authentication mode");
-            var refs=stringMap(optionalMap(auth,"header-refs")); validateHeaders(refs,true);
-            if(mode.equals("fixed") ? refs.isEmpty() : auth.containsKey("header-refs")) throw invalid("authentication headers");
-            for(var ref:refs.values()) if(!credentials.containsKey(ref)) throw invalid("credential reference");
-            var names=new TreeSet<String>(String.CASE_INSENSITIVE_ORDER); names.addAll(headers.keySet());
-            for(var name:refs.keySet()) if(!names.add(name)) throw invalid("header conflict");
-            targets.put(entry.getKey(),new Target(base,headers,mode,refs,
+            var headers=stringMap(optionalMap(value,"headers"));
+            validateHeaders(headers,mode.equals("fixed"));
+            targets.put(entry.getKey(),new Target(base,headers,mode,
                     timeout(value.getOrDefault("connect-timeout","5s")),timeout(value.getOrDefault("read-timeout","60s")),
                     size(value.getOrDefault("max-response-size","1MB"))));
         }
-        return new Settings(targets,credentials);
+        return new Settings(targets);
     }
     public static Operation validateOperation(Map<String,Object> source, Settings settings) {
         try {
@@ -94,13 +84,6 @@ public final class HttpExecutorConfiguration {
             return new Operation(target,method,path,pathParams,queryParams,body,Set.copyOf(statuses));
         } catch(SkillException failure) {throw failure;} catch(RuntimeException failure) {throw invalid("operation");}
     }
-    /** Attach retained encrypted records to a selected executor subtree before Framework preparation. */
-    public static Map<String,Object> withCredentials(Map<String,Object> source, Collection<EncryptedCredential> records) {
-        var copy=new LinkedHashMap<>(source); var credentials=new LinkedHashMap<String,Object>();
-        for(var record:records) if(credentials.put(record.identifier(),Map.of("version",record.version(),"ciphertext",record.ciphertext()))!=null) throw invalid("duplicate credential");
-        if(source.containsKey("credentials")) throw invalid("duplicate credential source");
-        copy.put("credentials",Collections.unmodifiableMap(credentials)); return Collections.unmodifiableMap(copy);
-    }
     static void pointer(String value) {
         if(!value.startsWith("/")) throw invalid("JSON Pointer");
         for(int i=0;i<value.length();i++) if(value.charAt(i)=='~'&&(i+1>=value.length()||"01".indexOf(value.charAt(++i))<0)) throw invalid("JSON Pointer");
@@ -133,17 +116,17 @@ public final class HttpExecutorConfiguration {
             if(next.equals(decoded)) return; decoded=next;
         }
     }
-    static void validateHeaders(Map<String,String> headers,boolean auth) {
+    private static void validateHeaders(Map<String,String> headers,boolean fixedAuthorization) {
         var names=new TreeSet<String>(String.CASE_INSENSITIVE_ORDER);
         for(var entry:headers.entrySet()) {
             String name=entry.getKey(); if(!name.matches("[!#$%&'*+.^_`|~0-9A-Za-z-]+")||!names.add(name)) throw invalid("header name");
             String lower=name.toLowerCase(Locale.ROOT);
             if(Set.of("host","content-length","transfer-encoding","cookie","proxy-authorization").contains(lower)
-                    || (!auth&&lower.equals("authorization")) || (auth&&Set.of("content-type","content-encoding","accept").contains(lower))) throw invalid("header ownership");
-            if(!auth) headerValue(entry.getValue());
+                    || (!fixedAuthorization&&lower.equals("authorization"))) throw invalid("header ownership");
+            String value=entry.getValue();
+            if(value.chars().anyMatch(c->c==127||c<32&&c!=9)) throw invalid("header value");
         }
     }
-    static void headerValue(String value) { if(value==null||value.isBlank()||value.chars().anyMatch(c->c==127||c<32&&c!=9)) throw invalid("header value"); }
     static String header(Map<String,String> headers,String name) { return headers.entrySet().stream().filter(e->e.getKey().equalsIgnoreCase(name)).map(Map.Entry::getValue).findFirst().orElse(null); }
     static boolean jsonType(MediaType type) { return !type.isWildcardType()&&!type.isWildcardSubtype()&&type.getType().equals("application")&&(type.getSubtype().equals("json")||type.getSubtype().endsWith("+json"))&&(type.getCharset()==null||type.getCharset().equals(java.nio.charset.StandardCharsets.UTF_8)); }
     static SkillException invalid(String category) { return new SkillException("Invalid HTTP " + category); }

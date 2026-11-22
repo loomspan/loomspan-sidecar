@@ -1,10 +1,11 @@
 package ai.loomspan.sidecar.http;
 
-import ai.loomspan.sidecar.configuration.ProviderCredentialCipher;
+import ai.loomspan.api.SkillException;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 import java.net.InetSocketAddress;
 import java.time.Clock;
+import java.util.List;
 import java.util.Map;
 import static org.assertj.core.api.Assertions.*;
 import static ai.loomspan.sidecar.http.HttpTestSupport.*;
@@ -23,24 +24,40 @@ class HttpSkillExecutorTest {
             }
         }
     }
-    @Test void fixedCredentialsAreCapturedAndFailuresDoNotDispatch() throws Exception {
-        var received=new java.util.concurrent.LinkedBlockingQueue<String>();
-        try(var fixture=new HttpTestSupport(e->{received.add(e.getRequestHeaders().getFirst("Authorization"));respond(e,200,null,"ok");})) {
-            var base=fixture.settings("auth",map("mode","fixed","header-refs",Map.of("Authorization","service")));
-            for(String version:java.util.List.of("v1","v2")) {
-                var record=new ai.loomspan.sidecar.storage.EncryptedCredential("service",version,fixture.cipher.encrypt("service",version,"Bearer "+version));
-                var settings=HttpExecutorConfiguration.withCredentials(base,java.util.List.of(record));
-                assertThat(fixture.call(operation(),Map.of(),settings)).isEqualTo("ok");assertThat(received.take()).isEqualTo("Bearer "+version);
-                assertThat(settings.toString()).doesNotContain("Bearer "+version);
-                assertThatThrownBy(()->HttpExecutorConfiguration.withCredentials(base,java.util.List.of(record,record))).isInstanceOf(ai.loomspan.api.SkillException.class);
-                var bad=new ai.loomspan.sidecar.storage.EncryptedCredential("service",version,fixture.cipher.encrypt("service",version,"secret\r\nmarker"));
-                assertThatThrownBy(()->fixture.call(operation(),Map.of(),HttpExecutorConfiguration.withCredentials(base,java.util.List.of(bad))))
-                        .isExactlyInstanceOf(ai.loomspan.api.SkillException.class).hasMessage("HTTP service credential unavailable").hasNoCause();
-                var wrongCipher=new HttpSkillExecutor(fixture.client,new ProviderCredentialCipher(null),Clock.systemUTC());
-                assertThatThrownBy(()->wrongCipher.execute(invocation(Map.of(),operation(),settings))).isInstanceOf(ai.loomspan.api.SkillException.class).hasNoCause();
+    @Test void fixedSendsConfiguredAuthorizationOrCustomHeaderEvenWithAnAuthenticatedCaller() throws Exception {
+        record Request(List<String> authorization, List<String> apiKey) {}
+        var received = new java.util.concurrent.ConcurrentLinkedQueue<Request>();
+        try (var fixture = new HttpTestSupport(exchange -> {
+            var headers = exchange.getRequestHeaders();
+            received.add(new Request(List.copyOf(headers.getOrDefault("Authorization", List.of())),
+                    List.copyOf(headers.getOrDefault("X-API-Key", List.of()))));
+            respond(exchange, 200, null, "ok");
+        })) {
+            authenticate("separate.caller.token", java.time.Instant.now().plusSeconds(60));
+            var auth = Map.of("mode", "fixed");
+            assertThat(fixture.call(operation(), Map.of(), fixture.settings("auth", auth,
+                    "headers", Map.of("authorization", "Basic fixture-service")))).isEqualTo("ok");
+            assertThat(fixture.call(operation(), Map.of(), fixture.settings("auth", auth,
+                    "headers", Map.of("X-API-Key", "fixture-key")))).isEqualTo("ok");
+            assertThat(received).containsExactly(new Request(List.of("Basic fixture-service"), List.of()),
+                    new Request(List.of(), List.of("fixture-key")));
+        }
+    }
+
+    @Test void noneAndPassthroughRejectConfiguredAuthorizationBeforeDispatch() throws Exception {
+        var requests = new java.util.concurrent.atomic.AtomicInteger();
+        try (var fixture = new HttpTestSupport(exchange -> {
+            requests.incrementAndGet();
+            respond(exchange, 200, null, "unexpected");
+        })) {
+            authenticate("separate.caller.token", java.time.Instant.now().plusSeconds(60));
+            for (String mode : List.of("none", "caller-passthrough")) {
+                var settings = fixture.settings("auth", Map.of("mode", mode),
+                        "headers", Map.of("authorization", "Basic unexpected"));
+                assertThatThrownBy(() -> fixture.call(operation(), Map.of(), settings))
+                        .isExactlyInstanceOf(SkillException.class).hasMessage("Invalid HTTP header ownership");
             }
-            assertThat(received).isEmpty();
-            assertThatThrownBy(()->fixture.call(operation(),Map.of(),base)).isInstanceOf(ai.loomspan.api.SkillException.class);
+            assertThat(requests).hasValue(0);
         }
     }
     @Test void passthroughExpiryAndConcurrentCallersKeepOriginalTokensAndNoCookies() throws Exception {
@@ -159,7 +176,7 @@ class HttpSkillExecutorTest {
         });
         server.start();
         try (var client = new HttpExecutorClient()) {
-            var executor = new HttpSkillExecutor(client, new ProviderCredentialCipher(null), Clock.systemUTC());
+            var executor = new HttpSkillExecutor(client, Clock.systemUTC());
             var input = Map.<String,Object>of("car", Map.of("id",42), "options", Map.of("colors", java.util.List.of("red","blue")), "zero",0,"flag",false);
             var operation = Map.<String,Object>of("target","app","method","POST","path","/cars/{id}","pathParams",Map.of("id","/car/id"),"queryParams",Map.of("color","/options/colors"),"body",Map.of("source","input"));
             var settings = Map.<String,Object>of("targets", Map.of("app",Map.of("base-url","http://127.0.0.1:"+server.getAddress().getPort()+"/api/v1")));

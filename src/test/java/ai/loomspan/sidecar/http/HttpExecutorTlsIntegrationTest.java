@@ -41,7 +41,7 @@ class HttpExecutorTlsIntegrationTest {
             var jvmDefault=SSLContext.getInstance("TLS");jvmDefault.init(null,jvmTrust.getTrustManagers(),new SecureRandom());
             SSLContext.setDefault(jvmDefault);
             try(var client=new HttpExecutorClient()) {
-                var executor=new HttpSkillExecutor(client,new ai.loomspan.sidecar.configuration.ProviderCredentialCipher(null),Clock.systemUTC());
+                var executor=new HttpSkillExecutor(client,Clock.systemUTC());
                 var settings=map("targets",Map.of("app",map("base-url","https://localhost:"+server.getAddress().getPort(),"connect-timeout","1s","read-timeout","1s")));
                 assertThat(executor.execute(invocation(Map.of(),operation(),settings))).isEqualTo("https");
                 var wrong=map("targets",Map.of("app",map("base-url","https://127.0.0.1:"+server.getAddress().getPort(),"connect-timeout","1s","read-timeout","1s")));
@@ -53,7 +53,7 @@ class HttpExecutorTlsIntegrationTest {
             otherServer.setHttpsConfigurator(new HttpsConfigurator(context(keyStore("server",otherServerKey,otherCert,otherCa),trustStore("other",otherCa))));
             otherServer.createContext("/",e->respond(e,200,null,"untrusted"));otherServer.start();
             try(var client=new HttpExecutorClient()) {
-                var executor=new HttpSkillExecutor(client,new ai.loomspan.sidecar.configuration.ProviderCredentialCipher(null),Clock.systemUTC());
+                var executor=new HttpSkillExecutor(client,Clock.systemUTC());
                 assertThatThrownBy(()->executor.execute(invocation(Map.of(),operation(),map("targets",Map.of("app",map("base-url","https://localhost:"+otherServer.getAddress().getPort(),"connect-timeout","1s","read-timeout","1s")))))).isInstanceOf(SkillException.class).hasMessage("HTTP transport failed");
             }finally{otherServer.stop(0);}
         } finally {

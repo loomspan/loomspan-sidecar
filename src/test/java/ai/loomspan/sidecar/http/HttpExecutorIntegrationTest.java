@@ -11,21 +11,23 @@ import static org.assertj.core.api.Assertions.*;
 
 class HttpExecutorIntegrationTest {
     @TempDir Path empty;
-    @Test void yamlExecutorUsesCapturedSettingsCredentialsAndAuthentication() throws Exception {
-        var requests=new ArrayList<String>();
-        try(var fixture=new HttpTestSupport(e->{requests.add(e.getRequestURI()+"|"+e.getRequestHeaders().getFirst("Authorization"));respond(e,200,null,"exact\n");});var context=HttpFrameworkFixture.start(empty)) {
-            var cipher=context.getBean(ai.loomspan.sidecar.configuration.ProviderCredentialCipher.class);
-            var base=fixture.settings("auth",map("mode","fixed","header-refs",Map.of("Authorization","service")));
-            var a=HttpExecutorConfiguration.withCredentials(base,List.of(new ai.loomspan.sidecar.storage.EncryptedCredential("service","v1",cipher.encrypt("service","v1","Bearer first"))));
+    @Test void yamlExecutorUsesCapturedSettingsAndRequestAuthentication() throws Exception {
+        record Request(String path, List<String> authorization) {}
+        var requests=new java.util.concurrent.ConcurrentLinkedQueue<Request>();
+        try(var fixture=new HttpTestSupport(e->{
+            requests.add(new Request(e.getRequestURI().getPath(), List.copyOf(e.getRequestHeaders().getOrDefault("Authorization", List.of()))));
+            respond(e,200,null,"exact\n");
+        });var context=HttpFrameworkFixture.start(empty)) {
+            var a=fixture.settings("auth",Map.of("mode","fixed"),"headers",Map.of("Authorization","Bearer first"));
             HttpFrameworkFixture.publish(context,List.of(HttpFrameworkFixture.leaf("/first","input_schema: {type: object, properties: {id: {type: integer}}, required: [id]}")),a,"");
             var template=context.getBean(SkillTemplate.class);
             assertThatThrownBy(()->template.invoke("call",Map.of())).isInstanceOf(SkillInputValidationException.class);
             var retained=context.getBean(SkillInvocationHandoff.class).handoff("call",Map.of("id",1));
-            var b=HttpExecutorConfiguration.withCredentials(base,List.of(new ai.loomspan.sidecar.storage.EncryptedCredential("service","v2",cipher.encrypt("service","v2","Bearer second"))));
+            var b=fixture.settings("auth",Map.of("mode","fixed"),"headers",Map.of("Authorization","Bearer second"));
             HttpFrameworkFixture.publish(context,List.of(HttpFrameworkFixture.leaf("/second","")),b,"");
             var views=new ArrayList<SkillExecutionView>();
             assertThat(retained.invoke(views::add)).isEqualTo("exact\n");assertThat(template.invoke("call",Map.of())).isEqualTo("exact\n");
-            assertThat(requests).containsExactly("/first|Bearer first","/second|Bearer second");
+            assertThat(requests).containsExactly(new Request("/first",List.of("Bearer first")),new Request("/second",List.of("Bearer second")));
             assertThat(views.toString()).doesNotContain("Bearer first");
             assertThat(context.getBean(SkillReloader.class).snapshot("default").skill("default-call").orElseThrow().kind()).isEqualTo(SkillKind.JAVA);
             assertThat(context.getBean(SkillReloader.class).snapshot("default").skill("default-http")).isEmpty();
@@ -35,7 +37,8 @@ class HttpExecutorIntegrationTest {
             org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(jwt,List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_READER"))));
             var admission=context.getBean(SkillInvocationHandoff.class).handoff("call",Map.of());
             org.springframework.security.core.context.SecurityContextHolder.clearContext();
-            assertThat(admission.invoke()).isEqualTo("exact\n");assertThat(requests.getLast()).isEqualTo("/caller|Bearer captured.original");
+            assertThat(admission.invoke()).isEqualTo("exact\n");
+            assertThat(requests).hasSize(3).contains(new Request("/caller",List.of("Bearer captured.original")));
         }finally{org.springframework.security.core.context.SecurityContextHolder.clearContext();}
     }
     @Test void standardToolReceivesOnlyDesignatedRecoverableFeedback() throws Exception {
@@ -78,7 +81,7 @@ class HttpExecutorIntegrationTest {
             var parent=new SkillDocument("parent.yaml","name: parent\ndescription: Use application tool\nmodel: local\nallowed_skills: [{name: default-call}]\n");
             String models="""
                     connections:
-                      local: {driver: openai, base-url: '%s/v1', api-key-ref: fixture-key, provider-retry: {enabled: false}}
+                      local: {driver: openai, base-url: '%s/v1', api-key: fixture, provider-retry: {enabled: false}}
                     models:
                       local: {connection: local, provider-model: fixture}
                     """.formatted(provider.base());

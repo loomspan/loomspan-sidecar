@@ -38,8 +38,23 @@ class HttpExecutorConfigurationTest {
         for(String value:List.of("x\r\nInjected: y","x\u0000","x\u007f"))assertThatThrownBy(()->HttpExecutorConfiguration.validate(settings("headers",Map.of("X-App",value)))).isInstanceOf(SkillException.class);
         assertThatThrownBy(()->HttpExecutorConfiguration.validate(settings("headers",map("X-App","a","x-app","b")))).isInstanceOf(SkillException.class);
         assertThat(HttpExecutorConfiguration.validate(settings("headers",Map.of("Accept","text/plain"))).targets()).hasSize(1);
-        for(String mode:List.of("none","caller-passthrough","bogus"))assertThatThrownBy(()->HttpExecutorConfiguration.validate(settings("auth",map("mode",mode,"header-refs",Map.of("X-Key","id"))))).isInstanceOf(SkillException.class);
-        assertThatThrownBy(()->HttpExecutorConfiguration.validate(settings("auth",Map.of("mode","fixed")))).isInstanceOf(SkillException.class);
+        var fixed = Map.of("mode", "fixed");
+        assertThat(HttpExecutorConfiguration.validate(settings("auth", fixed)).targets().get("app").headers()).isEmpty();
+        var authorized = HttpExecutorConfiguration.validate(settings("auth", fixed, "headers", Map.of("Authorization", "Basic fixture")));
+        assertThat(authorized.targets().get("app").headers()).containsEntry("Authorization", "Basic fixture");
+        assertThat(authorized.toString()).doesNotContain("Basic fixture");
+        assertThat(authorized.targets().get("app").toString()).doesNotContain("Basic fixture");
+        assertThatThrownBy(() -> HttpExecutorConfiguration.validate(settings("auth", fixed, "headers",
+                map("Authorization", "Basic first", "authorization", "Basic second")))).hasMessage("Invalid HTTP header name");
+        assertThatThrownBy(() -> HttpExecutorConfiguration.validate(settings("auth", fixed, "headers",
+                Map.of("Authorization", "Basic fixture\r\nInjected: y")))).hasMessage("Invalid HTTP header value");
+        assertThatThrownBy(() -> HttpExecutorConfiguration.validate(settings("auth", Map.of("mode", "bogus"))))
+                .hasMessage("Invalid HTTP authentication mode");
+        assertThatThrownBy(() -> HttpExecutorConfiguration.validate(settings("auth",
+                map("mode", "fixed", "header-refs", Map.of("X-Key", "id"))))).hasMessage("Invalid HTTP unknown field");
+        var obsolete = settings();
+        obsolete.put("credentials", Map.of());
+        assertThatThrownBy(() -> HttpExecutorConfiguration.validate(obsolete)).hasMessage("Invalid HTTP unknown field");
         assertThatThrownBy(()->HttpExecutorConfiguration.validateOperation(operation("method","POST","body",Map.of("source","input")),HttpExecutorConfiguration.validate(settings("headers",Map.of("Content-Type","text/plain"))))).isInstanceOf(SkillException.class);
     }
 }

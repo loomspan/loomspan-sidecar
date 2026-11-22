@@ -1,7 +1,6 @@
 package ai.loomspan.sidecar.http;
 
 import ai.loomspan.api.extensions.v1.SkillExecutorInvocation;
-import ai.loomspan.sidecar.configuration.ProviderCredentialCipher;
 import com.sun.net.httpserver.*;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -15,12 +14,11 @@ final class HttpTestSupport implements AutoCloseable {
     final HttpServer server;
     final ExecutorService workers=Executors.newVirtualThreadPerTaskExecutor();
     final HttpExecutorClient client=new HttpExecutorClient();
-    final ProviderCredentialCipher cipher=new ProviderCredentialCipher(Base64.getEncoder().encodeToString(new byte[32]));
     final HttpSkillExecutor executor;
     HttpTestSupport(HttpHandler handler) throws Exception {this(handler,Clock.systemUTC());}
     HttpTestSupport(HttpHandler handler,Clock clock) throws Exception {
         server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);server.createContext("/",handler);server.setExecutor(workers);server.start();
-        executor=new HttpSkillExecutor(client,cipher,clock);
+        executor=new HttpSkillExecutor(client,clock);
     }
     String base(){return "http://127.0.0.1:"+server.getAddress().getPort();}
     Map<String,Object> settings(Object... overrides){var target=map("base-url",base());target.putAll(map(overrides));return map("targets",Map.of("app",target));}

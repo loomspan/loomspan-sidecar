@@ -1,7 +1,6 @@
 package ai.loomspan.sidecar.http;
 
 import ai.loomspan.api.*;
-import ai.loomspan.sidecar.configuration.ProviderCredentialCipher;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.builder.SpringApplicationBuilder;
@@ -17,7 +16,6 @@ final class HttpFrameworkFixture {
     @Import({HttpSkillExecutor.class,HttpExecutorClient.class})
     static class App {
         @Bean Clock clock(){return Clock.systemUTC();}
-        @Bean ProviderCredentialCipher cipher(){return new ProviderCredentialCipher(Base64.getEncoder().encodeToString(new byte[32]));}
     }
     static ConfigurableApplicationContext start(Path empty,String... extra) {
         Path startup=empty.resolve("startup.yml");
@@ -39,7 +37,7 @@ final class HttpFrameworkFixture {
             extra.properties().forEach(e->loomspan.set(e.getKey(),e.getValue()));
             selected=new tools.jackson.dataformat.yaml.YAMLMapper().writeValueAsString(tree);
         }
-        var reloader=context.getBean(SkillReloader.class);reloader.publish(reloader.prepare("default",documents,new ExecutionConfiguration(selected),extraYaml.isEmpty()?Map.of():Map.of("fixture-key","fixture")));
+        var reloader=context.getBean(SkillReloader.class);reloader.publish(reloader.prepare("default",documents,new ExecutionConfiguration(selected),Map.of()));
     }
     static SkillDocument leaf(String path,String more){return new SkillDocument("call.yaml","""
             name: call

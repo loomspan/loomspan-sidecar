@@ -115,6 +115,48 @@ class HttpConfigurationIntegrationTest {
         }
     }
 
+    @Test void fileStartupResolvesHeadersAndOperationPathPerInstallation() throws Exception {
+        record Request(String path, List<String> accept, List<String> region, List<String> authorization) {}
+        var seen = new java.util.concurrent.ConcurrentLinkedQueue<Request>();
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            var headers = exchange.getRequestHeaders();
+            String path = exchange.getRequestURI().getPath();
+            seen.add(new Request(path, List.copyOf(headers.getOrDefault("Accept", List.of())),
+                    List.copyOf(headers.getOrDefault("X-Region", List.of())),
+                    List.copyOf(headers.getOrDefault("Authorization", List.of()))));
+            byte[] bytes = path.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/plain");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (var output = exchange.getResponseBody()) { output.write(bytes); }
+        });
+        server.start();
+        try {
+            Path skill = directory.resolve("records.yaml");
+            Files.writeString(skill, skill("{target: app, method: GET, path: {$var: records.lookup-path}, pathParams: {recordId: /recordId}}").yaml());
+            Path settings = directory.resolve("records.yml");
+            Files.writeString(settings, execution(server.getAddress().getPort(),
+                    "auth: {mode: fixed}, headers: {Accept: application/json, X-Region: {$var: app.region}, "
+                            + "Authorization: {$var: service.authorization}}"));
+
+            record Installation(String region, String version, String authorization) {}
+            for (var installation : List.of(new Installation("west", "v2", "Basic fixture-west"),
+                    new Installation("east", "v3", "Token fixture-east"))) {
+                String path = "/" + installation.version() + "/records/";
+                try (var context = start(directory.resolve(installation.region() + ".db"),
+                        "--loomspan-sidecar.configuration.mode=file", "--spring.config.additional-location=" + settings.toUri(),
+                        "--loomspan.skills.locations=" + skill.toUri(), "--app.region=" + installation.region(),
+                        "--records.lookup-path=" + path + "{recordId}", "--service.authorization=" + installation.authorization())) {
+                    assertThat(context.getBean(SkillTemplate.class).invoke("call", Map.of("recordId", "42")))
+                            .isEqualTo(path + "42");
+                }
+            }
+            assertThat(seen).containsExactly(
+                    new Request("/v2/records/42", List.of("application/json"), List.of("west"), List.of("Basic fixture-west")),
+                    new Request("/v3/records/42", List.of("application/json"), List.of("east"), List.of("Token fixture-east")));
+        } finally { server.stop(0); }
+    }
+
     @Test void fileInvocationUsesBootImportAndActiveProfileSelection() throws Exception {
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange -> {
