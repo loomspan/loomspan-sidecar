@@ -112,10 +112,12 @@ class SidecarAgentSkillsTest(unittest.TestCase):
             self.assertIn("executionConfigurationYaml", text)
         for action in ("read", "save", "validate", "publish"):
             self.assertIn(action, skill.lower())
-        self.assertIn("api-key-ref", execution)
+        self.assertIn("api-key: { $var: provider.primary.key }", execution)
+        self.assertNotIn("api-key-ref", execution)
         self.assertIn("process settings", execution)
         integration = (BUNDLE / "references/integration.md").read_text(encoding="utf-8")
-        self.assertIn("api-key-ref: provider.primary.key", integration)
+        self.assertIn("api-key: { $var: provider.primary.key }", integration)
+        self.assertNotIn("api-key-ref", integration)
         self.assertIn("execution settings", integration)
         self.assertNotIn("api-key: ${MODEL_API_KEY}", integration)
 
