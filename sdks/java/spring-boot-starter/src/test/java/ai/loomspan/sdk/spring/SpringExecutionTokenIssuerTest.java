@@ -35,7 +35,7 @@ class SpringExecutionTokenIssuerTest {
         var captured = new AtomicReference<String>();
         var body = new AtomicReference<String>();
         var server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
-        server.createContext("/v1/skills/skill/executions", exchange -> {
+        server.createContext("/v1/namespaces/default/skills/skill/executions", exchange -> {
             captured.set(exchange.getRequestHeaders().getFirst("Authorization"));
             body.set(new String(exchange.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
             byte[] response = ("{\"id\":\"" + UUID.randomUUID() + "\"}").getBytes();
@@ -45,13 +45,13 @@ class SpringExecutionTokenIssuerTest {
         server.start();
         try (var client = SidecarClient.builder().baseUrl(URI.create("http://localhost:" + server.getAddress().getPort())).build()) {
             var hostile = JsonMapper.builder().build().createObjectNode().put("sub", "forged").put("roles", "ADMIN").put("token", "forged-token");
-            client.submit("skill", hostile, snapshot);
+            client.submit("default", "skill", hostile, snapshot);
             var spring = SignedJWT.parse(captured.get().substring(7));
             assertThat(spring.verify(new RSASSAVerifier(source.publicKey()))).isTrue();
             var first = spring.getJWTClaimsSet();
             assertThat(first.getSubject()).isEqualTo("real-user"); assertThat(first.getStringListClaim("roles")).containsExactly("ROLE_EDITOR");
             assertThat(body.get()).contains("forged", "ADMIN", "forged-token");
-            client.submit("skill", hostile, issuer.issue(new AuthenticatedIdentity("real-user", List.of("ROLE_EDITOR"))));
+            client.submit("default", "skill", hostile, issuer.issue(new AuthenticatedIdentity("real-user", List.of("ROLE_EDITOR"))));
             var custom = SignedJWT.parse(captured.get().substring(7)).getJWTClaimsSet();
             assertThat(custom.getSubject()).isEqualTo(first.getSubject()); assertThat(custom.getAudience()).isEqualTo(first.getAudience());
             assertThat(custom.getIssuer()).isEqualTo(first.getIssuer()); assertThat(custom.getStringListClaim("roles")).isEqualTo(first.getStringListClaim("roles"));

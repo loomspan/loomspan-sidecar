@@ -13,7 +13,7 @@ Framework declaration/reference checks and management security/integrity checks
 still apply at their normal boundaries.
 
 ```yaml
-name: updateOrder
+name: update-order
 description: Update an authorized order
 executor: http
 config:

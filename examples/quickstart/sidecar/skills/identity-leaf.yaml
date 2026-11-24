@@ -1,4 +1,4 @@
-name: identityLeaf
+name: identity-leaf
 description: Return the independently verified caller identity.
 executor: http
 config:

@@ -49,7 +49,8 @@ def create_app() -> FastAPI:
     demo_password = os.environ["LOOMSPAN_DEMO_PASSWORD"].encode("utf-8")
     if not demo_password:
         raise ValueError("A local demo password is required")
-    skill = os.environ.get("LOOMSPAN_SKILL", "echo")
+    namespace = os.environ["LOOMSPAN_SKILL_NAMESPACE"]
+    local_name = os.environ["LOOMSPAN_SKILL_LOCAL_NAME"]
     loomspan = Loomspan(
         os.environ["LOOMSPAN_SIDECAR_URL"], signing, IssuanceSettings(issuer=ISSUER, roles=[EDITOR]),
     )
@@ -78,7 +79,7 @@ def create_app() -> FastAPI:
         issuer: Annotated[ExecutionTokenIssuer, Depends(loomspan.issuer)],
     ) -> dict[str, str]:
         credential = issuer.issue(user)
-        accepted = await client.submit(skill, {"text": body.text}, credential)
+        accepted = await client.submit(namespace, local_name, {"text": body.text}, credential)
         return {"id": str(accepted.id)}
 
     callbacks = APIRouter(prefix=loomspan.callback_prefix)

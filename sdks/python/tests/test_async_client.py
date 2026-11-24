@@ -52,11 +52,11 @@ def test_async_workflow_preserves_wire_contract() -> None:
 
     async def exercise(url):
         async with AsyncSidecarClient(url + "/prefix/%2f/") as client:
-            catalog = await client.list_skills(CREDENTIAL)
-            assert catalog[0].name == "default-echo"
-            assert catalog[0].input_schema == descriptor()["inputSchema"]
-            assert (await client.get_skill("café ?", CREDENTIAL)).name == "default-echo"
-            accepted = await client.submit("café ?", {"text": "日本語", "arr": [1, None]}, CREDENTIAL)
+            skill, = await client.list_skills("order-support", CREDENTIAL)
+            assert (skill.namespace, skill.local_name) == ("order-support", "lookup-3pl")
+            assert skill.input_schema == descriptor()["inputSchema"]
+            assert await client.get_skill(skill.namespace, skill.local_name, CREDENTIAL) == skill
+            accepted = await client.submit(skill.namespace, skill.local_name, {"text": "日本語", "arr": [1, None]}, CREDENTIAL)
             assert accepted.id == EXECUTION_ID
             current = await client.get_execution(accepted.id, CREDENTIAL)
             assert current.status is ExecutionStatus.QUEUED
@@ -64,6 +64,7 @@ def test_async_workflow_preserves_wire_contract() -> None:
             assert current.configuration_snapshot_id == CONFIG_ID
             failed = await client.wait_for_completion(accepted.id, CREDENTIAL, WaitOptions(1.0, 0.01))
             assert failed.status is ExecutionStatus.FAILED
+            assert (failed.namespace, failed.local_name) == (skill.namespace, skill.local_name)
             assert failed.result == result and failed.events == ()
             assert failed.failure.kind == "VALIDATION"
 
@@ -71,9 +72,9 @@ def test_async_workflow_preserves_wire_contract() -> None:
         asyncio.run(exercise(peer.url))
     status_path = f"/prefix/%2f/v1/executions/{EXECUTION_ID}"
     assert [(r.method, r.target) for r in peer.requests] == [
-        ("GET", "/prefix/%2f/v1/skills"),
-        ("GET", "/prefix/%2f/v1/skills/caf%C3%A9%20%3F"),
-        ("POST", "/prefix/%2f/v1/skills/caf%C3%A9%20%3F/executions"),
+        ("GET", "/prefix/%2f/v1/namespaces/order-support/skills"),
+        ("GET", "/prefix/%2f/v1/namespaces/order-support/skills/lookup-3pl"),
+        ("POST", "/prefix/%2f/v1/namespaces/order-support/skills/lookup-3pl/executions"),
         ("GET", status_path), ("GET", status_path), ("GET", status_path),
     ]
     for request in peer.requests:
@@ -88,9 +89,13 @@ def test_invalid_calls_do_not_dispatch_and_keep_context() -> None:
     async def exercise(url):
         async with AsyncSidecarClient(url) as client:
             with pytest.raises(LocalFailure):
-                await client.get_skill("a/b", CREDENTIAL)
+                await client.get_skill("default", "a/b", CREDENTIAL)
             with pytest.raises(LocalFailure):
-                await client.submit("echo", {"bad": float("nan")}, CREDENTIAL)
+                await client.list_skills("a/b", CREDENTIAL)
+            with pytest.raises(LocalFailure):
+                await client.submit("a/b", "echo", {}, CREDENTIAL)
+            with pytest.raises(LocalFailure):
+                await client.submit("default", "echo", {"bad": float("nan")}, CREDENTIAL)
             with pytest.raises(LocalFailure):
                 await client.get_execution(str(EXECUTION_ID), CREDENTIAL)
             with pytest.raises(LocalFailure) as error:
@@ -119,25 +124,25 @@ def test_concurrent_credentials_and_ignored_cookies() -> None:
         loop = asyncio.get_running_loop()
         first_arrived = asyncio.Event()
         async with AsyncSidecarClient(url) as client:
-            first = asyncio.create_task(client.get_skill("first", CREDENTIAL))
+            first = asyncio.create_task(client.get_skill("default", "first", CREDENTIAL))
             try:
                 await asyncio.wait_for(first_arrived.wait(), 1)
                 second = await asyncio.wait_for(
-                    client.get_skill("second", CredentialSnapshot("synthetic-second")), 1
+                    client.get_skill("default", "second", CredentialSnapshot("synthetic-second")), 1
                 )
                 assert not first.done()
             finally:
                 resume.set()
             assert second == await first
-            assert await client.get_skill("later", CREDENTIAL) == second
+            assert await client.get_skill("default", "later", CREDENTIAL) == second
 
     loop = first_arrived = None
     with WirePeer(respond) as peer:
         asyncio.run(exercise(peer.url))
     assert [(r.target, r.headers["authorization"]) for r in peer.requests] == [
-        ("/v1/skills/first", f"Bearer {TOKEN}"),
-        ("/v1/skills/second", "Bearer synthetic-second"),
-        ("/v1/skills/later", f"Bearer {TOKEN}"),
+        ("/v1/namespaces/default/skills/first", f"Bearer {TOKEN}"),
+        ("/v1/namespaces/default/skills/second", "Bearer synthetic-second"),
+        ("/v1/namespaces/default/skills/later", f"Bearer {TOKEN}"),
     ]
     assert all("cookie" not in r.headers and "accept-encoding" not in r.headers for r in peer.requests)
     assert peer.connections == 3
@@ -157,9 +162,9 @@ def test_redirects_and_challenges_are_single_attempts(method, status, headers) -
         async with AsyncSidecarClient(url) as client:
             with pytest.raises(HttpFailure) as error:
                 if method == "GET":
-                    await client.list_skills(CREDENTIAL)
+                    await client.list_skills("default", CREDENTIAL)
                 else:
-                    await client.submit("echo", {}, CREDENTIAL)
+                    await client.submit("default", "echo", {}, CREDENTIAL)
             assert error.value.status_code == status
             assert TOKEN not in repr(error.value.problem) + str(error.value)
             assert error.value.__cause__ is error.value.__context__ is None
@@ -180,7 +185,7 @@ def test_compression_and_missing_response_do_not_establish_acceptance(compressed
     async def exercise(url):
         async with AsyncSidecarClient(url) as client:
             with pytest.raises(AcceptanceUnknown) as error:
-                await client.submit("echo", {}, CREDENTIAL)
+                await client.submit("default", "echo", {}, CREDENTIAL)
             assert error.value.execution_id is None
 
     with WirePeer(respond) as peer:
@@ -213,7 +218,7 @@ def test_total_response_budget_bounds_stalls_and_trickling_body(mode) -> None:
         async with AsyncSidecarClient(url, response_timeout=BUDGET) as client:
             start = monotonic()
             with pytest.raises(ProtocolFailure):
-                await client.list_skills(CREDENTIAL)
+                await client.list_skills("default", CREDENTIAL)
             assert monotonic() - start < 1.2
             assert await asyncio.to_thread(released.wait, 1)
 
@@ -246,7 +251,7 @@ def test_unusable_response_preserves_observed_submission_status(framing, status)
     async def exercise(url):
         async with AsyncSidecarClient(url, max_response_size=64) as client:
             with pytest.raises(AcceptanceUnknown if status == 202 else HttpFailure) as error:
-                await client.submit("echo", {}, CREDENTIAL)
+                await client.submit("default", "echo", {}, CREDENTIAL)
             assert error.value.execution_id is None
             if status == 503:
                 assert error.value.status_code == 503 and error.value.problem is None
@@ -268,7 +273,7 @@ def test_exact_body_limit_and_chunked_informational_response() -> None:
 
     async def exercise(url):
         async with AsyncSidecarClient(url, max_response_size=2) as client:
-            assert await client.list_skills(CREDENTIAL) == ()
+            assert await client.list_skills("default", CREDENTIAL) == ()
 
     with WirePeer(respond) as peer:
         asyncio.run(exercise(peer.url))
@@ -298,9 +303,9 @@ def test_connect_deadline_cancels_resolution_before_dispatch(monkeypatch) -> Non
             f"http://localhost:{port}", connect_timeout=BUDGET, response_timeout=3
         ) as client:
             with pytest.raises(ProtocolFailure):
-                await asyncio.wait_for(client.list_skills(CREDENTIAL), 1.2)
+                await asyncio.wait_for(client.list_skills("default", CREDENTIAL), 1.2)
             assert cancelled.is_set()
-            assert await client.list_skills(CREDENTIAL) == ()
+            assert await client.list_skills("default", CREDENTIAL) == ()
             assert queries == 2
 
     with WirePeer(lambda conn, *_: reply_json(conn, 200, [])) as peer:
@@ -338,7 +343,7 @@ def test_upload_is_chunked_in_memory_and_bounded_under_backpressure(monkeypatch)
     async def exercise():
         async with AsyncSidecarClient("http://localhost", response_timeout=BUDGET) as client:
             with pytest.raises(AcceptanceUnknown):
-                await asyncio.wait_for(client.submit("echo", {"text": "x" * 200_000}, CREDENTIAL), 1)
+                await asyncio.wait_for(client.submit("default", "echo", {"text": "x" * 200_000}, CREDENTIAL), 1)
             assert stream.closed
 
     asyncio.run(exercise())
@@ -475,7 +480,7 @@ def test_native_cancellation_releases_network_without_replay(monkeypatch, mode) 
                     await task
                 pytest.fail("Outer application timeout did not fire")
             if mode == "submission":
-                task = asyncio.create_task(client.submit("echo", {}, CREDENTIAL))
+                task = asyncio.create_task(client.submit("default", "echo", {}, CREDENTIAL))
             else:
                 task = asyncio.create_task(client.wait_for_completion(EXECUTION_ID, CREDENTIAL))
             await asyncio.wait_for(reached_read.wait(), 1)
@@ -636,7 +641,7 @@ def test_close_aborts_active_body_and_rejects_new_calls(monkeypatch, submission)
         client = AsyncSidecarClient(url)
         async with client:
             if submission:
-                task = asyncio.create_task(client.submit("echo", {}, CREDENTIAL))
+                task = asyncio.create_task(client.submit("default", "echo", {}, CREDENTIAL))
             else:
                 task = asyncio.create_task(client.get_execution(EXECUTION_ID, CREDENTIAL))
             await asyncio.wait_for(reached_body.wait(), 1)
@@ -682,7 +687,7 @@ def test_context_exit_releases_active_connection() -> None:
             loop = asyncio.get_running_loop()
             arrived = asyncio.Event()
             async with client:
-                task = asyncio.create_task(client.list_skills(CREDENTIAL))
+                task = asyncio.create_task(client.list_skills("default", CREDENTIAL))
                 await asyncio.wait_for(arrived.wait(), 1)
             with pytest.raises(ProtocolFailure):
                 await asyncio.wait_for(task, 1)
@@ -716,13 +721,13 @@ def test_verified_tls_requires_authenticated_eof_for_close_delimited_body(
         async with AsyncSidecarClient(url, ssl_context=context) as client:
             if status == 503:
                 with pytest.raises(HttpFailure) as error:
-                    await client.submit("echo", {}, CREDENTIAL)
+                    await client.submit("default", "echo", {}, CREDENTIAL)
                 assert error.value.status_code == 503 and error.value.problem is None
             elif length_framed or notify:
-                assert (await client.submit("echo", {}, CREDENTIAL)).id == EXECUTION_ID
+                assert (await client.submit("default", "echo", {}, CREDENTIAL)).id == EXECUTION_ID
             else:
                 with pytest.raises(AcceptanceUnknown):
-                    await client.submit("echo", {}, CREDENTIAL)
+                    await client.submit("default", "echo", {}, CREDENTIAL)
 
     with WirePeer(respond, tls=server) as peer:
         asyncio.run(exercise(peer.url))
@@ -751,10 +756,10 @@ def test_tls_verifies_private_trust_client_identity_hostname_and_alpn() -> None:
     async def exercise(url, trust, accepted):
         async with AsyncSidecarClient(url, ssl_context=trust) as client:
             if accepted:
-                assert await client.list_skills(CREDENTIAL) == ()
+                assert await client.list_skills("default", CREDENTIAL) == ()
             else:
                 with pytest.raises(ProtocolFailure) as error:
-                    await client.list_skills(CREDENTIAL)
+                    await client.list_skills("default", CREDENTIAL)
                 assert error.value.__cause__ is error.value.__context__ is None
 
     trusted_server = server_context("127.0.0.1", "http/1.1")

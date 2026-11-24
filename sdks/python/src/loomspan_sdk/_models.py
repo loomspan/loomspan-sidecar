@@ -42,7 +42,8 @@ class ExecutionStatus(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class SkillDescriptor:
-    name: str
+    namespace: str
+    local_name: str
     description: str | None
     kind: str
     input_schema: str
@@ -105,7 +106,8 @@ class ExecutionEvent:
 @dataclass(frozen=True, slots=True)
 class ExecutionSnapshot:
     id: UUID
-    skill_name: str
+    namespace: str
+    local_name: str
     status: ExecutionStatus
     created_at: str
     completed_at: str | None

@@ -265,12 +265,13 @@ Bash from the repository root.
 ```sh
 python -m pip install './sdks/python[fastapi]' uvicorn
 export LOOMSPAN_SIDECAR_URL=http://127.0.0.1:8080
-export LOOMSPAN_SKILL=echo
+export LOOMSPAN_SKILL_NAMESPACE=default
+export LOOMSPAN_SKILL_LOCAL_NAME=echo-text
 read -r -s -p 'Local demo password: ' LOOMSPAN_DEMO_PASSWORD
 export LOOMSPAN_DEMO_PASSWORD
 ```
 
-Use a configured Sidecar and a skill accepting a `text` input. The example
+Set both skill identity variables for a published skill accepting a `text` input. The example
 issues credentials with issuer `orders-app` and includes the default Sidecar
 audience `loomspan-sidecar`. Configure Sidecar to trust the public JWKS from
 the chosen signing mode. See the [Sidecar trust settings](../../docs/operations.md).
@@ -395,9 +396,11 @@ from loomspan_sdk import CredentialSnapshot, SidecarClient
 
 credential = CredentialSnapshot(execution_jwt)
 with SidecarClient("https://sidecar.example.com/") as client:
-    catalog = client.list_skills(credential)
-    skill = client.get_skill("summarize", credential)
-    accepted = client.submit(skill.name, {"text": "Hello"}, credential)
+    catalog = client.list_skills("default", credential)
+    target = next(entry for entry in catalog
+                  if (entry.namespace, entry.local_name) == ("default", "summarize-report"))
+    skill = client.get_skill(target.namespace, target.local_name, credential)
+    accepted = client.submit(skill.namespace, skill.local_name, {"text": "Hello"}, credential)
     current = client.get_execution(accepted.id, credential)
     terminal = client.wait_for_completion(accepted.id, credential)
 ```
@@ -410,32 +413,43 @@ release local connections and reject further calls.
 ```python
 from loomspan_sdk import AsyncSidecarClient, CredentialSnapshot
 
-async def execute(client: AsyncSidecarClient, execution_jwt: str):
+async def execute(
+    client: AsyncSidecarClient, execution_jwt: str, namespace: str, local_name: str
+):
     credential = CredentialSnapshot(execution_jwt)
-    catalog = await client.list_skills(credential)
-    skill = await client.get_skill("summarize", credential)
-    accepted = await client.submit(skill.name, {"text": "Hello"}, credential)
+    catalog = await client.list_skills(namespace, credential)
+    target = next((entry for entry in catalog
+                   if (entry.namespace, entry.local_name) == (namespace, local_name)), None)
+    if target is None:
+        raise ValueError(f"Skill {namespace}:{local_name} was not found")
+    skill = await client.get_skill(target.namespace, target.local_name, credential)
+    accepted = await client.submit(skill.namespace, skill.local_name, {"text": "Hello"}, credential)
     current = await client.get_execution(accepted.id, credential)
     terminal = await client.wait_for_completion(accepted.id, credential)
     return terminal
 
-async def run(base_url: str, execution_jwt: str):
+async def run(base_url: str, execution_jwt: str, namespace: str, local_name: str):
     async with AsyncSidecarClient(base_url) as client:
-        return await execute(client, execution_jwt)
+        return await execute(client, execution_jwt, namespace, local_name)
 ```
 
 The runnable [sync example](examples/existing_credential.py) and
 [async example](examples/existing_credential_async.py) prompt for the credential
-and show discovery, submission, status and waiting.
+and show discovery, submission, status and waiting. Pass the base URL, namespace,
+local name and text as separate arguments.
 
-Discovery preserves descriptor names, descriptions, kinds and schema strings.
+The catalog takes an explicit namespace, including `default`. Reuse the
+descriptor's `namespace` and `local_name` for lookup and submission.
+Discovery also preserves descriptions, kinds and schema strings.
 Submission takes a Python dictionary representing a JSON object. The accepted
 execution ID comes from a complete HTTP 202 body, and status URLs use the
-configured base URL. Discovery and status expect HTTP 200. The SDK encodes skill
-names as one path segment and rejects blank names, controls, slashes,
+configured base URL. Discovery and status expect HTTP 200. The SDK encodes each
+identity component as a separate path segment and rejects blank names, controls, slashes,
 backslashes, percent signs and the names `.` and `..`.
+Sidecar validates portable naming rules at the
+[execution API](../../agent-skills/loomspan-sidecar-authoring/references/integration.md#execution-api).
 
-Snapshots carry the execution ID, skill name, status, original timestamp text,
+Snapshots carry the execution ID, `namespace`, `local_name`, status, original timestamp text,
 optional configuration snapshot ID, result text, primary failure and available
 events. Result text is unchanged, including an empty string or malformed
 JSON-looking text. A null result is `None`. A failed execution returns a
@@ -447,8 +461,8 @@ problem details that would overflow a float is represented by `decimal.Decimal`.
 When `snapshot.failure.kind` is `OUTPUT_SCHEMA`,
 `snapshot.failure.producing_skill_name` identifies the canonical skill that
 produced invalid output. Each entry in `snapshot.failure.issues` provides a
-JSON Pointer `path`, validator `code`, and `message`. The snapshot's
-`skill_name` is the requested skill. These details identify the terminal
+JSON Pointer `path`, validator `code`, and `message`. The snapshot's identity
+describes the requested skill. These details identify the terminal
 cause even when `events` is `None`. An absent producing skill is `None`.
 
 ## Deadlines and failures
@@ -516,5 +530,5 @@ from loomspan_sdk import SidecarClient
 context = ssl.create_default_context(cafile="private-ca.pem")
 context.load_cert_chain("sdk-client.pem", "sdk-client-key.pem")
 with SidecarClient("https://sidecar.example.com/", ssl_context=context) as client:
-    catalog = client.list_skills(credential)
+    catalog = client.list_skills("default", credential)
 ```

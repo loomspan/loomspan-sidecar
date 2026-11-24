@@ -1,4 +1,4 @@
-name: detailLeaf
+name: detail-leaf
 description: Return deterministic local detail.
 executor: http
 config:

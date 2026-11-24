@@ -109,24 +109,31 @@ X.509 certificates to execution identities.
 Authenticated clients can use:
 
 ```text
-GET  /v1/skills
-GET  /v1/skills/{name}
-POST /v1/skills/{name}/executions
+GET  /v1/namespaces/{namespace}/skills
+GET  /v1/namespaces/{namespace}/skills/{localName}
+POST /v1/namespaces/{namespace}/skills/{localName}/executions
 GET  /v1/executions/{id}
 ```
 
-Catalog discovery exposes every descriptor, including role-restricted skills;
-descriptors include nullable `outputSchema` metadata (as exposed by the public Framework descriptor).
-authorization is enforced when POST validates the JSON-object input. Accepted
+Choose a namespace explicitly, including `default`. Catalog discovery exposes
+the descriptors in that namespace, including role-restricted skills. Each
+descriptor includes `namespace`, `localName` and nullable `outputSchema`.
+Pass the returned components as separate path segments for detail and submission.
+Each component matches `[a-z][a-z0-9]*(?:-[a-z0-9]+)*` and excludes the
+substrings `anthropic` and `claude`. The two components plus a two-character
+separator budget fit within 64 characters. Display the resolved pair as
+`namespace:local-name`.
+Authorization is enforced when POST validates the JSON-object input. Accepted
 requests return `202`, an `id`, and a `Location` header without waiting. Poll the
 location until `COMPLETED` or `FAILED`. Successful results are the framework's
 unchanged text. A known owned failure is a normal `200` representation whose
 kind is `INPUT_VALIDATION`, `ACCESS_DENIED`, `SKILL_FAILURE`, or
 `OUTPUT_SCHEMA`.
 
-When an output-schema violation is the terminal cause, `skillName` is the
-requested skill and `failure.producingSkillName` is the canonical name of the
-skill whose output failed validation. The failure includes structured issues.
+The retained response uses `namespace` and `localName` for the requested
+skill. When an output-schema violation is the terminal cause,
+`failure.producingSkillName` is the qualified name of the skill whose output
+failed validation. The failure includes structured issues.
 Each issue contains a JSON Pointer `path` (an empty string points to the root),
 the schema constraint `code`, and the validator's `message`. These fields are
 available with every diagnostics policy. The following shows selected fields
@@ -134,13 +141,14 @@ from a failed parent execution.
 
 ```json
 {
-  "skillName": "parent",
+  "namespace": "default",
+  "localName": "parent",
   "status": "FAILED",
   "result": null,
   "failure": {
     "kind": "OUTPUT_SCHEMA",
     "message": "Skill 'parent' execution failed.",
-    "producingSkillName": "default-tsTriageStructured",
+    "producingSkillName": "default:ts-triage-structured",
     "issues": [
       {
         "path": "/repeatContactProbability",
@@ -154,8 +162,11 @@ from a failed parent execution.
 
 ```powershell
 $headers = @{ Authorization = "Bearer $env:SIDECAR_ACCESS_TOKEN" }
-Invoke-RestMethod http://localhost:8080/v1/skills -Headers $headers
-$accepted = Invoke-RestMethod http://localhost:8080/v1/skills/triageSupportRequest/executions `
+$catalog = Invoke-RestMethod http://localhost:8080/v1/namespaces/default/skills -Headers $headers
+$skill = $catalog | Where-Object localName -eq 'triage-support-request'
+$skillUrl = "http://localhost:8080/v1/namespaces/$($skill.namespace)/skills/$($skill.localName)"
+Invoke-RestMethod $skillUrl -Headers $headers
+$accepted = Invoke-RestMethod "$skillUrl/executions" `
   -Method Post -Headers $headers -ContentType application/json -Body '{"customerMessage":"Checkout times out after payment; retrying sometimes creates duplicate orders."}'
 Invoke-RestMethod "http://localhost:8080/v1/executions/$($accepted.id)" -Headers $headers
 ```

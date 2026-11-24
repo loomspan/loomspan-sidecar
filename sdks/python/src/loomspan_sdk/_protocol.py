@@ -66,8 +66,12 @@ def _execution_path(execution_id: UUID) -> str:
     return f"/v1/executions/{execution_id}"
 
 
-def _skill_path(name: str) -> str:
-    return "/v1/skills/" + skill_segment(name)
+def _catalog_path(namespace: str) -> str:
+    return f"/v1/namespaces/{skill_segment(namespace)}/skills"
+
+
+def _skill_path(namespace: str, local_name: str) -> str:
+    return f"{_catalog_path(namespace)}/{skill_segment(local_name)}"
 
 
 def _check_credential(
@@ -145,12 +149,12 @@ def skill_segment(name: str) -> str:
         or name in (".", "..")
         or any(_control(ch) or ch in "/\\%" for ch in name)
     ):
-        raise LocalFailure("Invalid skill name")
+        raise LocalFailure("Invalid skill identity component")
     try:
         return quote(name, safe="")
     except UnicodeError:
         pass
-    raise LocalFailure("Invalid skill name")
+    raise LocalFailure("Invalid skill identity component")
 
 
 def _validate_json(value: object) -> None:
@@ -286,7 +290,8 @@ def _instant(value: str) -> str:
 def parse_skill(value: JsonValue) -> SkillDescriptor:
     obj = _object(value)
     return SkillDescriptor(
-        _text(obj, "name"),
+        _text(obj, "namespace"),
+        _text(obj, "localName"),
         _optional_text(obj, "description"),
         _text(obj, "kind"),
         _text(obj, "inputSchema"),
@@ -346,7 +351,8 @@ def parse_snapshot(value: JsonValue, expected: UUID) -> ExecutionSnapshot:
     configuration = _optional_text(obj, "configurationSnapshotId")
     return ExecutionSnapshot(
         execution_id,
-        _text(obj, "skillName"),
+        _text(obj, "namespace"),
+        _text(obj, "localName"),
         status,
         _instant(_text(obj, "createdAt")),
         None if completed is None else _instant(completed),

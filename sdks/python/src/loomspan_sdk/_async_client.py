@@ -14,6 +14,7 @@ from ._http import _CONNECT_TIMEOUT, _MAX_RESPONSE_SIZE, _RESPONSE_TIMEOUT, _cli
 from ._models import AcceptedExecution, ExecutionSnapshot, SkillDescriptor, WaitOptions
 from ._protocol import (
     _CLIENT_CLOSED,
+    _catalog_path,
     _check_credential,
     _execution_path,
     _skill_path,
@@ -63,16 +64,16 @@ class AsyncSidecarClient:
         """Release local connections and prevent new calls."""
         await self._transport.aclose()
 
-    async def list_skills(self, credential: CredentialSnapshot) -> tuple[SkillDescriptor, ...]:
-        return await self._request("/v1/skills", credential, parse_catalog)
+    async def list_skills(self, namespace: str, credential: CredentialSnapshot) -> tuple[SkillDescriptor, ...]:
+        return await self._request(_catalog_path(namespace), credential, parse_catalog)
 
-    async def get_skill(self, name: str, credential: CredentialSnapshot) -> SkillDescriptor:
-        return await self._request(_skill_path(name), credential, parse_skill)
+    async def get_skill(self, namespace: str, local_name: str, credential: CredentialSnapshot) -> SkillDescriptor:
+        return await self._request(_skill_path(namespace, local_name), credential, parse_skill)
 
     async def submit[T](
-        self, name: str, input: dict[str, T], credential: CredentialSnapshot
+        self, namespace: str, local_name: str, input: dict[str, T], credential: CredentialSnapshot
     ) -> AcceptedExecution:
-        path = _skill_path(name) + "/executions"
+        path = _skill_path(namespace, local_name) + "/executions"
         return await self._request(path, credential, parse_acceptance, body=encode_input(input))
 
     async def get_execution(

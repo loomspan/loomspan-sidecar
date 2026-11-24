@@ -1,4 +1,4 @@
-name: triageSupportRequest
+name: triage-support-request
 description: Turn a customer issue into an actionable engineering triage brief.
 model: assistant
 prompt: >

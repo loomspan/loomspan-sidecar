@@ -1,4 +1,4 @@
-name: readRecord
+name: read-record
 description: Read one record owned by the authenticated caller
 executor: http
 config:

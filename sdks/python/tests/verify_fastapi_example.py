@@ -51,7 +51,7 @@ async def exercise(mode, runtime):
 
     def sidecar(conn, incoming, index):
         assert index == 0
-        assert (incoming.method, incoming.target) == ("POST", "/v1/skills/echo/executions")
+        assert (incoming.method, incoming.target) == ("POST", "/v1/namespaces/order-support/skills/echo-text/executions")
         assert json.loads(incoming.body) == {"text": "hello"}
         assert incoming.headers["authorization"].startswith("Bearer ")
         reply_json(conn, 202, {"id": EXECUTION_ID})
@@ -60,7 +60,8 @@ async def exercise(mode, runtime):
         os.environ.update(
             LOOMSPAN_SIGNING_MODE=mode, LOOMSPAN_KEY_DIRECTORY=str(runtime),
             LOOMSPAN_SIGNING_KEY=str(pem), LOOMSPAN_JWKS_EXPORT=str(export),
-            LOOMSPAN_SIDECAR_URL=peer.url, LOOMSPAN_DEMO_PASSWORD=PASSWORD, LOOMSPAN_SKILL="echo",
+            LOOMSPAN_SIDECAR_URL=peer.url, LOOMSPAN_DEMO_PASSWORD=PASSWORD,
+            LOOMSPAN_SKILL_NAMESPACE="order-support", LOOMSPAN_SKILL_LOCAL_NAME="echo-text",
         )
         app = create_app()
         assert not export.exists()

@@ -1,4 +1,13 @@
 loomspan:
+  connections:
+    local:
+      driver: openai
+      base-url: http://127.0.0.1:8081/v1
+      api-key: quickstart-fixture
+  models:
+    localplanner:
+      connection: local
+      provider-model: deterministic-planner
   executor-config:
     default:
       http:

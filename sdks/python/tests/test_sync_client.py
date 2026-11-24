@@ -54,19 +54,21 @@ def test_workflow_preserves_wire_contract() -> None:
             reply_json(conn, 200, snapshot("FAILED") | {"result": result, "events": []})
 
     with WirePeer(respond) as peer, SidecarClient(peer.url + "/prefix/%2f/") as client:
-        assert client.list_skills(CREDENTIAL)[0].name == "default-echo"
-        assert client.get_skill("café ?", CREDENTIAL).name == "default-echo"
-        accepted = client.submit("café ?", {"text": "日本語", "arr": [1, None]}, CREDENTIAL)
+        skill, = client.list_skills("order-support", CREDENTIAL)
+        assert (skill.namespace, skill.local_name) == ("order-support", "lookup-3pl")
+        assert client.get_skill(skill.namespace, skill.local_name, CREDENTIAL) == skill
+        accepted = client.submit(skill.namespace, skill.local_name, {"text": "日本語", "arr": [1, None]}, CREDENTIAL)
         assert accepted.id == EXECUTION_ID
         assert client.get_execution(accepted.id, CREDENTIAL).status is ExecutionStatus.QUEUED
         failed = client.wait_for_completion(accepted.id, CREDENTIAL, WaitOptions(1.0, 0.01))
         assert failed.status is ExecutionStatus.FAILED
+        assert (failed.namespace, failed.local_name) == (skill.namespace, skill.local_name)
         assert failed.result == result and failed.events == () and failed.failure.kind == "VALIDATION"
     status_path = f"/prefix/%2f/v1/executions/{EXECUTION_ID}"
     assert [(r.method, r.target) for r in peer.requests] == [
-        ("GET", "/prefix/%2f/v1/skills"),
-        ("GET", "/prefix/%2f/v1/skills/caf%C3%A9%20%3F"),
-        ("POST", "/prefix/%2f/v1/skills/caf%C3%A9%20%3F/executions"),
+        ("GET", "/prefix/%2f/v1/namespaces/order-support/skills"),
+        ("GET", "/prefix/%2f/v1/namespaces/order-support/skills/lookup-3pl"),
+        ("POST", "/prefix/%2f/v1/namespaces/order-support/skills/lookup-3pl/executions"),
         ("GET", status_path), ("GET", status_path), ("GET", status_path),
     ]
     for request in peer.requests:
@@ -82,11 +84,15 @@ def test_invalid_calls_do_not_dispatch_and_keep_status_context() -> None:
     with WirePeer(lambda *_: pytest.fail("Unexpected dispatch")) as peer:
         with SidecarClient(peer.url) as client:
             with pytest.raises(LocalFailure):
-                client.submit("echo", {"bad": {1: "bad key"}}, CREDENTIAL)
+                client.submit("default", "echo", {"bad": {1: "bad key"}}, CREDENTIAL)
             with pytest.raises(LocalFailure):
-                client.submit("echo", {"bad": float("nan")}, CREDENTIAL)
+                client.submit("default", "echo", {"bad": float("nan")}, CREDENTIAL)
             with pytest.raises(LocalFailure):
-                client.get_skill("dot/segment", CREDENTIAL)
+                client.get_skill("default", "dot/segment", CREDENTIAL)
+            with pytest.raises(LocalFailure):
+                client.list_skills("dot/segment", CREDENTIAL)
+            with pytest.raises(LocalFailure):
+                client.submit("dot/segment", "echo", {}, CREDENTIAL)
             with pytest.raises(LocalFailure) as raised:
                 client.get_execution(EXECUTION_ID, None)
             assert raised.value.execution_id == EXECUTION_ID
@@ -109,7 +115,7 @@ def test_invalid_acceptance_is_not_replayed(status, body) -> None:
     with WirePeer(lambda conn, *_: reply(conn, status, body)) as peer:
         with SidecarClient(peer.url) as client:
             with pytest.raises(AcceptanceUnknown) as error:
-                client.submit("echo", {}, CREDENTIAL)
+                client.submit("default", "echo", {}, CREDENTIAL)
             assert error.value.execution_id is None
             assert error.value.__context__ is None and error.value.__cause__ is None
     assert len(peer.requests) == 1 and peer.requests[0].method == "POST"
@@ -123,7 +129,7 @@ def test_complete_json_in_incomplete_acceptance_frame_is_uncertain() -> None:
 
     with WirePeer(respond) as peer, SidecarClient(peer.url) as client:
         with pytest.raises(AcceptanceUnknown) as error:
-            client.submit("echo", {}, CREDENTIAL)
+            client.submit("default", "echo", {}, CREDENTIAL)
         assert error.value.execution_id is None
     assert len(peer.requests) == 1
 
@@ -158,14 +164,14 @@ def test_concurrent_credentials_are_isolated_and_cookies_are_ignored() -> None:
 
     with WirePeer(respond) as peer, SidecarClient(peer.url) as client:
         with ThreadPoolExecutor(2) as callers:
-            first = callers.submit(client.get_skill, "first", CredentialSnapshot("user-one"))
-            second = callers.submit(client.get_skill, "second", CredentialSnapshot("user-two"))
-            assert first.result(3).name == second.result(3).name == "default-echo"
-        client.get_skill("third", CREDENTIAL)
+            first = callers.submit(client.get_skill, "default", "first", CredentialSnapshot("user-one"))
+            second = callers.submit(client.get_skill, "default", "second", CredentialSnapshot("user-two"))
+            assert first.result(3).local_name == second.result(3).local_name == "lookup-3pl"
+        client.get_skill("default", "third", CREDENTIAL)
     assert {r.target: r.headers["authorization"] for r in peer.requests} == {
-        "/v1/skills/first": "Bearer user-one",
-        "/v1/skills/second": "Bearer user-two",
-        "/v1/skills/third": f"Bearer {TOKEN}",
+        "/v1/namespaces/default/skills/first": "Bearer user-one",
+        "/v1/namespaces/default/skills/second": "Bearer user-two",
+        "/v1/namespaces/default/skills/third": f"Bearer {TOKEN}",
     }
     assert all("cookie" not in r.headers for r in peer.requests)
 
@@ -184,9 +190,9 @@ def test_redirect_and_auth_challenge_are_not_replayed(status, submission) -> Non
     with WirePeer(respond) as peer, SidecarClient(peer.url) as client:
         with pytest.raises(HttpFailure) as error:
             if submission:
-                client.submit("echo", {}, CREDENTIAL)
+                client.submit("default", "echo", {}, CREDENTIAL)
             else:
-                client.list_skills(CREDENTIAL)
+                client.list_skills("default", CREDENTIAL)
         assert error.value.status_code == status and error.value.problem == {"title": "Try again"}
     assert len(peer.requests) == 1
 
@@ -200,7 +206,7 @@ def test_content_is_not_decompressed() -> None:
 
     with WirePeer(respond) as peer, SidecarClient(peer.url) as client:
         with pytest.raises(AcceptanceUnknown):
-            client.submit("echo", {}, CREDENTIAL)
+            client.submit("default", "echo", {}, CREDENTIAL)
     assert len(peer.requests) == 1
 
 
@@ -236,12 +242,12 @@ def test_absolute_deadline_closes_incomplete_peer_io(partial, trickle, error_typ
     with WirePeer(respond) as peer, SidecarClient(peer.url, response_timeout=BUDGET) as client:
         start = monotonic()
         with pytest.raises(error_type) as error:
-            client.list_skills(CREDENTIAL)
+            client.list_skills("default", CREDENTIAL)
         assert 0.18 <= monotonic() - start < 1.3
         if error_type is HttpFailure:
             assert error.value.status_code == 503 and error.value.problem is None
         assert released.wait(1.0)
-        assert client.list_skills(CREDENTIAL) == ()
+        assert client.list_skills("default", CREDENTIAL) == ()
     assert len(peer.requests) == 2
 
 
@@ -263,14 +269,14 @@ def test_bounded_response_framing(framing, status, complete) -> None:
 
     with WirePeer(respond) as peer, SidecarClient(peer.url, max_response_size=4) as client:
         if complete:
-            assert client.list_skills(CREDENTIAL) == ()
+            assert client.list_skills("default", CREDENTIAL) == ()
         elif status == 503:
             with pytest.raises(HttpFailure) as error:
-                client.list_skills(CREDENTIAL)
+                client.list_skills("default", CREDENTIAL)
             assert error.value.status_code == 503 and error.value.problem is None
         else:
             with pytest.raises(ProtocolFailure):
-                client.list_skills(CREDENTIAL)
+                client.list_skills("default", CREDENTIAL)
     assert len(peer.requests) == 1
 
 
@@ -285,7 +291,7 @@ def test_oversized_submission_response_closes_without_draining(status) -> None:
 
     with WirePeer(respond) as peer, SidecarClient(peer.url, max_response_size=48) as client:
         with pytest.raises(AcceptanceUnknown if status == 202 else HttpFailure) as error:
-            client.submit("echo", {}, CREDENTIAL)
+            client.submit("default", "echo", {}, CREDENTIAL)
         if status == 503:
             assert error.value.status_code == 503 and error.value.problem is None
         assert released.wait(1)
@@ -298,7 +304,7 @@ def test_informational_status_does_not_replace_final_response() -> None:
         reply_json(conn, 200, [])
 
     with WirePeer(respond) as peer, SidecarClient(peer.url) as client:
-        assert client.list_skills(CREDENTIAL) == ()
+        assert client.list_skills("default", CREDENTIAL) == ()
 
 
 def test_connect_budget_covers_tls_handshake_and_releases_socket() -> None:
@@ -312,7 +318,7 @@ def test_connect_budget_covers_tls_handshake_and_releases_socket() -> None:
         with SidecarClient(f"https://127.0.0.1:{peer.port}", connect_timeout=BUDGET) as client:
             start = monotonic()
             with pytest.raises(ProtocolFailure):
-                client.list_skills(CREDENTIAL)
+                client.list_skills("default", CREDENTIAL)
             assert 0.18 <= monotonic() - start < 1.3
             assert released.wait(1)
     assert peer.connections == 1 and peer.requests == []
@@ -339,7 +345,7 @@ def test_response_budget_stops_stalled_upload(monkeypatch) -> None:
         with SidecarClient(peer.url, response_timeout=BUDGET) as client:
             start = monotonic()
             with pytest.raises(AcceptanceUnknown):
-                client.submit("echo", {"text": "x" * payload_size}, CREDENTIAL)
+                client.submit("default", "echo", {"text": "x" * payload_size}, CREDENTIAL)
             assert 0.18 <= monotonic() - start < 1.5
             assert released.wait(1.5)
     assert peer.connections == 1
@@ -360,8 +366,8 @@ def test_resolver_elapsed_time_is_charged_before_dispatch(monkeypatch) -> None:
     with WirePeer(lambda conn, *_: reply_json(conn, 200, [])) as peer:
         with SidecarClient(peer.url, connect_timeout=0.07) as client:
             with pytest.raises(ProtocolFailure):
-                client.list_skills(CREDENTIAL)
-            assert client.list_skills(CREDENTIAL) == ()
+                client.list_skills("default", CREDENTIAL)
+            assert client.list_skills("default", CREDENTIAL) == ()
     assert lookups == 2 and len(peer.requests) == 1 and peer.connections == 1
 
 
@@ -487,7 +493,7 @@ def test_close_aborts_pending_message_instead_of_delimiting_it(monkeypatch, tls)
     def submit():
         nonlocal caller
         caller = current_thread()
-        return client.submit("echo", {}, CREDENTIAL)
+        return client.submit("default", "echo", {}, CREDENTIAL)
 
     monkeypatch.setattr(socket_type, "recv", receive)
     with WirePeer(respond, tls=server_context) as peer:
@@ -527,13 +533,13 @@ def test_https_requires_authenticated_eof_for_close_delimited_body(status, lengt
         with SidecarClient(peer.url, ssl_context=client_context) as client:
             if status == 503:
                 with pytest.raises(HttpFailure) as error:
-                    client.submit("echo", {}, CREDENTIAL)
+                    client.submit("default", "echo", {}, CREDENTIAL)
                 assert error.value.status_code == 503 and error.value.problem is None
             elif length_framed or notify:
-                assert client.submit("echo", {}, CREDENTIAL).id == EXECUTION_ID
+                assert client.submit("default", "echo", {}, CREDENTIAL).id == EXECUTION_ID
             else:
                 with pytest.raises(AcceptanceUnknown):
-                    client.submit("echo", {}, CREDENTIAL)
+                    client.submit("default", "echo", {}, CREDENTIAL)
     assert len(peer.requests) == 1
 
 
@@ -571,7 +577,7 @@ def test_native_keyboard_interrupt_closes_an_incomplete_submission(monkeypatch) 
         monkeypatch.setattr(socket.socket, "recv", interrupt_recv)
     with WirePeer(respond) as peer, SidecarClient(peer.url) as client:
         with pytest.raises(KeyboardInterrupt) as raised:
-            client.submit("echo", {}, CREDENTIAL)
+            client.submit("default", "echo", {}, CREDENTIAL)
         assert not hasattr(raised.value, "last_snapshot")
         assert released.wait(1)
         assert client.get_execution(EXECUTION_ID, CREDENTIAL).status.terminal
@@ -625,11 +631,11 @@ def test_verified_private_ca_and_client_identity() -> None:
 
     with WirePeer(respond, tls=server_context("127.0.0.1")) as peer:
         with SidecarClient(peer.url, ssl_context=client_context) as client:
-            assert client.list_skills(CREDENTIAL) == ()
+            assert client.list_skills("default", CREDENTIAL) == ()
         for context in (None, missing_identity):
             with SidecarClient(peer.url, ssl_context=context) as client:
                 with pytest.raises(ProtocolFailure) as error:
-                    client.list_skills(CREDENTIAL)
+                    client.list_skills("default", CREDENTIAL)
                 assert error.value.__cause__ is None and error.value.__context__ is None
                 assert TOKEN not in "".join(traceback.format_exception(error.value))
         insecure = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -649,5 +655,5 @@ def test_verified_private_ca_and_client_identity() -> None:
     with WirePeer(respond, tls=server_context("localhost")) as wrong_host:
         with SidecarClient(wrong_host.url, ssl_context=client_context) as client:
             with pytest.raises(ProtocolFailure):
-                client.list_skills(CREDENTIAL)
+                client.list_skills("default", CREDENTIAL)
     assert wrong_host.connections == 1 and wrong_host.requests == []

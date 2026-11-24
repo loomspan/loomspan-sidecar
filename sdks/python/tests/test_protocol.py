@@ -20,6 +20,8 @@ from loomspan_sdk import (
     WaitOptions,
 )
 from loomspan_sdk._protocol import (
+    _catalog_path,
+    _skill_path,
     _Response,
     decode_json,
     decode_response,
@@ -40,7 +42,8 @@ CREDENTIAL = CredentialSnapshot("synthetic-credential")
 
 def descriptor():
     return {
-        "name": "default-echo",
+        "namespace": "order-support",
+        "localName": "lookup-3pl",
         "description": "",
         "kind": "HTTP",
         "inputSchema": '{ "type": "object" }',
@@ -52,7 +55,8 @@ def descriptor():
 def snapshot(status="QUEUED"):
     value = {
         "id": str(EXECUTION_ID).upper(),
-        "skillName": "default-echo",
+        "namespace": "order-support",
+        "localName": "lookup-3pl",
         "status": status,
         "createdAt": CREATED,
     }
@@ -125,6 +129,8 @@ def test_base_and_skill_path_encoding() -> None:
     assert parse_origin("http://[fe80::1%25LocalZone]:8080").hostname == "fe80::1%LocalZone"
     assert skill_segment("café ?#:@") == "caf%C3%A9%20%3F%23%3A%40"
     assert skill_segment("\N{NO-BREAK SPACE}") == "%C2%A0"
+    assert _catalog_path("Café ?") == "/v1/namespaces/Caf%C3%A9%20%3F/skills"
+    assert _skill_path("Café ?", " lookup!") == "/v1/namespaces/Caf%C3%A9%20%3F/skills/%20lookup%21"
 
 
 @pytest.mark.parametrize("name", [
@@ -177,8 +183,9 @@ def test_malformed_json(body) -> None:
 
 def test_catalog_and_acceptance_model() -> None:
     (skill,) = parse_catalog([descriptor()])
-    assert (skill.name, skill.description, skill.kind, skill.input_schema, skill.output_schema) == (
-        "default-echo", "", "HTTP", '{ "type": "object" }', '{"type":"string"}'
+    assert (skill.namespace, skill.local_name) == ("order-support", "lookup-3pl")
+    assert (skill.description, skill.kind, skill.input_schema, skill.output_schema) == (
+        "", "HTTP", '{ "type": "object" }', '{"type":"string"}'
     )
     assert parse_catalog([]) == ()
     assert parse_skill({k: v for k, v in descriptor().items() if k != "description"}).description is None
@@ -188,6 +195,11 @@ def test_catalog_and_acceptance_model() -> None:
             parse_acceptance(value)
     with pytest.raises(ValueError):
         parse_catalog(descriptor())
+    for field in ("namespace", "localName"):
+        incomplete = descriptor()
+        del incomplete[field]
+        with pytest.raises(ValueError):
+            parse_catalog([incomplete | {"name": "lookup-3pl"}])
 
 
 def test_large_valid_json_number_does_not_invalidate_an_envelope() -> None:
@@ -198,7 +210,8 @@ def test_large_valid_json_number_does_not_invalidate_an_envelope() -> None:
 
 
 @pytest.mark.parametrize(("field", "invalid"), [
-    ("name", None), ("name", " "), ("kind", None), ("kind", 13),
+    ("namespace", None), ("namespace", 13), ("localName", None), ("localName", " "),
+    ("kind", None), ("kind", 13),
     ("inputSchema", None), ("inputSchema", {}), ("description", 1), ("outputSchema", []),
 ])
 def test_descriptor_known_fields_must_be_valid(field, invalid) -> None:
@@ -220,7 +233,8 @@ def test_status_result_failure_and_event_fidelity(result) -> None:
         "extra": False,
     }
     current = parse_snapshot(value, EXECUTION_ID)
-    assert current.id == EXECUTION_ID and current.skill_name == "default-echo"
+    assert current.id == EXECUTION_ID
+    assert (current.namespace, current.local_name) == ("order-support", "lookup-3pl")
     assert current.status is ExecutionStatus.FAILED and current.status.terminal
     assert current.created_at == CREATED and current.completed_at == value["completedAt"]
     assert current.result == result and current.configuration_snapshot_id == CONFIG_ID
@@ -256,7 +270,7 @@ def test_optional_diagnostics() -> None:
 def test_terminal_output_schema_failure() -> None:
     issue = {"path": "/repeatContactProbability", "code": "type", "message": "null found, number expected"}
     value = snapshot("FAILED") | {
-        "skillName": "parent",
+        "localName": "parent",
         "result": None,
         "failure": {
             "kind": "OUTPUT_SCHEMA",
@@ -266,7 +280,7 @@ def test_terminal_output_schema_failure() -> None:
         },
     }
     result = parse_snapshot(value, EXECUTION_ID)
-    assert result.skill_name == "parent" and result.status is ExecutionStatus.FAILED
+    assert result.local_name == "parent" and result.status is ExecutionStatus.FAILED
     assert result.result is None and result.events is None
     assert result.failure is not None
     assert result.failure.kind == "OUTPUT_SCHEMA"
@@ -280,7 +294,8 @@ def test_terminal_output_schema_failure() -> None:
 
 
 @pytest.mark.parametrize(("field", "invalid"), [
-    ("id", None), ("id", str(uuid4())), ("skillName", "\u2003"), ("skillName", {}),
+    ("id", None), ("id", str(uuid4())), ("namespace", None), ("namespace", {}),
+    ("localName", "\u2003"), ("localName", {}),
     ("status", "pending"), ("createdAt", "2026-02-30T12:01:00Z"), ("createdAt", 0),
     ("createdAt", "-0000-01-01T00:00:00Z"),
     ("completedAt", ""), ("result", {"unexpected": "object"}), ("configurationSnapshotId", "uuid"),

@@ -95,15 +95,15 @@ def completion(content):
 def reset_responses():
     global RESPONSES
     RESPONSES = [
-        {"capabilityName": "quickstartPlanner", "createdAt": "2026-09-14T00:00:00Z", "status": "VALID",
+        {"capabilityName": "default:quickstart-planner", "createdAt": "2026-09-14T00:00:00Z", "status": "VALID",
          "tasks": [
-             {"taskId": "identity", "title": "Verify identity", "status": "PENDING", "capabilityName": "identityLeaf",
+             {"taskId": "identity", "title": "Verify identity", "status": "PENDING", "capabilityName": "default:identity-leaf",
               "intent": "Verify caller", "dependsOn": [], "expectedOutputs": ["identity"], "parallelGroup": None, "note": ""},
-             {"taskId": "detail", "title": "Fetch detail", "status": "PENDING", "capabilityName": "detailLeaf",
+             {"taskId": "detail", "title": "Fetch detail", "status": "PENDING", "capabilityName": "default:detail-leaf",
               "intent": "Fetch detail", "dependsOn": ["identity"], "expectedOutputs": ["detail"], "parallelGroup": None, "note": ""}]},
-        {"stepAction": "CALL_TOOL", "taskId": "identity", "toolName": "identityLeaf",
+        {"stepAction": "CALL_TOOL", "taskId": "identity", "toolName": "default:identity-leaf",
          "toolArguments": {"message": "verify"}},
-        {"stepAction": "CALL_TOOL", "taskId": "detail", "toolName": "detailLeaf",
+        {"stepAction": "CALL_TOOL", "taskId": "detail", "toolName": "default:detail-leaf",
          "toolArguments": {"message": "detail"}},
         {"stepAction": "FINAL_RESPONSE", "finalResponse": "quickstart complete"},
     ]

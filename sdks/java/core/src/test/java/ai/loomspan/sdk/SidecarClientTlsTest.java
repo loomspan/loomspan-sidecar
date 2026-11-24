@@ -44,7 +44,7 @@ class SidecarClientTlsTest {
         var attempts = new AtomicInteger();
         var server = HttpsServer.create(new InetSocketAddress("localhost", 0), 0);
         server.setHttpsConfigurator(new HttpsConfigurator(serverSsl));
-        server.createContext("/v1/skills", exchange -> {
+        server.createContext("/v1/namespaces/default/skills", exchange -> {
             attempts.incrementAndGet();
             byte[] body = "[]".getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, body.length);
@@ -56,13 +56,13 @@ class SidecarClientTlsTest {
         URI wrongHost = URI.create("https://127.0.0.1:" + server.getAddress().getPort());
         try {
             try (var client = SidecarClient.builder().baseUrl(correct).sslContext(clientSsl).build()) {
-                assertTrue(client.listSkills(credential).isEmpty());
+                assertTrue(client.listSkills("default", credential).isEmpty());
             }
             try (var client = SidecarClient.builder().baseUrl(correct).build()) {
-                assertThrows(SidecarException.class, () -> client.listSkills(credential));
+                assertThrows(SidecarException.class, () -> client.listSkills("default", credential));
             }
             try (var client = SidecarClient.builder().baseUrl(wrongHost).sslContext(clientSsl).build()) {
-                assertThrows(SidecarException.class, () -> client.listSkills(credential));
+                assertThrows(SidecarException.class, () -> client.listSkills("default", credential));
             }
             assertEquals(1, attempts.get(), "Untrusted and wrong-host TLS must fail before HTTP");
         } finally {

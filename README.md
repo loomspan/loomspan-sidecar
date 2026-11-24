@@ -62,7 +62,7 @@ Start with a skill that assesses a support report and identifies what an enginee
 should investigate:
 
 ```yaml
-name: triageSupportRequest
+name: triage-support-request
 description: Turn a customer issue into an actionable engineering triage brief.
 model: assistant
 prompt: >
@@ -80,7 +80,7 @@ input_schema:
 After publishing it with an `assistant` model connection, your application sends:
 
 ```http
-POST /v1/skills/triageSupportRequest/executions
+POST /v1/namespaces/default/skills/triage-support-request/executions
 Authorization: Bearer <execution-access-token>
 Content-Type: application/json
 
@@ -93,10 +93,11 @@ location with a token for the same issuer and subject until `COMPLETED` or
 causes, and next checks. This skill reasons over the supplied report; it does
 not inspect payments or orders, and its conclusions need review.
 
-The [complete quickstart](docs/quickstart.md) provides the build, local JWT
-fixture, administrator setup, model credentials, publication, invocation, and
-polling steps. It makes a real model request. To extend it, add application REST
-capabilities using the [authoring guide](agent-skills/loomspan-sidecar-authoring/SKILL.md).
+The [quickstart](docs/quickstart.md) walks through setup, publication, invocation
+and polling with a local planner and two authenticated REST calls. Its optional
+[real-provider example](docs/quickstart.md#optional-real-provider-triage) runs this
+triage skill. Use the [authoring guide](agent-skills/loomspan-sidecar-authoring/SKILL.md)
+to add your application's REST capabilities.
 
 ## Before deploying
 

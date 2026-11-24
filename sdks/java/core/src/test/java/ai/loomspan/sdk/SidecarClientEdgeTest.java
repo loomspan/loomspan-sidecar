@@ -19,9 +19,9 @@ class SidecarClientEdgeTest {
     static final JsonMapper JSON = JsonMapper.builder().build();
     static final CredentialSnapshot CREDENTIAL = CredentialSnapshot.of("jwt-secret-sentinel");
     static final UUID ID = UUID.fromString("01234567-89ab-cdef-0123-456789abcdef");
-    static final String SKILL = "{\"name\":\"echo\",\"description\":\"Echo\",\"kind\":\"YAML\",\"inputSchema\":\"{}\",\"outputSchema\":null}";
+    static final String SKILL = "{\"namespace\":\"default\",\"localName\":\"echo\",\"description\":\"Echo\",\"kind\":\"YAML\",\"inputSchema\":\"{}\",\"outputSchema\":null}";
     static ObjectNode envelope(String status) {
-        var n = JSON.createObjectNode().put("id", ID.toString()).put("skillName", "echo")
+        var n = JSON.createObjectNode().put("id", ID.toString()).put("namespace", "default").put("localName", "echo")
                 .put("status", status).put("createdAt", "2026-10-18T00:00:00Z");
         if (status.equals("COMPLETED") || status.equals("FAILED")) n.put("completedAt", "2026-10-18T00:00:01Z");
         if (status.equals("FAILED")) n.set("failure", JSON.createObjectNode().put("kind", "SKILL_FAILURE").put("message", "primary failure"));
@@ -83,7 +83,7 @@ class SidecarClientEdgeTest {
     }
 
     @Test void exposesTerminalOutputSchemaFailure() throws Exception {
-        var failed = envelope("FAILED").put("skillName", "parent");
+        var failed = envelope("FAILED").put("localName", "parent");
         failed.putNull("result");
         var failure = failed.putObject("failure")
                 .put("kind", "OUTPUT_SCHEMA")
@@ -96,7 +96,7 @@ class SidecarClientEdgeTest {
         var body = new AtomicReference<>(failed.toString());
         try (var fixture = new Fixture(ex -> reply(ex, 200, body.get())); var client = fixture.client()) {
             var result = client.getExecution(ID, CREDENTIAL);
-            assertEquals("parent", result.skillName());
+            assertEquals("parent", result.localName());
             assertEquals(ExecutionStatus.FAILED, result.status());
             assertNull(result.result());
             assertNull(result.events());
@@ -135,21 +135,24 @@ class SidecarClientEdgeTest {
         }
     }
 
-    @Test void rejectsLocalFailuresWithoutSendingAndEncodesOneSegment() throws Exception {
+    @Test void rejectsLocalFailuresWithoutSendingAndEncodesEachSegment() throws Exception {
         try (var f=new Fixture(ex -> reply(ex,200,SKILL));var c=f.client()) {
             for(String name:Arrays.asList(null,""," ",".","..","/","x/y","\\","%2f","%252f","a\nb")) {
-                assertThrows(LocalFailureException.class,()->c.getSkill(name,CREDENTIAL));
-                assertThrows(LocalFailureException.class,()->c.submit(name,JSON.createObjectNode(),CREDENTIAL));
+                assertThrows(LocalFailureException.class,()->c.listSkills(name,CREDENTIAL));
+                assertThrows(LocalFailureException.class,()->c.getSkill(name,"echo",CREDENTIAL));
+                assertThrows(LocalFailureException.class,()->c.getSkill("default", name,CREDENTIAL));
+                assertThrows(LocalFailureException.class,()->c.submit(name,"echo",JSON.createObjectNode(),CREDENTIAL));
+                assertThrows(LocalFailureException.class,()->c.submit("default", name,JSON.createObjectNode(),CREDENTIAL));
             }
-            assertThrows(LocalFailureException.class,()->c.submit("echo",null,CREDENTIAL));
-            assertThrows(LocalFailureException.class,()->c.getSkill("echo",null));
+            assertThrows(LocalFailureException.class,()->c.submit("default", "echo",null,CREDENTIAL));
+            assertThrows(LocalFailureException.class,()->c.getSkill("default", "echo",null));
             assertThrows(LocalFailureException.class,()->c.getExecution(null,CREDENTIAL));
             assertThrows(LocalFailureException.class,()->c.await(ID,CREDENTIAL,null));
             assertEquals(0,f.attempts.get());
         }
         try(var f=new Fixture(ex->reply(ex,200,SKILL));var c=SidecarClient.builder().baseUrl(URI.create(f.uri()+"/prefix/")).build()) {
-            c.getSkill("é ?#",CREDENTIAL);
-            assertEquals("/prefix/v1/skills/%C3%A9%20%3F%23",f.path.get());
+            c.getSkill("É ?", "é ?#",CREDENTIAL);
+            assertEquals("/prefix/v1/namespaces/%C3%89%20%3F/skills/%C3%A9%20%3F%23",f.path.get());
             assertEquals("Bearer jwt-secret-sentinel",f.auth.get());
         }
     }
@@ -171,9 +174,9 @@ class SidecarClientEdgeTest {
         assertEquals(new WaitOptions(Duration.ofSeconds(60),Duration.ofMillis(250)),WaitOptions.defaults());
         try(var f=new Fixture(ex->reply(ex,200,SKILL))) {
             var c=f.client();c.close();c.close();
-            assertThrows(LocalFailureException.class,()->c.listSkills(CREDENTIAL));
-            assertThrows(LocalFailureException.class,()->c.getSkill("echo",CREDENTIAL));
-            assertThrows(LocalFailureException.class,()->c.submit("echo",JSON.createObjectNode(),CREDENTIAL));
+            assertThrows(LocalFailureException.class,()->c.listSkills("default", CREDENTIAL));
+            assertThrows(LocalFailureException.class,()->c.getSkill("default", "echo",CREDENTIAL));
+            assertThrows(LocalFailureException.class,()->c.submit("default", "echo",JSON.createObjectNode(),CREDENTIAL));
             assertThrows(LocalFailureException.class,()->c.getExecution(ID,CREDENTIAL));
             assertThrows(LocalFailureException.class,()->c.await(ID,CREDENTIAL,WaitOptions.defaults()));
             assertEquals(0,f.attempts.get());
@@ -187,7 +190,7 @@ class SidecarClientEdgeTest {
                 ex.getResponseHeaders().set("WWW-Authenticate","Basic realm=\"test\"");
                 reply(ex,status,"{\"title\":\"problem\",\"status\":"+status+",\"issues\":[{\"message\":\"detail\"}]}");
             });var c=f.client()) {
-                var e=assertThrows(HttpFailureException.class,()->c.submit("echo",JSON.createObjectNode(),CREDENTIAL));
+                var e=assertThrows(HttpFailureException.class,()->c.submit("default", "echo",JSON.createObjectNode(),CREDENTIAL));
                 assertEquals(status,e.status());assertEquals("detail",e.problem().get("issues").get(0).get("message").asString());
                 var read=assertThrows(HttpFailureException.class,()->c.getExecution(ID,CREDENTIAL));
                 assertEquals(ID,read.executionId()); assertEquals(2,f.attempts.get());assertEquals(0,destination.attempts.get());
@@ -195,20 +198,20 @@ class SidecarClientEdgeTest {
         }
         for(String body:List.of("","{","[]","null","{}","{\"id\":123}","{\"id\":\"bad\"}","{\"id\":\""+ID+"\"", "{\"id\":\""+ID+"\",\"id\":\""+ID+"\"}")) {
             try(var f=new Fixture(ex->reply(ex,202,body));var c=f.client()) {
-                var e=assertThrows(AcceptanceUnknownException.class,()->c.submit("echo",JSON.createObjectNode(),CREDENTIAL));
+                var e=assertThrows(AcceptanceUnknownException.class,()->c.submit("default", "echo",JSON.createObjectNode(),CREDENTIAL));
                 assertNull(e.executionId());assertEquals(1,f.attempts.get());
             }
         }
         try(var f=new Fixture(ex->reply(ex,200,"{\"id\":\""+ID+"\"}"));var c=f.client()) {
-            assertThrows(AcceptanceUnknownException.class,()->c.submit("echo",JSON.createObjectNode(),CREDENTIAL));
+            assertThrows(AcceptanceUnknownException.class,()->c.submit("default", "echo",JSON.createObjectNode(),CREDENTIAL));
         }
         try(var f=new Fixture(ex->{ex.sendResponseHeaders(400,100);ex.getResponseBody().write('{');});var c=f.client()) {
-            var e=assertThrows(HttpFailureException.class,()->c.submit("echo",JSON.createObjectNode(),CREDENTIAL));
+            var e=assertThrows(HttpFailureException.class,()->c.submit("default", "echo",JSON.createObjectNode(),CREDENTIAL));
             assertEquals(400,e.status());assertNull(e.problem());
         }
         // Consumed POST then closed socket; GET loss is also never retried.
         try(var f=new Fixture(ex->{});var c=f.client()) {
-            assertThrows(AcceptanceUnknownException.class,()->c.submit("echo",JSON.createObjectNode().put("input","business-sentinel"),CREDENTIAL));
+            assertThrows(AcceptanceUnknownException.class,()->c.submit("default", "echo",JSON.createObjectNode().put("input","business-sentinel"),CREDENTIAL));
             var e=assertThrows(ProtocolException.class,()->c.getExecution(ID,CREDENTIAL));assertEquals(ID,e.executionId());
             assertEquals(2,f.attempts.get());
         }
@@ -216,8 +219,8 @@ class SidecarClientEdgeTest {
 
     @Test void validatesExecutionEnvelopeAndKeepsRequestedId() throws Exception {
         List<ObjectNode> invalid=new ArrayList<>();
-        for(String field:List.of("id","skillName","status","createdAt")) {var n=envelope("RUNNING");n.remove(field);invalid.add(n);}
-        for(String field:List.of("id","skillName","status","createdAt","result","configurationSnapshotId","completedAt","events","failure")) {var n=envelope("RUNNING");n.put(field,42);invalid.add(n);}
+        for(String field:List.of("id","namespace","localName","status","createdAt")) {var n=envelope("RUNNING");n.remove(field);invalid.add(n);}
+        for(String field:List.of("id","namespace","localName","status","createdAt","result","configurationSnapshotId","completedAt","events","failure")) {var n=envelope("RUNNING");n.put(field,42);invalid.add(n);}
         for(String[] change:List.of(new String[]{"id",UUID.randomUUID().toString()},new String[]{"id","bad"},new String[]{"createdAt","yesterday"},new String[]{"status","UNKNOWN"})) {var n=envelope("RUNNING");n.put(change[0],change[1]);invalid.add(n);}
         var terminal=envelope("COMPLETED");terminal.remove("completedAt");invalid.add(terminal);
         var failed=envelope("FAILED");failed.remove("failure");invalid.add(failed);
@@ -233,6 +236,18 @@ class SidecarClientEdgeTest {
         var early=envelope("QUEUED").put("unknownFutureField",123).putNull("configurationSnapshotId");
         try(var f=new Fixture(ex->reply(ex,200,early.toString()));var c=f.client()) {
             var result=c.getExecution(ID,CREDENTIAL);assertNull(result.configurationSnapshotId());assertNull(result.events());
+        }
+    }
+
+    @Test void requiresBothCatalogIdentityFields() throws Exception {
+        for (String field : List.of("namespace", "localName")) {
+            var missing = (ObjectNode) JSON.readTree(SKILL);
+            missing.remove(field);
+            missing.put("name", "echo");
+            try (var fixture = new Fixture(exchange -> reply(exchange, 200, missing.toString()));
+                    var client = fixture.client()) {
+                assertThrows(ProtocolException.class, () -> client.getSkill("default", "echo", CREDENTIAL));
+            }
         }
     }
 
@@ -295,13 +310,13 @@ class SidecarClientEdgeTest {
                 case 5 -> {ex.sendResponseHeaders(200,size);ex.getResponseBody().write('{');}
             }
         });var c=SidecarClient.builder().baseUrl(f.uri()).maxResponseSize(size).build()) {
-            assertEquals("echo",c.getSkill("echo",CREDENTIAL).name());
+            assertEquals("echo",c.getSkill("default", "echo",CREDENTIAL).localName());
             for(int i=0;i<15;i++) {
                 mode.set(1+i%5);
                 if(mode.get()==4)assertNull(assertThrows(AcceptanceUnknownException.class,
-                        ()->c.submit("echo",JSON.createObjectNode(),CREDENTIAL)).executionId());
-                else assertThrows(ProtocolException.class,()->c.getSkill("echo",CREDENTIAL));
-                mode.set(0);assertEquals("echo",c.getSkill("echo",CREDENTIAL).name());
+                        ()->c.submit("default", "echo",JSON.createObjectNode(),CREDENTIAL)).executionId());
+                else assertThrows(ProtocolException.class,()->c.getSkill("default", "echo",CREDENTIAL));
+                mode.set(0);assertEquals("echo",c.getSkill("default", "echo",CREDENTIAL).localName());
             }
         }
     }
@@ -319,11 +334,11 @@ class SidecarClientEdgeTest {
                 }
             }); var client = SidecarClient.builder().baseUrl(fixture.uri()).maxResponseSize(limit).build()) {
                 var failure = assertThrows(AcceptanceUnknownException.class,
-                        () -> client.submit("echo", JSON.createObjectNode(), CREDENTIAL));
+                        () -> client.submit("default", "echo", JSON.createObjectNode(), CREDENTIAL));
                 assertNull(failure.executionId());
                 assertNull(failure.lastSnapshot());
                 assertEquals(1, fixture.attempts.get());
-                assertEquals("echo", client.getSkill("echo", CREDENTIAL).name());
+                assertEquals("echo", client.getSkill("default", "echo", CREDENTIAL).localName());
                 assertEquals(2, fixture.attempts.get());
             }
         }
@@ -333,13 +348,13 @@ class SidecarClientEdgeTest {
         try (var fixture = new Fixture(ex -> reply(ex, 200, SKILL)); var client = fixture.client()) {
             Thread.currentThread().interrupt();
             try {
-                assertThrows(LocalFailureException.class, () -> client.submit("echo", JSON.createObjectNode(), CREDENTIAL));
+                assertThrows(LocalFailureException.class, () -> client.submit("default", "echo", JSON.createObjectNode(), CREDENTIAL));
                 assertTrue(Thread.currentThread().isInterrupted());
                 assertEquals(0, fixture.attempts.get());
             } finally {
                 Thread.interrupted();
             }
-            assertEquals("echo", client.getSkill("echo", CREDENTIAL).name());
+            assertEquals("echo", client.getSkill("default", "echo", CREDENTIAL).localName());
             assertEquals(1, fixture.attempts.get());
         }
     }
@@ -362,7 +377,7 @@ class SidecarClientEdgeTest {
                     var interrupted = new AtomicBoolean();
                     var caller = new Thread(() -> {
                         try {
-                            client.submit("echo", JSON.createObjectNode(), CREDENTIAL);
+                            client.submit("default", "echo", JSON.createObjectNode(), CREDENTIAL);
                         } catch (SidecarException failure) {
                             error.set(failure);
                             interrupted.set(Thread.currentThread().isInterrupted());
@@ -388,7 +403,7 @@ class SidecarClientEdgeTest {
                         }
                     }
                 }
-                assertEquals("echo", client.getSkill("echo", CREDENTIAL).name());
+                assertEquals("echo", client.getSkill("default", "echo", CREDENTIAL).localName());
                 assertEquals(7, fixture.attempts.get());
             } finally {
                 release.countDown();
@@ -412,7 +427,7 @@ class SidecarClientEdgeTest {
             else reply(ex, 200, SKILL);
         }); var client = SidecarClient.builder().baseUrl(fixture.uri()).maxResponseSize(limit).build()) {
             var input = JSON.createObjectNode().put("input", "business-sentinel");
-            var failure = assertThrows(HttpFailureException.class, () -> client.submit("echo", input, CREDENTIAL));
+            var failure = assertThrows(HttpFailureException.class, () -> client.submit("default", "echo", input, CREDENTIAL));
             assertEquals(status, failure.status());
             assertNull(failure.problem());
             assertNull(failure.executionId());
@@ -423,7 +438,7 @@ class SidecarClientEdgeTest {
             for (String sentinel : List.of("diagnostic-sentinel", "jwt-secret-sentinel", "business-sentinel"))
                 assertFalse(diagnostic.toString().contains(sentinel));
             assertEquals(1, fixture.attempts.get());
-            assertEquals("echo", client.getSkill("echo", CREDENTIAL).name());
+            assertEquals("echo", client.getSkill("default", "echo", CREDENTIAL).localName());
             assertEquals(2, fixture.attempts.get());
         }
     }
@@ -460,7 +475,7 @@ class SidecarClientEdgeTest {
         try {assertFalse(JSON.writeValueAsString(CREDENTIAL).contains("jwt-secret-sentinel"));}catch(RuntimeException safeRefusal) {assertFalse(safeRefusal.toString().contains("jwt-secret-sentinel"));}
         var err=new ByteArrayOutputStream();PrintStream previous=System.err;System.setErr(new PrintStream(err));
         try(var f=new Fixture(ex->reply(ex,400,"{\"detail\":\"jwt-secret-sentinel\",\"jwt-secret-sentinel\":[\"echo jwt-secret-sentinel\"]}"));var c=f.client()) {
-            var e=assertThrows(HttpFailureException.class,()->c.submit("echo",JSON.createObjectNode().put("input","business-sentinel"),CREDENTIAL));
+            var e=assertThrows(HttpFailureException.class,()->c.submit("default", "echo",JSON.createObjectNode().put("input","business-sentinel"),CREDENTIAL));
             var stack=new StringWriter();e.printStackTrace(new PrintWriter(stack));
             assertFalse(stack.toString().contains("jwt-secret-sentinel"));assertFalse(stack.toString().contains("business-sentinel"));
             assertFalse(e.problem().toString().contains("jwt-secret-sentinel"));assertNull(e.getCause());

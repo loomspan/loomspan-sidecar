@@ -17,7 +17,7 @@ from wire_fixture import WirePeer, reply_json
 PROJECT = Path(__file__).resolve().parents[1]
 EXECUTION_ID = UUID("6a0c950c-d172-4151-b629-6a5c15c7ae37")
 TOKEN = "synthetic-distribution-test"
-DESCRIPTOR = {"name": "echo", "kind": "HTTP", "inputSchema": "{}"}
+DESCRIPTOR = {"namespace": "order-support", "localName": "echo-text", "kind": "HTTP", "inputSchema": "{}"}
 SYNTHETIC_PEM = PROJECT.parent / "java/core/src/test/resources/signing/synthetic-rsa.pem"
 
 CHECK_INSTALL = """
@@ -110,20 +110,20 @@ anyio.run(serve_callbacks, issuer, accept_callback)
 def serve_example(conn, request, index):
     assert request.headers["authorization"] == f"Bearer {TOKEN}"
     if index == 0:
-        assert (request.method, request.target) == ("GET", "/v1/skills")
+        assert (request.method, request.target) == ("GET", "/v1/namespaces/order-support/skills")
         reply_json(conn, 200, [DESCRIPTOR])
     elif index == 1:
-        assert (request.method, request.target) == ("GET", "/v1/skills/echo")
+        assert (request.method, request.target) == ("GET", "/v1/namespaces/order-support/skills/echo-text")
         reply_json(conn, 200, DESCRIPTOR)
     elif index == 2:
-        assert (request.method, request.target) == ("POST", "/v1/skills/echo/executions")
+        assert (request.method, request.target) == ("POST", "/v1/namespaces/order-support/skills/echo-text/executions")
         assert json.loads(request.body) == {"text": "hello"}
         reply_json(conn, 202, {"id": str(EXECUTION_ID)})
     else:
         assert index in (3, 4)
         assert (request.method, request.target) == ("GET", f"/v1/executions/{EXECUTION_ID}")
         reply_json(conn, 200, {
-            "id": str(EXECUTION_ID), "skillName": "echo",
+            "id": str(EXECUTION_ID), "namespace": "order-support", "localName": "echo-text",
             "createdAt": "2026-11-07T10:00:00.123456789Z",
             "status": "RUNNING" if index == 3 else "COMPLETED",
             "completedAt": None if index == 3 else "2026-11-07T10:00:01Z",
@@ -187,7 +187,7 @@ def verify(dist_dir: Path | None = None, constraints: Path | None = None) -> Non
             assert keys[1] == json.loads(SYNTHETIC_PEM.with_name("public-jwks.json").read_bytes())["keys"][0]
             for example in examples:
                 with WirePeer(serve_example) as peer:
-                    summary = run(python, "-I", str(example), peer.url, "echo", "hello",
+                    summary = run(python, "-I", str(example), peer.url, "order-support", "echo-text", "hello",
                                   input_text=TOKEN + "\n")
                     assert "Discovered 1 skill(s)." in summary and "RUNNING -> COMPLETED" in summary
                     assert str(EXECUTION_ID) in summary

@@ -1,9 +1,9 @@
 # Local evaluation and verifier fixtures
 
 Follow the [application quickstart](../../docs/quickstart.md) to publish and invoke
-[triageSupportRequest](triage-support-request.yaml). The fixture host provides a
-demo ephemeral signer, deterministic planner and approved callbacks. The planner
-serves `/v1/responses` locally without calling a paid model provider. It exports
+[`default:quickstart-planner`](sidecar/skills/planner.yaml). The fixture host provides a
+demo ephemeral signer, deterministic model responses and authenticated callbacks.
+It serves `/v1/responses` on loopback and exports
 only public JWKS atomically; private keys live in temporary container storage.
 Restarting the host generates a new signing key and invalidates old tokens once
 receivers reload. These fixtures are not a deployed signing product.
@@ -25,9 +25,9 @@ which proxy to loopback 8080 and 8081. No proxy rewrites execution credentials.
 Host and ingress depend on Sidecar being started, never healthy: readiness is
 waiting until the first valid export. Recreate all three together when replacing
 Sidecar so namespace references remain current. SQLite persists independently.
-The initially empty database does not automatically publish the deterministic
-skills and execution configuration under `sidecar/`; the verifier publishes them through management.
-Their targets use literal `http://127.0.0.1:8081`.
+Use management to publish the skills and execution configuration under `sidecar/`.
+Their targets use `http://127.0.0.1:8081`. The quickstart also shows how to run
+[`default:triage-support-request`](triage-support-request.yaml) with a provider account.
 
 See [trust operations](../../docs/operations.md#execution-jwt-trust) for file
 validation, withdrawal/recovery and lifetime behavior. Use an application-owned signer

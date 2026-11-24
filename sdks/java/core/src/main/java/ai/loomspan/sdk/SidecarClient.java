@@ -91,8 +91,8 @@ public final class SidecarClient implements AutoCloseable {
         public SidecarClient build() { return new SidecarClient(this); }
     }
 
-    public List<SkillDescriptor> listSkills(CredentialSnapshot credential) {
-        JsonNode node = request("GET", "/v1/skills", null, credential, null, null, 0, false);
+    public List<SkillDescriptor> listSkills(String namespace, CredentialSnapshot credential) {
+        JsonNode node = request("GET", catalogPath(namespace), null, credential, null, null, 0, false);
         try {
             if (!node.isArray()) throw new IllegalArgumentException();
             List<SkillDescriptor> skills = new ArrayList<>();
@@ -101,13 +101,13 @@ public final class SidecarClient implements AutoCloseable {
         } catch (RuntimeException invalid) { throw new ProtocolException(null, null); }
     }
 
-    public SkillDescriptor getSkill(String name, CredentialSnapshot credential) {
-        JsonNode node = request("GET", "/v1/skills/" + segment(name), null, credential, null, null, 0, false);
+    public SkillDescriptor getSkill(String namespace, String localName, CredentialSnapshot credential) {
+        JsonNode node = request("GET", skillPath(namespace, localName), null, credential, null, null, 0, false);
         try { return skill(node); } catch (RuntimeException invalid) { throw new ProtocolException(null, null); }
     }
 
-    public AcceptedExecution submit(String name, ObjectNode input, CredentialSnapshot credential) {
-        String path = "/v1/skills/" + segment(name) + "/executions";
+    public AcceptedExecution submit(String namespace, String localName, ObjectNode input, CredentialSnapshot credential) {
+        String path = skillPath(namespace, localName) + "/executions";
         if (input == null) throw new LocalFailureException("Missing object input");
         byte[] body;
         try { body = json.writeValueAsBytes(input); }
@@ -282,12 +282,18 @@ public final class SidecarClient implements AutoCloseable {
         while (result.endsWith("/")) result = result.substring(0, result.length() - 1);
         return result;
     }
-    private static String segment(String name) {
-        if (name == null || name.isBlank() || name.equals(".") || name.equals("..")
-                || name.chars().anyMatch(c -> Character.isISOControl(c) || c == '/' || c == '\\' || c == '%'))
-            throw new LocalFailureException("Invalid skill name");
+    private static String catalogPath(String namespace) {
+        return "/v1/namespaces/" + segment(namespace, "namespace") + "/skills";
+    }
+    private static String skillPath(String namespace, String localName) {
+        return catalogPath(namespace) + "/" + segment(localName, "local name");
+    }
+    private static String segment(String value, String component) {
+        if (value == null || value.isBlank() || value.equals(".") || value.equals("..")
+                || value.chars().anyMatch(c -> Character.isISOControl(c) || c == '/' || c == '\\' || c == '%'))
+            throw new LocalFailureException("Invalid skill " + component);
         StringBuilder result = new StringBuilder();
-        for (byte b : name.getBytes(StandardCharsets.UTF_8)) {
+        for (byte b : value.getBytes(StandardCharsets.UTF_8)) {
             int c = b & 255;
             if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') result.append((char)c);
             else result.append('%').append("0123456789ABCDEF".charAt(c >>> 4)).append("0123456789ABCDEF".charAt(c & 15));
@@ -296,13 +302,15 @@ public final class SidecarClient implements AutoCloseable {
     }
     private static SkillDescriptor skill(JsonNode n) {
         object(n);
-        return new SkillDescriptor(text(n,"name",true), text(n,"description",false), text(n,"kind",true), text(n,"inputSchema",true), text(n,"outputSchema",false));
+        return new SkillDescriptor(text(n,"namespace",true), text(n,"localName",true), text(n,"description",false),
+                text(n,"kind",true), text(n,"inputSchema",true), text(n,"outputSchema",false));
     }
     private static ExecutionSnapshot snapshot(JsonNode n, UUID expected) {
         object(n);
         UUID id = uuid(text(n,"id",true));
         if (!id.equals(expected)) throw new IllegalArgumentException();
-        String name = text(n,"skillName",true);
+        String namespace = text(n,"namespace",true);
+        String localName = text(n,"localName",true);
         ExecutionStatus status = ExecutionStatus.valueOf(text(n,"status",true));
         Instant created = Instant.parse(text(n,"createdAt",true));
         String completedText = text(n,"completedAt",false);
@@ -337,7 +345,7 @@ public final class SidecarClient implements AutoCloseable {
             }
         }
         String config = text(n,"configurationSnapshotId",false);
-        return new ExecutionSnapshot(id,name,status,created,completed,text(n,"result",false),failure,events,config == null ? null : uuid(config));
+        return new ExecutionSnapshot(id,namespace,localName,status,created,completed,text(n,"result",false),failure,events,config == null ? null : uuid(config));
     }
     private static void object(JsonNode n) { if (n == null || !n.isObject()) throw new IllegalArgumentException(); }
     private static String text(JsonNode n, String field, boolean required) {

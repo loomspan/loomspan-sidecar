@@ -19,6 +19,7 @@ from ._http import (
 )
 from ._models import AcceptedExecution, ExecutionSnapshot, SkillDescriptor, WaitOptions
 from ._protocol import (
+    _catalog_path,
     _check_credential,
     _execution_path,
     _skill_path,
@@ -77,16 +78,16 @@ class SidecarClient:
         """Release local connections and prevent new calls."""
         self._transport.close()
 
-    def list_skills(self, credential: CredentialSnapshot) -> tuple[SkillDescriptor, ...]:
-        return self._request("/v1/skills", credential, parse_catalog)
+    def list_skills(self, namespace: str, credential: CredentialSnapshot) -> tuple[SkillDescriptor, ...]:
+        return self._request(_catalog_path(namespace), credential, parse_catalog)
 
-    def get_skill(self, name: str, credential: CredentialSnapshot) -> SkillDescriptor:
-        return self._request(_skill_path(name), credential, parse_skill)
+    def get_skill(self, namespace: str, local_name: str, credential: CredentialSnapshot) -> SkillDescriptor:
+        return self._request(_skill_path(namespace, local_name), credential, parse_skill)
 
     def submit[T](
-        self, name: str, input: dict[str, T], credential: CredentialSnapshot
+        self, namespace: str, local_name: str, input: dict[str, T], credential: CredentialSnapshot
     ) -> AcceptedExecution:
-        path = _skill_path(name) + "/executions"
+        path = _skill_path(namespace, local_name) + "/executions"
         return self._request(path, credential, parse_acceptance, body=encode_input(input))
 
     def get_execution(self, execution_id: UUID, credential: CredentialSnapshot) -> ExecutionSnapshot:

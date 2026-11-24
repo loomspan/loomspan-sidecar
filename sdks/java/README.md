@@ -33,10 +33,12 @@ var credential = CredentialSnapshot.of(executionJwt);
 try (var client = SidecarClient.builder()
         .baseUrl(URI.create("https://sidecar.example.com"))
         .build()) {
-    var catalog = client.listSkills(credential);
-    var skill = client.getSkill("summarize", credential);
+    var target = client.listSkills("default", credential).stream()
+            .filter(entry -> entry.namespace().equals("default") && entry.localName().equals("summarize-report"))
+            .findFirst().orElseThrow();
+    var skill = client.getSkill(target.namespace(), target.localName(), credential);
     var input = JsonMapper.builder().build().createObjectNode().put("text", "Hello");
-    var accepted = client.submit("summarize", input, credential);
+    var accepted = client.submit(skill.namespace(), skill.localName(), input, credential);
     var current = client.getExecution(accepted.id(), credential);
     var terminal = client.await(accepted.id(), credential, WaitOptions.defaults());
     // Inspect terminal.status() and terminal.failure(); result() is opaque text.
@@ -44,8 +46,10 @@ try (var client = SidecarClient.builder()
 ```
 
 `submit` requires a JSON object and returns a valid acceptance UUID immediately.
-It does not compile business schemas or wait for execution. Discovery preserves
-public metadata and schema strings. Status returns ID, skill, status, timestamps,
+It does not compile business schemas or wait for execution. List skills in an
+explicit namespace, including `default`, and reuse `namespace()` and
+`localName()` from the catalog for detail and submission. Discovery preserves
+public metadata and schema strings. Status returns ID, skill identity, status, timestamps,
 result, primary failure, configuration snapshot ID and available events. Early
 snapshots can lack a configuration ID; event history can be absent.
 
@@ -58,15 +62,17 @@ parse or sanitize results or business failure/event details.
 When `failure().kind()` is `OUTPUT_SCHEMA`, `failure().producingSkillName()`
 identifies the canonical skill that produced invalid output and
 `failure().issues()` provides each issue's JSON Pointer `path()`, validator
-`code()`, and `message()`. The snapshot's `skillName()` is the requested
-skill. These details identify the terminal cause even when `events()` is null.
+`code()`, and `message()`. The snapshot's `namespace()` and `localName()`
+identify the requested skill. These details identify the terminal cause even when `events()` is null.
 An absent producing skill is null.
 
 Each HTTP request is attempted once. The client disables retries, redirects and
 authentication rechallenge replay, and never follows `Location`. Status URLs
 are built under the configured base URL and must return the requested ID.
-Accepted skill names are encoded as one UTF-8 path segment; blank names, controls,
-slashes, backslashes, percent signs and the names `.` and `..` fail locally.
+The namespace and local name each occupy one UTF-8 path segment. Blank names,
+controls, slashes, backslashes, percent signs and the names `.` and `..` fail locally.
+Sidecar validates portable naming rules at the
+[execution API](../../agent-skills/loomspan-sidecar-authoring/references/integration.md#execution-api).
 
 | Observation | Outcome |
 | --- | --- |
@@ -197,7 +203,7 @@ var issuer = new ExecutionTokenIssuer(source, settings);
 // authenticatedUser comes from your server's authentication, never request JSON.
 var credential = issuer.issue(new AuthenticatedIdentity(
         authenticatedUser.stableSubject(), authenticatedUser.authorities()));
-client.submit("summarize", input, credential);
+client.submit("default", "summarize-report", input, credential);
 ```
 
 The core API uses `java.nio.file.Path`, `java.time.Duration`, `java.util.List`

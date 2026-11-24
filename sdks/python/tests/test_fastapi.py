@@ -181,7 +181,7 @@ def test_lifespan_resources_and_fastapi_overrides(tmp_path):
         assert await response(app, "/resources") == 503
         assert await response(app, headers=auth(issuer)) == 401
         with pytest.raises(LocalFailure, match="closed"):
-            await client.list_skills(issuer.issue(AuthenticatedIdentity("alice")))
+            await client.list_skills("default", issuer.issue(AuthenticatedIdentity("alice")))
 
         other = FastAPI()
         other.add_middleware(CallbackMiddleware, loomspan=loomspan)
@@ -262,7 +262,7 @@ def test_startup_failure_and_partial_cleanup(tmp_path, monkeypatch, failure):
             if failure == "composed":
                 [client] = clients
                 with pytest.raises(LocalFailure, match="closed"):
-                    await client.list_skills(issuer.issue(AuthenticatedIdentity("alice")))
+                    await client.list_skills("default", issuer.issue(AuthenticatedIdentity("alice")))
         else:
             assert not captured
 

@@ -56,7 +56,7 @@ class SidecarClientAutoConfigurationTest {
     void usesConfiguredValuesAndClosesTheClientWithTheContext() throws Exception {
         var attempts = new AtomicInteger();
         var server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
-        server.createContext("/prefix/v1/skills", exchange -> {
+        server.createContext("/prefix/v1/namespaces/default/skills", exchange -> {
             attempts.incrementAndGet();
             assertThat(exchange.getRequestHeaders().getFirst("Authorization")).isEqualTo("Bearer test-token");
             byte[] body = "[]".getBytes(StandardCharsets.UTF_8);
@@ -75,9 +75,9 @@ class SidecarClientAutoConfigurationTest {
                 assertThat(properties.getResponseTimeout()).isEqualTo(Duration.ofMillis(900));
                 assertThat(properties.getMaxResponseSize()).isEqualTo(2048);
                 created[0] = context.getBean(SidecarClient.class);
-                assertThat(created[0].listSkills(credential)).isEmpty();
+                assertThat(created[0].listSkills("default", credential)).isEmpty();
             });
-            assertThatThrownBy(() -> created[0].listSkills(credential)).isInstanceOf(LocalFailureException.class);
+            assertThatThrownBy(() -> created[0].listSkills("default", credential)).isInstanceOf(LocalFailureException.class);
             assertThat(attempts).hasValue(1);
         } finally {
             server.stop(0);
@@ -87,7 +87,7 @@ class SidecarClientAutoConfigurationTest {
     @Test
     void configuredResponseLimitAndTimeoutHaveCoreSemantics() throws Exception {
         var server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
-        server.createContext("/v1/skills", exchange -> {
+        server.createContext("/v1/namespaces/default/skills", exchange -> {
             byte[] body = "[             ]".getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, body.length);
             try (var output = exchange.getResponseBody()) { output.write(body); }
@@ -97,7 +97,7 @@ class SidecarClientAutoConfigurationTest {
             runner.withPropertyValues("loomspan-sdk.base-url=http://localhost:" + server.getAddress().getPort(),
                     "loomspan-sdk.max-response-size=4").run(context -> {
                 assertThat(context).hasNotFailed();
-                assertThatThrownBy(() -> context.getBean(SidecarClient.class).listSkills(credential))
+                assertThatThrownBy(() -> context.getBean(SidecarClient.class).listSkills("default", credential))
                         .isInstanceOf(ProtocolException.class);
             });
         } finally {
@@ -105,7 +105,7 @@ class SidecarClientAutoConfigurationTest {
         }
 
         var slow = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
-        slow.createContext("/v1/skills", exchange -> {
+        slow.createContext("/v1/namespaces/default/skills", exchange -> {
             try { Thread.sleep(500); } catch (InterruptedException ex) { Thread.currentThread().interrupt(); }
             exchange.close();
         });
@@ -115,7 +115,7 @@ class SidecarClientAutoConfigurationTest {
                     "loomspan-sdk.response-timeout=50ms").run(context -> {
                 assertThat(context).hasNotFailed();
                 long start = System.nanoTime();
-                assertThatThrownBy(() -> context.getBean(SidecarClient.class).listSkills(credential))
+                assertThatThrownBy(() -> context.getBean(SidecarClient.class).listSkills("default", credential))
                         .isInstanceOf(SidecarException.class);
                 assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(2));
             });
@@ -163,7 +163,7 @@ class SidecarClientAutoConfigurationTest {
         ssl.init(managers.getKeyManagers(), null, null);
         var server = HttpsServer.create(new InetSocketAddress("localhost", 0), 0);
         server.setHttpsConfigurator(new HttpsConfigurator(ssl));
-        server.createContext("/v1/skills", exchange -> {
+        server.createContext("/v1/namespaces/default/skills", exchange -> {
             byte[] body = "[]".getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, body.length);
             try (var output = exchange.getResponseBody()) { output.write(body); }
@@ -178,13 +178,13 @@ class SidecarClientAutoConfigurationTest {
                     "loomspan-sdk.base-url=https://localhost:" + server.getAddress().getPort())
                     .run(context -> {
                         assertThat(context).hasNotFailed();
-                        assertThat(context.getBean(SidecarClient.class).listSkills(credential)).isEmpty();
+                        assertThat(context.getBean(SidecarClient.class).listSkills("default", credential)).isEmpty();
                     });
             runner.withPropertyValues(bundle).withPropertyValues(
                     "loomspan-sdk.base-url=https://127.0.0.1:" + server.getAddress().getPort())
                     .run(context -> {
                         assertThat(context).hasNotFailed();
-                        assertThatThrownBy(() -> context.getBean(SidecarClient.class).listSkills(credential))
+                        assertThatThrownBy(() -> context.getBean(SidecarClient.class).listSkills("default", credential))
                                 .isInstanceOf(SidecarException.class);
                     });
         } finally {

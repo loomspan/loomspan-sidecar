@@ -99,7 +99,7 @@ class SidecarAgentSkillsTest(unittest.TestCase):
     def test_canonical_examples(self):
         example = BUNDLE / "examples/remote-authoring"
         self.assertFalse((ROOT / "examples/remote-authoring").exists())
-        self.assertIn("name: readRecord", (example / "record.yaml").read_text())
+        self.assertIn("name: read-record", (example / "record.yaml").read_text())
         self.assertIn("executor: http", (example / "record.yaml").read_text())
         self.assertIn("executor-config:", (example / "execution.yaml").read_text())
         self.assertIn("pathParams: {recordId: /recordId}", (example / "record.yaml").read_text())
