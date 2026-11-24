@@ -68,6 +68,7 @@ class OrchestrationTest(unittest.TestCase):
                         return 200, b'{"status":"UP"}', None
                     if path == "/management/login":
                         return 200, b"", header
+                    self.assertEqual(path, "/v1/namespaces/default/skills")
                     return (200, b"[]", None) if token else (401, b"", None)
 
                 with patch.object(runtime, "request", side_effect=request), patch.object(

@@ -42,7 +42,7 @@ class ConsoleSecurityIntegrationTest {
                 .header("X-loomspan-Api-Key", "0123456789abcdef0123456789abcdef").build();
         assertThat(send(console).statusCode()).isEqualTo(200);
 
-        var apiWithKey = request("/v1/skills")
+        var apiWithKey = request("/v1/namespaces/default/skills")
                 .header("X-loomspan-Api-Key", "0123456789abcdef0123456789abcdef").build();
         assertThat(send(apiWithKey).statusCode()).isEqualTo(401);
 

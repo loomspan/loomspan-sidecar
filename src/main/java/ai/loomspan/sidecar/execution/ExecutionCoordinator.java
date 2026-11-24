@@ -123,7 +123,7 @@ public class ExecutionCoordinator implements ApplicationListener<ContextClosedEv
         afterHandoff = Objects.requireNonNull(hook);
     }
 
-    public UUID admit(String skillName, Map<String, Object> input, long inputBytes,
+    public UUID admit(String namespace, String localName, Map<String, Object> input, long inputBytes,
             ExecutionOwner owner, JwtAuthenticationToken authentication) {
         gate.lock();
         try {
@@ -133,7 +133,7 @@ public class ExecutionCoordinator implements ApplicationListener<ContextClosedEv
                 throw new ExecutionCapacityException("Retained execution capacity is full");
             }
             UUID id = UUID.randomUUID();
-            var record = new ExecutionRecord(id, skillName, owner, clock.instant());
+            var record = new ExecutionRecord(id, namespace, localName, owner, clock.instant());
             var task = new ExecutionTask(this, record, input, inputBytes, authentication);
             records.put(id, record);
             try {
@@ -200,7 +200,7 @@ public class ExecutionCoordinator implements ApplicationListener<ContextClosedEv
                     throw new AccessDeniedException("execution credential expired before start");
                 }
                 admitted = Objects.requireNonNull(
-                        skillInvocationHandoff.handoff(task.record.skillName, task.input),
+                        skillInvocationHandoff.handoff(task.record.namespace, task.record.localName, task.input),
                         "skill invocation handoff must not return null");
             } finally {
                 SecurityContextHolder.setContext(previousContext);
@@ -215,7 +215,7 @@ public class ExecutionCoordinator implements ApplicationListener<ContextClosedEv
                 LOG.error("Execution {} has no durable configuration mapping for captured generation", task.record.id);
                 throw new IllegalStateException("Execution generation mapping is missing");
             }
-            task.record.snapshot = new ExecutionSnapshot(task.record.id, task.record.skillName,
+            task.record.snapshot = new ExecutionSnapshot(task.record.id, task.record.namespace, task.record.localName,
                     ExecutionStatus.RUNNING, task.record.createdAt, null, null, null, null, configurationSnapshotId);
             task.clear();
             return admitted;
@@ -234,7 +234,7 @@ public class ExecutionCoordinator implements ApplicationListener<ContextClosedEv
                 case ONERROR -> failed ? List.copyOf(events) : null;
                 case ALWAYS -> List.copyOf(events);
             };
-            task.record.snapshot = new ExecutionSnapshot(task.record.id, task.record.skillName,
+            task.record.snapshot = new ExecutionSnapshot(task.record.id, task.record.namespace, task.record.localName,
                     failed ? ExecutionStatus.FAILED : ExecutionStatus.COMPLETED,
                     task.record.createdAt, clock.instant(), failed ? null : result,
                     failed ? ExecutionFailureClassifier.classify(failure) : null, selected,

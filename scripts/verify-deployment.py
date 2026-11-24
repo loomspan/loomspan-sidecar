@@ -365,9 +365,9 @@ class Runtime:
                 status == 200 and json.loads(body) == {"status": "UP"},
                 "anonymous-health",
             )
-        status, body, _ = self.request("/v1/skills", self.token)
+        status, body, _ = self.request("/v1/namespaces/default/skills", self.token)
         require(status == 200 and json.loads(body) == [], "authenticated-catalog")
-        require(self.request("/v1/skills")[0] == 401, "missing-jwt")
+        require(self.request("/v1/namespaces/default/skills")[0] == 401, "missing-jwt")
         status, _, header = self.request("/management/login")
         cookies = SimpleCookie()
         cookies.load(header or "")

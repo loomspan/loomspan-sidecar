@@ -6,7 +6,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
-import ai.loomspan.api.SkillReloader;
 import ai.loomspan.api.SkillTemplate;
 import ai.loomspan.sidecar.execution.ExecutionCoordinator;
 import ai.loomspan.sidecar.execution.ExecutionFailure;
@@ -25,26 +24,27 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 @RestController
 @RequestMapping("/v1")
 final class ExecutionController {
-    private final SkillReloader reloader;
+    private final SkillCatalogLookup catalog;
     private final SkillTemplate template;
     private final LimitedJsonObjectReader reader;
     private final ExecutionCoordinator coordinator;
 
-    ExecutionController(SkillReloader reloader, SkillTemplate template, LimitedJsonObjectReader reader,
+    ExecutionController(SkillCatalogLookup catalog, SkillTemplate template, LimitedJsonObjectReader reader,
             ExecutionCoordinator coordinator) {
-        this.reloader = reloader;
+        this.catalog = catalog;
         this.template = template;
         this.reader = reader;
         this.coordinator = coordinator;
     }
 
-    @PostMapping("/skills/{name}/executions")
-    ResponseEntity<Map<String, UUID>> execute(@PathVariable("name") String name, HttpServletRequest request,
+    @PostMapping("/namespaces/{namespace}/skills/{localName}/executions")
+    ResponseEntity<Map<String, UUID>> execute(@PathVariable("namespace") String namespace,
+            @PathVariable("localName") String localName, HttpServletRequest request,
             JwtAuthenticationToken authentication) throws IOException {
-        if (reloader.snapshot("default").skill(name.contains("-") ? name : "default-" + name).isEmpty()) throw new ResourceNotFoundException("Unknown skill '" + name + "'");
+        var skill = catalog.skill(namespace, localName);
         Map<String, Object> input = reader.read(request);
-        template.validate(name, input);
-        UUID id = coordinator.admit(name, input, reader.measure(input),
+        template.validate(skill.namespace(), skill.localName(), input);
+        UUID id = coordinator.admit(skill.namespace(), skill.localName(), input, reader.measure(input),
                 ExecutionOwner.from(authentication), authentication);
         URI location = ServletUriComponentsBuilder.fromCurrentContextPath()
                 .path("/v1/executions/{id}").buildAndExpand(id).toUri();
@@ -57,7 +57,8 @@ final class ExecutionController {
                 .orElseThrow(() -> new ResourceNotFoundException("Execution not found"));
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("id", snapshot.id());
-        response.put("skillName", snapshot.skillName());
+        response.put("namespace", snapshot.namespace());
+        response.put("localName", snapshot.localName());
         response.put("status", snapshot.status());
         response.put("createdAt", snapshot.createdAt());
         response.put("completedAt", snapshot.completedAt());

@@ -350,7 +350,9 @@ framework's independent API-key filter. Console keys do not authenticate `/v1`.
 The diagnostics policy controls the `events` field on owned execution
 snapshots. A terminal `OUTPUT_SCHEMA` failure includes the canonical
 `failure.producingSkillName` and the validator's issues even with the default
-`NEVER` policy. The snapshot's `skillName` identifies the requested skill.
+`NEVER` policy. The snapshot identifies the requested skill through
+`namespace` and `localName`. The producing skill uses the qualified
+`namespace:local-name` form.
 
 The explicit operation and target schema is described in
 [HTTP executor](http-executor.md). Framework shutdown remains

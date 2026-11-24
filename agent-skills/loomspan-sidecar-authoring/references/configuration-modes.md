@@ -12,9 +12,12 @@ execution YAML through ordinary Spring Boot Config Data. HTTP settings live unde
 Framework structural/reference errors fail startup; HTTP domain errors first fail
 on invocation before dispatch. Deploy changes and restart to apply them. Literal
 provider credentials and external references follow Framework's file-mode contract.
+Skill files activate in `default`. Use lowercase physical path components
+within the configured skill pattern, including the filename extension.
 
 The Console displays the startup skill catalog, model aliases, session and trace
-settings, and retained startup metadata. Connection settings stay in the deployment
+settings, and retained startup metadata. Startup inspection identifies each skill
+by its `namespace`, `localName` and `kind`. Connection settings stay in the deployment
 files. Configuration mutations return `409 configuration_read_only`. Accounts, tokens and
 execution retain their normal permissions. File startup does not initialize or
 change the selected database publication, decrypt its credentials, or alter drafts.
@@ -22,7 +25,8 @@ Its separate durable startup UUID correlates executions; metadata retention uses
 `loomspan-sidecar.snapshots.max-retained` and is not a recovery source.
 
 In **database** mode, authored skill and execution YAML and separately supplied
-encrypted variable values belong to one installation. Deployment provider, model,
+encrypted variable values belong to one installation. Authored skills publish in
+`default`. Deployment provider, model,
 and session properties do not contribute to a managed candidate. Its exact
 reference map comes from the selected documents and the installation's values.
 

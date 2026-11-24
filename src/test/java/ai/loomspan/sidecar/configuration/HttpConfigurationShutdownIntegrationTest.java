@@ -60,16 +60,16 @@ class HttpConfigurationShutdownIntegrationTest {
             var jwt = context.getBean(JwtDecoder.class).decode(JwtTestTokens.token("shutdown-owner", List.of()));
             var authentication = new JwtAuthenticationToken(jwt);
             var owner = ExecutionOwner.from(authentication);
-            var active = coordinator.admit("call", Map.of(), 2, owner, authentication);
+            var active = coordinator.admit("default", "call", Map.of(), 2, owner, authentication);
             assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
-            var queued = coordinator.admit("call", Map.of(), 2, owner, authentication);
+            var queued = coordinator.admit("default", "call", Map.of(), 2, owner, authentication);
             assertThat(coordinator.find(queued, owner).orElseThrow().status()).isEqualTo(ExecutionStatus.QUEUED);
             var closingContext = context;
             var closing = workers.submit(closingContext::close);
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
             while (coordinator.find(queued, owner).isPresent() && System.nanoTime() < deadline) Thread.sleep(5);
             assertThat(coordinator.find(queued, owner)).isEmpty();
-            assertThatThrownBy(() -> coordinator.admit("call", Map.of(), 2, owner, authentication))
+            assertThatThrownBy(() -> coordinator.admit("default", "call", Map.of(), 2, owner, authentication))
                     .isInstanceOf(ExecutionUnavailableException.class);
             if (!cutoff) {
                 assertThat(closing.isDone()).isFalse();

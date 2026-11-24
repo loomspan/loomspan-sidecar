@@ -15,15 +15,15 @@ final class TestSkillInvocationHandoff {
     static SkillInvocationHandoff from(SkillTemplate template) {
         return new SkillInvocationHandoff() {
             @Override
-            public AdmittedSkillInvocation handoff(String skillName, Object input) {
-                return admitted(() -> template.invoke(skillName, input),
-                        observer -> template.invoke(skillName, input, observer));
+            public AdmittedSkillInvocation handoff(String namespace, String localName, Object input) {
+                return admitted(() -> template.invoke(namespace, localName, input),
+                        observer -> template.invoke(namespace, localName, input, observer));
             }
 
             @Override
-            public AdmittedSkillInvocation handoff(String skillName, Map<String, Object> input) {
-                return admitted(() -> template.invoke(skillName, input),
-                        observer -> template.invoke(skillName, input, observer));
+            public AdmittedSkillInvocation handoff(String namespace, String localName, Map<String, Object> input) {
+                return admitted(() -> template.invoke(namespace, localName, input),
+                        observer -> template.invoke(namespace, localName, input, observer));
             }
         };
     }

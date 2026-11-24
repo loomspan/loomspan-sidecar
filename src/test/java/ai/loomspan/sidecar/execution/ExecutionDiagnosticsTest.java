@@ -44,9 +44,9 @@ class ExecutionDiagnosticsTest {
         var second = new SkillExecutionEvent(Instant.parse("2026-09-13T00:00:01Z"), "ERROR", "second",
                 Map.of("payload", secondDetail), "frame", "route");
         SkillTemplate template = mock(SkillTemplate.class);
-        when(template.invoke(anyString(), anyMap(), any())).thenAnswer(invocation -> {
+        when(template.invoke(anyString(), anyString(), anyMap(), any())).thenAnswer(invocation -> {
             @SuppressWarnings("unchecked")
-            var observer = (java.util.function.Consumer<SkillExecutionView>) invocation.getArgument(2);
+            var observer = (java.util.function.Consumer<SkillExecutionView>) invocation.getArgument(3);
             observer.accept(new SkillExecutionView("one", List.of(first)));
             observer.accept(new SkillExecutionView("two", List.of(second)));
             return result;
@@ -60,7 +60,7 @@ class ExecutionDiagnosticsTest {
         var owner = ExecutionOwner.from(authentication);
         try {
             var snapshot = terminal(coordinator,
-                    coordinator.admit("skill", Map.of(), 2, owner, authentication), owner);
+                    coordinator.admit("default", "skill", Map.of(), 2, owner, authentication), owner);
             assertThat(snapshot.result()).isEqualTo(result);
             assertThat(snapshot.events()).containsExactly(first, second);
             assertThat(snapshot.events().get(0).details().get("payload")).isEqualTo(firstDetail);
@@ -93,14 +93,14 @@ class ExecutionDiagnosticsTest {
     @Test
     void mapsOnlyOutputSchemaDiagnosisFromThePrimaryFacadeFailure() {
         var issue = new SkillContractIssue("", "type", "The root must be an object");
-        var output = new SkillFailureDiagnosis("default-child", SkillContractStage.OUTPUT_SCHEMA,
+        var output = new SkillFailureDiagnosis("default:child", SkillContractStage.OUTPUT_SCHEMA,
                 "schema diagnosis", List.of(issue));
         var diagnosed = new SkillException("primary message", null, output);
         assertThat(ExecutionFailureClassifier.classify(diagnosed)).isEqualTo(new ExecutionFailure(
-                ExecutionFailure.Kind.OUTPUT_SCHEMA, "primary message", "default-child",
+                ExecutionFailure.Kind.OUTPUT_SCHEMA, "primary message", "default:child",
                 List.of(new ExecutionFailure.Issue("", "type", "The root must be an object"))));
 
-        var transform = new SkillFailureDiagnosis("default-child", SkillContractStage.OUTPUT_TRANSFORM,
+        var transform = new SkillFailureDiagnosis("default:child", SkillContractStage.OUTPUT_TRANSFORM,
                 "transform diagnosis", List.of());
         var outer = new SkillException("primary message", diagnosed, transform);
         outer.addSuppressed(diagnosed);
@@ -113,9 +113,9 @@ class ExecutionDiagnosticsTest {
         SkillTemplate template = mock(SkillTemplate.class);
         var event = new SkillExecutionEvent(Instant.now(), "ERROR", "skill.failed",
                 Map.of("business", "visible"), "frame", "root");
-        when(template.invoke(anyString(), anyMap(), any())).thenAnswer(invocation -> {
+        when(template.invoke(anyString(), anyString(), anyMap(), any())).thenAnswer(invocation -> {
             @SuppressWarnings("unchecked")
-            var observer = (java.util.function.Consumer<SkillExecutionView>) invocation.getArgument(2);
+            var observer = (java.util.function.Consumer<SkillExecutionView>) invocation.getArgument(3);
             observer.accept(new SkillExecutionView("session", List.of(event)));
             throw new SkillException("primary facade message");
         });
@@ -126,7 +126,7 @@ class ExecutionDiagnosticsTest {
         var authentication = authentication();
         var owner = ExecutionOwner.from(authentication);
         try {
-            var id = coordinator.admit("skill", Map.of(), 2, owner, authentication);
+            var id = coordinator.admit("default", "skill", Map.of(), 2, owner, authentication);
             ExecutionSnapshot snapshot = terminal(coordinator, id, owner);
             assertThat(snapshot.status()).isEqualTo(ExecutionStatus.FAILED);
             assertThat(snapshot.failure().kind()).isEqualTo(ExecutionFailure.Kind.SKILL_FAILURE);
@@ -150,7 +150,7 @@ class ExecutionDiagnosticsTest {
     @Test
     void failureWithoutObserverCallbackFinishesWithoutInventedEvents() throws Exception {
         SkillTemplate template = mock(SkillTemplate.class);
-        when(template.invoke(anyString(), anyMap(), any())).thenThrow(new SkillException("no callback"));
+        when(template.invoke(anyString(), anyString(), anyMap(), any())).thenThrow(new SkillException("no callback"));
         var properties = new SidecarExecutionProperties();
         properties.setDiagnostics(SidecarExecutionProperties.Diagnostics.ALWAYS);
         var coordinator = new ExecutionCoordinator(TestSkillInvocationHandoff.from(template), properties,
@@ -159,7 +159,7 @@ class ExecutionDiagnosticsTest {
         var owner = ExecutionOwner.from(authentication);
         try {
             var snapshot = terminal(coordinator,
-                    coordinator.admit("skill", Map.of(), 2, owner, authentication), owner);
+                    coordinator.admit("default", "skill", Map.of(), 2, owner, authentication), owner);
             assertThat(snapshot.failure().message()).isEqualTo("no callback");
             assertThat(snapshot.events()).isEmpty();
         } finally {
@@ -172,9 +172,9 @@ class ExecutionDiagnosticsTest {
         var event = new SkillExecutionEvent(Instant.parse("2026-09-13T00:00:00Z"), "INFO", "event",
                 Map.of("value", "kept-until-expiry"), null, null);
         SkillTemplate template = mock(SkillTemplate.class);
-        when(template.invoke(anyString(), anyMap(), any())).thenAnswer(invocation -> {
+        when(template.invoke(anyString(), anyString(), anyMap(), any())).thenAnswer(invocation -> {
             @SuppressWarnings("unchecked")
-            var observer = (java.util.function.Consumer<SkillExecutionView>) invocation.getArgument(2);
+            var observer = (java.util.function.Consumer<SkillExecutionView>) invocation.getArgument(3);
             observer.accept(new SkillExecutionView("session", List.of(event)));
             return "exact-result";
         });
@@ -187,7 +187,7 @@ class ExecutionDiagnosticsTest {
         var authentication = authentication();
         var owner = ExecutionOwner.from(authentication);
         try {
-            var id = coordinator.admit("skill", Map.of(), 2, owner, authentication);
+            var id = coordinator.admit("default", "skill", Map.of(), 2, owner, authentication);
             var snapshot = terminal(coordinator, id, owner);
             assertThat(snapshot.result()).isEqualTo("exact-result");
             assertThat(snapshot.events()).containsExactly(event);
@@ -202,9 +202,9 @@ class ExecutionDiagnosticsTest {
     private ExecutionSnapshot run(SidecarExecutionProperties.Diagnostics diagnostics, boolean fail) throws Exception {
         SkillTemplate template = mock(SkillTemplate.class);
         var event = new SkillExecutionEvent(Instant.now(), "INFO", "fixture.event", Map.of(), null, null);
-        when(template.invoke(anyString(), anyMap(), any())).thenAnswer(invocation -> {
+        when(template.invoke(anyString(), anyString(), anyMap(), any())).thenAnswer(invocation -> {
             @SuppressWarnings("unchecked")
-            var observer = (java.util.function.Consumer<SkillExecutionView>) invocation.getArgument(2);
+            var observer = (java.util.function.Consumer<SkillExecutionView>) invocation.getArgument(3);
             observer.accept(new SkillExecutionView("session", List.of(event)));
             if (fail) throw new SkillException("failure");
             return "success";
@@ -216,7 +216,7 @@ class ExecutionDiagnosticsTest {
         var authentication = authentication();
         var owner = ExecutionOwner.from(authentication);
         try {
-            return terminal(coordinator, coordinator.admit("skill", Map.of(), 2, owner, authentication), owner);
+            return terminal(coordinator, coordinator.admit("default", "skill", Map.of(), 2, owner, authentication), owner);
         } finally {
             coordinator.destroy();
         }

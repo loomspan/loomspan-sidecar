@@ -31,23 +31,23 @@ class JwtStartupIntegrationTest {
             int port = ((WebServerApplicationContext)context).getWebServer().getPort();
             int management = port;
             String token = JwtTestTokens.token("loomspan-app", "loomspan-sidecar", "owner", List.of());
-            assertThat(get(client, port, "/v1/skills", token).statusCode()).isEqualTo(401);
+            assertThat(get(client, port, "/v1/namespaces/default/skills", token).statusCode()).isEqualTo(401);
             assertThat(get(client, management, "/actuator/health/readiness", null).statusCode()).isEqualTo(503);
             assertThat(get(client, management, "/actuator/health/liveness", null).body()).isEqualTo("{\"status\":\"UP\"}");
             Files.writeString(file, valid);
             // Health is snapshot-only: polling it cannot force an unknown-kid refresh.
             awaitStatus(client, port, "/actuator/health/readiness", null, 200);
-            assertThat(get(client, port, "/v1/skills", token).statusCode()).isEqualTo(200);
+            assertThat(get(client, port, "/v1/namespaces/default/skills", token).statusCode()).isEqualTo(200);
             assertThat(get(client, management, "/actuator/health/readiness", null).statusCode()).isEqualTo(200);
             assertThat(get(client, management, "/actuator/health", null).body()).contains("\"status\":\"UP\"").doesNotContain("components", "details", "path", "kids");
             assertThat(get(client, management, "/actuator/health", token).body()).doesNotContain("jwks", "kids", "executionTrust");
             Files.writeString(file, "{\"keys\":[]}");
-            awaitStatus(client, port, "/v1/skills", token, 401);
+            awaitStatus(client, port, "/v1/namespaces/default/skills", token, 401);
             assertThat(get(client, management, "/actuator/health/readiness", null).statusCode()).isEqualTo(503);
             Files.writeString(file, valid);
             // Health is snapshot-only: polling it cannot force an unknown-kid refresh.
             awaitStatus(client, port, "/actuator/health/readiness", null, 200);
-            assertThat(get(client, port, "/v1/skills", token).statusCode()).isEqualTo(200);
+            assertThat(get(client, port, "/v1/namespaces/default/skills", token).statusCode()).isEqualTo(200);
         }
     }
     @Test void configurationErrorsFailStartupWithActionableMessages() {

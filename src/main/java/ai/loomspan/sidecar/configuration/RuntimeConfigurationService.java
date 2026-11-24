@@ -175,7 +175,7 @@ public final class RuntimeConfigurationService implements ApplicationRunner, Aut
             var inspection = new java.util.LinkedHashMap<String, Object>();
             inspection.put("mode", "file");
             inspection.put("skills", catalog.skills().stream().map(skill -> java.util.Map.of(
-                    "name", skill.name(), "kind", skill.kind().name())).toList());
+                    "namespace", skill.namespace(), "localName", skill.localName(), "kind", skill.kind().name())).toList());
             var binder = org.springframework.boot.context.properties.bind.Binder.get(environment);
             inspection.put("models", binder.bind("loomspan.models",
                     org.springframework.boot.context.properties.bind.Bindable.mapOf(String.class, Object.class))

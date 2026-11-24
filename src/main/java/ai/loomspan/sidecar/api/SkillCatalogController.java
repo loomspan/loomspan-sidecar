@@ -2,7 +2,6 @@ package ai.loomspan.sidecar.api;
 
 import java.util.List;
 
-import ai.loomspan.api.SkillReloader;
 import ai.loomspan.api.SkillDescriptor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -10,17 +9,21 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@RequestMapping("/v1/skills")
+@RequestMapping("/v1/namespaces/{namespace}/skills")
 final class SkillCatalogController {
-    private final SkillReloader reloader;
+    private final SkillCatalogLookup catalog;
 
-    SkillCatalogController(SkillReloader reloader) { this.reloader = reloader; }
+    SkillCatalogController(SkillCatalogLookup catalog) {
+        this.catalog = catalog;
+    }
 
     @GetMapping
-    List<SkillDescriptor> skills() { return reloader.snapshot("default").skills(); }
+    List<SkillDescriptor> skills(@PathVariable("namespace") String namespace) {
+        return catalog.snapshot(namespace).skills();
+    }
 
-    @GetMapping("/{name}")
-    SkillDescriptor skill(@PathVariable("name") String name) {
-        return reloader.snapshot("default").skill(name.contains("-") ? name : "default-" + name).orElseThrow(() -> new ResourceNotFoundException("Unknown skill '" + name + "'"));
+    @GetMapping("/{localName}")
+    SkillDescriptor skill(@PathVariable("namespace") String namespace, @PathVariable("localName") String localName) {
+        return catalog.skill(namespace, localName);
     }
 }

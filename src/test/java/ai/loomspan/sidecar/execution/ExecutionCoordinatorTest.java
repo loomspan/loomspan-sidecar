@@ -44,14 +44,14 @@ class ExecutionCoordinatorTest {
         var admitted = mock(ai.loomspan.api.AdmittedSkillInvocation.class);
         when(admitted.generationId()).thenReturn("unmapped-generation");
         var handoff = mock(SkillInvocationHandoff.class);
-        when(handoff.handoff(anyString(), anyMap())).thenReturn(admitted);
+        when(handoff.handoff(anyString(), anyString(), anyMap())).thenReturn(admitted);
         var coordinator = new ExecutionCoordinator(handoff, properties(), mock(ApplicationContext.class),
                 Clock.systemUTC(), task -> { }, generation -> null);
         coordinator.openAfterActivation();
         var authentication = authentication("token", "owner");
         var owner = ExecutionOwner.from(authentication);
         try {
-            var id = coordinator.admit("skill", Map.of(), 2, owner, authentication);
+            var id = coordinator.admit("default", "skill", Map.of(), 2, owner, authentication);
             var terminal = awaitTerminal(coordinator, id, owner);
             assertThat(terminal.status()).isEqualTo(ExecutionStatus.FAILED);
             assertThat(terminal.configurationSnapshotId()).isNull();
@@ -69,7 +69,7 @@ class ExecutionCoordinatorTest {
         var invocations = new AtomicInteger();
         var seenTokens = new java.util.concurrent.CopyOnWriteArrayList<String>();
         SkillTemplate template = mock(SkillTemplate.class);
-        when(template.invoke(anyString(), anyMap(), any())).thenAnswer(invocation -> {
+        when(template.invoke(anyString(), anyString(), anyMap(), any())).thenAnswer(invocation -> {
             seenTokens.add(((JwtAuthenticationToken) org.springframework.security.core.context.SecurityContextHolder
                     .getContext().getAuthentication()).getToken().getTokenValue());
             if (invocations.incrementAndGet() == 1) {
@@ -87,12 +87,12 @@ class ExecutionCoordinatorTest {
         var secondAuthentication = authentication("token-two", "owner");
         var owner = ExecutionOwner.from(firstAuthentication);
         try {
-            var first = coordinator.admit("skill", Map.of(), 2, owner, firstAuthentication);
+            var first = coordinator.admit("default", "skill", Map.of(), 2, owner, firstAuthentication);
             assertThat(firstEntered.await(2, TimeUnit.SECONDS)).isTrue();
             assertThat(coordinator.queuedCount()).isZero();
             assertThat(coordinator.queuedBytes()).isZero();
 
-            var second = coordinator.admit("skill", Map.of(), 10, owner, secondAuthentication);
+            var second = coordinator.admit("default", "skill", Map.of(), 10, owner, secondAuthentication);
             assertThat(coordinator.queuedCount()).isEqualTo(1);
             assertThat(coordinator.queuedBytes()).isEqualTo(10);
             firstRelease.countDown();
@@ -116,7 +116,7 @@ class ExecutionCoordinatorTest {
         var release = new CountDownLatch(1);
         var workerToken = new AtomicReference<String>();
         SkillTemplate template = mock(SkillTemplate.class);
-        when(template.invoke(anyString(), anyMap(), any())).thenAnswer(invocation -> {
+        when(template.invoke(anyString(), anyString(), anyMap(), any())).thenAnswer(invocation -> {
             workerToken.set(((JwtAuthenticationToken) org.springframework.security.core.context.SecurityContextHolder
                     .getContext().getAuthentication()).getToken().getTokenValue());
             entered.countDown();
@@ -129,13 +129,13 @@ class ExecutionCoordinatorTest {
         var authentication = authentication("token-a", "owner");
         var owner = ExecutionOwner.from(authentication);
         try {
-            var first = coordinator.admit("skill", Map.of("x", "one"), 5, owner, authentication);
+            var first = coordinator.admit("default", "skill", Map.of("x", "one"), 5, owner, authentication);
             assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
-            var second = coordinator.admit("skill", Map.of("x", "two"), 10, owner, authentication);
+            var second = coordinator.admit("default", "skill", Map.of("x", "two"), 10, owner, authentication);
             assertThat(coordinator.find(second, owner).orElseThrow().status()).isEqualTo(ExecutionStatus.QUEUED);
             assertThat(coordinator.queuedCount()).isEqualTo(1);
             assertThat(coordinator.queuedBytes()).isEqualTo(10);
-            assertThatThrownBy(() -> coordinator.admit("skill", Map.of("x", "three"), 1, owner, authentication))
+            assertThatThrownBy(() -> coordinator.admit("default", "skill", Map.of("x", "three"), 1, owner, authentication))
                     .isInstanceOf(ExecutionCapacityException.class);
             release.countDown();
             awaitTerminal(coordinator, first, owner);
@@ -155,7 +155,7 @@ class ExecutionCoordinatorTest {
         var entered = new CountDownLatch(1);
         var release = new CountDownLatch(1);
         SkillTemplate template = mock(SkillTemplate.class);
-        when(template.invoke(anyString(), anyMap(), any())).thenAnswer(invocation -> {
+        when(template.invoke(anyString(), anyString(), anyMap(), any())).thenAnswer(invocation -> {
             entered.countDown();
             release.await(5, TimeUnit.SECONDS);
             return "done";
@@ -165,13 +165,13 @@ class ExecutionCoordinatorTest {
         var authentication = authentication("token", "owner");
         var owner = ExecutionOwner.from(authentication);
         try {
-            var active = coordinator.admit("skill", Map.of(), 2, owner, authentication);
+            var active = coordinator.admit("default", "skill", Map.of(), 2, owner, authentication);
             assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
-            var queued = coordinator.admit("skill", Map.of(), 2, owner, authentication);
+            var queued = coordinator.admit("default", "skill", Map.of(), 2, owner, authentication);
             coordinator.onApplicationEvent(new ContextClosedEvent(context));
             assertThat(coordinator.find(queued, owner)).isEmpty();
             assertThat(coordinator.queuedCount()).isZero();
-            assertThatThrownBy(() -> coordinator.admit("skill", Map.of(), 2, owner, authentication))
+            assertThatThrownBy(() -> coordinator.admit("default", "skill", Map.of(), 2, owner, authentication))
                     .isInstanceOf(ExecutionUnavailableException.class);
             release.countDown();
             assertThat(awaitTerminal(coordinator, active, owner).result()).isEqualTo("done");
@@ -184,7 +184,7 @@ class ExecutionCoordinatorTest {
     @Test
     void completionExpiryReclaimsWholeRecordWithoutPollingAndReadsDoNotExtendTtl() throws Exception {
         SkillTemplate template = mock(SkillTemplate.class);
-        when(template.invoke(anyString(), anyMap(), any())).thenReturn("done");
+        when(template.invoke(anyString(), anyString(), anyMap(), any())).thenReturn("done");
         var properties = properties();
         properties.setCompletedTtl(Duration.ofMillis(40));
         var clock = new MutableClock(Instant.parse("2026-09-13T00:00:00Z"));
@@ -193,7 +193,7 @@ class ExecutionCoordinatorTest {
         var authentication = authentication("token", "owner");
         var owner = ExecutionOwner.from(authentication);
         try {
-            var id = coordinator.admit("skill", Map.of(), 2, owner, authentication);
+            var id = coordinator.admit("default", "skill", Map.of(), 2, owner, authentication);
             awaitTerminal(coordinator, id, owner);
             assertThat(coordinator.find(id, owner)).isPresent();
             clock.advance(Duration.ofMillis(41));
@@ -212,7 +212,7 @@ class ExecutionCoordinatorTest {
         var entered = new CountDownLatch(1);
         var release = new CountDownLatch(1);
         SkillTemplate template = mock(SkillTemplate.class);
-        when(template.invoke(anyString(), anyMap(), any())).thenAnswer(invocation -> {
+        when(template.invoke(anyString(), anyString(), anyMap(), any())).thenAnswer(invocation -> {
             entered.countDown();
             release.await(5, TimeUnit.SECONDS);
             return "done";
@@ -231,13 +231,13 @@ class ExecutionCoordinatorTest {
         var start = new CountDownLatch(1);
         var submissions = Executors.newFixedThreadPool(8);
         try {
-            var active = coordinator.admit("skill", Map.of(), 2, owner, authentication);
+            var active = coordinator.admit("default", "skill", Map.of(), 2, owner, authentication);
             assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
             for (int count = 0; count < 8; count++) {
                 submissions.submit(() -> {
                     try {
                         start.await();
-                        accepted.add(coordinator.admit("skill", Map.of(), 10, owner, authentication));
+                        accepted.add(coordinator.admit("default", "skill", Map.of(), 10, owner, authentication));
                     } catch (ExecutionCapacityException expected) {
                         rejected.incrementAndGet();
                     } catch (InterruptedException interrupted) {
@@ -267,7 +267,7 @@ class ExecutionCoordinatorTest {
         var entered = new CountDownLatch(1);
         var release = new CountDownLatch(1);
         SkillTemplate template = mock(SkillTemplate.class);
-        when(template.invoke(anyString(), anyMap(), any())).thenAnswer(invocation -> {
+        when(template.invoke(anyString(), anyString(), anyMap(), any())).thenAnswer(invocation -> {
             entered.countDown();
             release.await(5, TimeUnit.SECONDS);
             return "done";
@@ -282,11 +282,11 @@ class ExecutionCoordinatorTest {
         var authentication = authentication("token", "owner");
         var owner = ExecutionOwner.from(authentication);
         try {
-            var active = coordinator.admit("skill", Map.of(), 1, owner, authentication);
+            var active = coordinator.admit("default", "skill", Map.of(), 1, owner, authentication);
             assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
-            var queued = coordinator.admit("skill", Map.of(), 10, owner, authentication);
+            var queued = coordinator.admit("default", "skill", Map.of(), 10, owner, authentication);
             assertThat(coordinator.queuedBytes()).isEqualTo(10);
-            assertThatThrownBy(() -> coordinator.admit("skill", Map.of(), 1, owner, authentication))
+            assertThatThrownBy(() -> coordinator.admit("default", "skill", Map.of(), 1, owner, authentication))
                     .isInstanceOf(ExecutionCapacityException.class);
             assertThat(coordinator.retainedCount()).isEqualTo(2);
             assertThat(coordinator.queuedCount()).isEqualTo(1);
@@ -305,7 +305,7 @@ class ExecutionCoordinatorTest {
         var entered = new CountDownLatch(1);
         var release = new CountDownLatch(1);
         SkillTemplate template = mock(SkillTemplate.class);
-        when(template.invoke(anyString(), anyMap(), any())).thenAnswer(invocation -> {
+        when(template.invoke(anyString(), anyString(), anyMap(), any())).thenAnswer(invocation -> {
             entered.countDown();
             release.await(5, TimeUnit.SECONDS);
             return "done";
@@ -315,10 +315,10 @@ class ExecutionCoordinatorTest {
         var authentication = authentication("token", "owner");
         var owner = ExecutionOwner.from(authentication);
         try {
-            var active = coordinator.admit("skill", Map.of(), 1, owner, authentication);
+            var active = coordinator.admit("default", "skill", Map.of(), 1, owner, authentication);
             assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
-            coordinator.admit("skill", Map.of(), 10, owner, authentication);
-            assertThatThrownBy(() -> coordinator.admit("skill", Map.of(), 1, owner, authentication))
+            coordinator.admit("default", "skill", Map.of(), 10, owner, authentication);
+            assertThatThrownBy(() -> coordinator.admit("default", "skill", Map.of(), 1, owner, authentication))
                     .isInstanceOf(ExecutionCapacityException.class);
             assertThat(coordinator.retainedCount()).isEqualTo(2);
             assertThat(coordinator.queuedCount()).isEqualTo(1);
@@ -341,7 +341,7 @@ class ExecutionCoordinatorTest {
         var activeRelease = new CountDownLatch(1);
         var invocation = new AtomicInteger();
         SkillTemplate template = mock(SkillTemplate.class);
-        when(template.invoke(anyString(), anyMap(), any())).thenAnswer(call -> {
+        when(template.invoke(anyString(), anyString(), anyMap(), any())).thenAnswer(call -> {
             if (invocation.incrementAndGet() == 1) return "first";
             activeEntered.countDown();
             activeRelease.await(5, TimeUnit.SECONDS);
@@ -356,10 +356,10 @@ class ExecutionCoordinatorTest {
         var authentication = authentication("token", "owner");
         var owner = ExecutionOwner.from(authentication);
         try {
-            var expired = coordinator.admit("skill", Map.of(), 1, owner, authentication);
+            var expired = coordinator.admit("default", "skill", Map.of(), 1, owner, authentication);
             awaitTerminal(coordinator, expired, owner);
             clock.advance(Duration.ofMinutes(1));
-            var active = coordinator.admit("skill", Map.of(), 1, owner, authentication);
+            var active = coordinator.admit("default", "skill", Map.of(), 1, owner, authentication);
             assertThat(activeEntered.await(2, TimeUnit.SECONDS)).isTrue();
             clock.advance(Duration.ofHours(1));
             assertThat(coordinator.find(active, owner)).isPresent();
@@ -379,10 +379,10 @@ class ExecutionCoordinatorTest {
         var owner = ExecutionOwner.from(authentication);
         try {
             coordinator.onApplicationEvent(new ContextClosedEvent(context));
-            var record = new ExecutionRecord(java.util.UUID.randomUUID(), "skill", owner, Instant.now());
+            var record = new ExecutionRecord(java.util.UUID.randomUUID(), "default", "skill", owner, Instant.now());
             new ExecutionCoordinator.ExecutionTask(coordinator, record, Map.of("secret", "value"), 2,
                     authentication).run();
-            verify(template, never()).invoke(anyString(), anyMap(), any());
+            verify(template, never()).invoke(anyString(), anyString(), anyMap(), any());
             assertThat(coordinator.queuedCount()).isZero();
             assertThat(coordinator.queuedBytes()).isZero();
         } finally {
@@ -401,7 +401,7 @@ class ExecutionCoordinatorTest {
         var frameworkHandoffs = new AtomicInteger();
         var invocations = new AtomicInteger();
         SkillTemplate template = mock(SkillTemplate.class);
-        when(template.invoke(anyString(), anyMap(), any())).thenAnswer(call -> {
+        when(template.invoke(anyString(), anyString(), anyMap(), any())).thenAnswer(call -> {
             invocations.incrementAndGet();
             activeEntered.countDown();
             activeRelease.await(5, TimeUnit.SECONDS);
@@ -410,13 +410,13 @@ class ExecutionCoordinatorTest {
         var context = mock(ApplicationContext.class);
         SkillInvocationHandoff delegate = TestSkillInvocationHandoff.from(template);
         SkillInvocationHandoff handoff = new SkillInvocationHandoff() {
-            @Override public ai.loomspan.api.AdmittedSkillInvocation handoff(String skillName, Object input) {
+            @Override public ai.loomspan.api.AdmittedSkillInvocation handoff(String namespace, String localName, Object input) {
                 frameworkHandoffs.incrementAndGet();
-                return delegate.handoff(skillName, input);
+                return delegate.handoff(namespace, localName, input);
             }
-            @Override public ai.loomspan.api.AdmittedSkillInvocation handoff(String skillName, Map<String, Object> input) {
+            @Override public ai.loomspan.api.AdmittedSkillInvocation handoff(String namespace, String localName, Map<String, Object> input) {
                 frameworkHandoffs.incrementAndGet();
-                return delegate.handoff(skillName, input);
+                return delegate.handoff(namespace, localName, input);
             }
         };
         var coordinator = new ExecutionCoordinator(handoff, properties(), context,
@@ -433,9 +433,9 @@ class ExecutionCoordinatorTest {
         var authentication = authentication("secret-token", "owner");
         var owner = ExecutionOwner.from(authentication);
         try {
-            var activeId = coordinator.admit("skill", Map.of("active", "value"), 1, owner, authentication);
+            var activeId = coordinator.admit("default", "skill", Map.of("active", "value"), 1, owner, authentication);
             assertThat(activeEntered.await(2, TimeUnit.SECONDS)).isTrue();
-            var id = coordinator.admit("skill", Map.of("secret", "value"), 10, owner, authentication);
+            var id = coordinator.admit("default", "skill", Map.of("secret", "value"), 10, owner, authentication);
             assertThat(coordinator.queuedCount()).isEqualTo(1);
             assertThat(coordinator.queuedBytes()).isEqualTo(10);
 
@@ -452,7 +452,7 @@ class ExecutionCoordinatorTest {
             assertThat(coordinator.queuedCount()).isZero();
             assertThat(coordinator.queuedBytes()).isZero();
             assertThat(handedOffTask.get().referencesCleared()).isTrue();
-            assertThatThrownBy(() -> coordinator.admit("skill", Map.of(), 1, owner, authentication))
+            assertThatThrownBy(() -> coordinator.admit("default", "skill", Map.of(), 1, owner, authentication))
                     .isInstanceOf(ExecutionUnavailableException.class);
         } finally {
             activeRelease.countDown();
@@ -465,7 +465,7 @@ class ExecutionCoordinatorTest {
     void frameworkAdmissionClosingFirstFailsDequeuedWorkWithoutInvokingIt() throws Exception {
         var context = mock(ApplicationContext.class);
         SkillInvocationHandoff handoff = mock(SkillInvocationHandoff.class);
-        when(handoff.handoff(anyString(), anyMap()))
+        when(handoff.handoff(anyString(), anyString(), anyMap()))
                 .thenThrow(new SkillException("Framework execution admission is closed."));
         var task = new AtomicReference<ExecutionCoordinator.ExecutionTask>();
         var coordinator = new ExecutionCoordinator(handoff, properties(), context,
@@ -473,7 +473,7 @@ class ExecutionCoordinatorTest {
         var authentication = authentication("token", "owner");
         var owner = ExecutionOwner.from(authentication);
         try {
-            var id = coordinator.admit("skill", Map.of("message", "value"), 5, owner, authentication);
+            var id = coordinator.admit("default", "skill", Map.of("message", "value"), 5, owner, authentication);
 
             var terminal = awaitTerminal(coordinator, id, owner);
 
@@ -502,7 +502,7 @@ class ExecutionCoordinatorTest {
         when(admitted.generationId()).thenReturn("generation");
         when(admitted.invoke(any())).thenAnswer(invocation -> { entered.countDown(); release.await(5, TimeUnit.SECONDS); return "done"; });
         var handoff = mock(SkillInvocationHandoff.class);
-        when(handoff.handoff(anyString(), anyMap())).thenAnswer(invocation -> { calls.incrementAndGet(); return admitted; });
+        when(handoff.handoff(anyString(), anyString(), anyMap())).thenAnswer(invocation -> { calls.incrementAndGet(); return admitted; });
         var limits = properties(); limits.setMaxRetained(3);
         var coordinator = new ExecutionCoordinator(handoff, limits, mock(ApplicationContext.class), clock,
                 seen::add, generation -> java.util.UUID.randomUUID(), token -> {
@@ -511,9 +511,9 @@ class ExecutionCoordinatorTest {
         coordinator.openAfterActivation();
         var original = authentication("captured", "owner"); var owner = ExecutionOwner.from(original);
         try {
-            var first = coordinator.admit("skill", Map.of(), 1, owner, original);
+            var first = coordinator.admit("default", "skill", Map.of(), 1, owner, original);
             assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
-            var queued = coordinator.admit("skill", Map.of(), 10, owner, original);
+            var queued = coordinator.admit("default", "skill", Map.of(), 10, owner, original);
             assertThat(coordinator.queuedBytes()).isEqualTo(10);
             if (withdraw) valid.set(false);
             else clock.advance(Duration.between(clock.instant(), original.getToken().getExpiresAt()));
@@ -528,7 +528,7 @@ class ExecutionCoordinatorTest {
             valid.set(true);
             var next = new JwtAuthenticationToken(Jwt.withTokenValue("fresh").header("alg", "none")
                     .issuer("https://issuer.test").subject("owner").expiresAt(clock.instant().plusSeconds(300)).build());
-            var nextId = coordinator.admit("skill", Map.of(), 1, owner, next);
+            var nextId = coordinator.admit("default", "skill", Map.of(), 1, owner, next);
             assertThat(awaitTerminal(coordinator, nextId, owner).status()).isEqualTo(ExecutionStatus.COMPLETED);
             assertThat(calls.get()).isEqualTo(2);
         } finally { release.countDown(); coordinator.destroy(); }
@@ -543,9 +543,9 @@ class ExecutionCoordinatorTest {
         coordinator.openAfterActivation();
         var owner = ExecutionOwner.from(authentication);
         try {
-            var id = coordinator.admit("skill", Map.of(), 1, owner, authentication);
+            var id = coordinator.admit("default", "skill", Map.of(), 1, owner, authentication);
             assertThat(awaitTerminal(coordinator, id, owner).failure().message()).isEqualTo("execution credential expired before start");
-            verify(handoff, never()).handoff(anyString(), anyMap());
+            verify(handoff, never()).handoff(anyString(), anyString(), anyMap());
         } finally { coordinator.destroy(); }
     }
 

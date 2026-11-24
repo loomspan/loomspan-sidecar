@@ -1,4 +1,4 @@
-name: mountedYmlSkill
+name: mounted-yml-skill
 description: Mounted YML fixture.
 model: fixture-model
 planning_mode: false

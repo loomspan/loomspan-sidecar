@@ -22,7 +22,7 @@ class HttpExecutorLifecycleIntegrationTest {
             var client=context.getBean(HttpExecutorClient.class);
             try(var child=new org.springframework.context.support.GenericApplicationContext(context)){child.refresh();}
             assertThat(client.isClosed()).isFalse();
-            var admitted=context.getBean(SkillInvocationHandoff.class).handoff("call",Map.of());var call=pool.submit(()->{return admitted.invoke();});
+            var admitted=context.getBean(SkillInvocationHandoff.class).handoff("default", "call",Map.of());var call=pool.submit(()->{return admitted.invoke();});
             assertThat(entered.await(2,TimeUnit.SECONDS)).isTrue();var closing=pool.submit(context::close);
             try {Thread.sleep(100);assertThat(closing.isDone()).isFalse();assertThat(client.isClosed()).isFalse();}finally{release.countDown();}
             assertThat(call.get(3,TimeUnit.SECONDS)).isEqualTo("drained");closing.get(3,TimeUnit.SECONDS);assertThat(client.isClosed()).isTrue();client.close();
@@ -34,7 +34,7 @@ class HttpExecutorLifecycleIntegrationTest {
         try(var fixture=new HttpTestSupport(e->{entered.countDown();try{release.await(5,TimeUnit.SECONDS);}catch(InterruptedException x){Thread.currentThread().interrupt();}e.close();});var context=HttpFrameworkFixture.start(empty,"--loomspan.shutdown.timeout=200ms");var pool=Executors.newVirtualThreadPerTaskExecutor()) {
             if(async) ((org.springframework.context.event.SimpleApplicationEventMulticaster)context.getBean("applicationEventMulticaster")).setTaskExecutor(pool);
             HttpFrameworkFixture.publish(context,List.of(HttpFrameworkFixture.leaf("/","")),fixture.settings("read-timeout","30s"),"");
-            var client=context.getBean(HttpExecutorClient.class);var admitted=context.getBean(SkillInvocationHandoff.class).handoff("call",Map.of());
+            var client=context.getBean(HttpExecutorClient.class);var admitted=context.getBean(SkillInvocationHandoff.class).handoff("default", "call",Map.of());
             var call=pool.submit(()->catchThrowable(admitted::invoke));assertThat(entered.await(2,TimeUnit.SECONDS)).isTrue();
             var close=pool.submit(context::close);close.get(2,TimeUnit.SECONDS);assertThat(client.isClosed()).isTrue();
             assertThat(call.get(2,TimeUnit.SECONDS)).isInstanceOf(SkillException.class);release.countDown();

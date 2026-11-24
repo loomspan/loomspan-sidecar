@@ -96,6 +96,25 @@ class ConfigurationBundleV4Test {
         } finally { java.util.Locale.setDefault(original); }
     }
 
+    @Test void importsOrdinalSkillPathAndPreservesMixedCaseDiagnosticLabel() throws Exception {
+        String label = "Orders/Lookup.YAML";
+        String yaml = "name: lookup-3pl\n";
+        byte[] skill = yaml.getBytes(StandardCharsets.UTF_8);
+        byte[] settings = execution(ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION);
+        String path = "skills/00000.yaml";
+        byte[] archive = zip(Map.of("execution.json", settings, path, skill,
+                "manifest.json", manifest(4, List.of(item("execution.json", settings, null), item(path, skill, label)))));
+
+        assertThat(ConfigurationBundleV4.read(new ByteArrayInputStream(archive)).configuration().skillDocuments())
+                .containsExactly(new SkillDocument(label, yaml));
+
+        for (String invalid : List.of("Skills/00000.yaml", "skills/00000.YAML")) {
+            rejects(zip(Map.of("execution.json", settings, invalid, skill,
+                    "manifest.json", manifest(4, List.of(
+                            item("execution.json", settings, null), item(invalid, skill, label))))));
+        }
+    }
+
     @Test void rejectsUnsupportedIncompleteAmbiguousUnsafeAndCorruptBundles() throws Exception {
         byte[] yaml = "name: example\n".getBytes(StandardCharsets.UTF_8);
         var payloads = new ArrayList<Map<String, Object>>();

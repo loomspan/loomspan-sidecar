@@ -50,7 +50,7 @@ class ManagementLockedExecutionIntegrationTest {
         assertThat(setup.statusCode()).isEqualTo(200);
         assertThat(setup.body()).contains("Management setup is locked").doesNotContain("name='credential'");
         var token = JwtTestTokens.token("execution-fixture", List.of());
-        var execution = client.send(HttpRequest.newBuilder(uri("/v1/skills"))
+        var execution = client.send(HttpRequest.newBuilder(uri("/v1/namespaces/default/skills"))
                 .header("Authorization", "Bearer " + token).GET().build(), HttpResponse.BodyHandlers.ofString());
         assertThat(execution.statusCode()).isEqualTo(200);
         assertThat(execution.body()).isEqualTo("[]");

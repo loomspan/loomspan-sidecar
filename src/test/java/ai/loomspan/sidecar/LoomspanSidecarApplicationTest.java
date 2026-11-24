@@ -64,7 +64,7 @@ class LoomspanSidecarApplicationTest
                         "--loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json"))
         {
             assertThat(context.getBean(SkillReloader.class).snapshot("default").skills())
-                    .extracting(skill -> skill.name()).containsExactly("default-triage");
+                    .extracting(skill -> skill.qualifiedName()).containsExactly("default:triage");
         }
     }
 }

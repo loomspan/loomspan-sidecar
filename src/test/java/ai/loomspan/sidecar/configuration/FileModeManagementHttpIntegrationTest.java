@@ -27,7 +27,9 @@ import org.springframework.test.context.DynamicPropertySource;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-        "loomspan-sidecar.configuration.mode=file", "loomspan.skills.locations=classpath:sidecar-managed-empty-skills/", "server.servlet.session.cookie.secure=false",
+        "loomspan-sidecar.configuration.mode=file",
+        "loomspan.skills.locations=classpath:/sidecar-empty-skills/*.yaml",
+        "server.servlet.session.cookie.secure=false",
         "loomspan-sidecar.trust.mode=file",
         "loomspan-sidecar.auth.jwt.audience=sidecar",
         "loomspan-sidecar.trust.file.jwks=src/test/resources/fixtures/jwks.json"

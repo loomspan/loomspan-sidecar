@@ -44,7 +44,7 @@ class HttpConfigurationIntegrationTest {
                         assertThat(context.getBean(ai.loomspan.sidecar.management.ManagementConfigurationImportService.class)
                                 .review(upload).validation().successful()).isTrue();
                     } finally { Files.deleteIfExists(archive); }
-                    assertThatThrownBy(() -> context.getBean(SkillTemplate.class).invoke("call", Map.of()))
+                    assertThatThrownBy(() -> context.getBean(SkillTemplate.class).invoke("default", "call", Map.of()))
                             .hasMessageContaining("HTTP");
                     assertThat(runtime.current().published()).isNotNull();
                     assertThat(requests).hasValue(0);
@@ -54,7 +54,7 @@ class HttpConfigurationIntegrationTest {
             }
             try (var context = start(database)) {
                 assertThat(context.getBean(RuntimeConfigurationService.class).current().published()).isNotNull();
-                assertThatThrownBy(() -> context.getBean(SkillTemplate.class).invoke("call", Map.of())).hasMessageContaining("HTTP");
+                assertThatThrownBy(() -> context.getBean(SkillTemplate.class).invoke("default", "call", Map.of())).hasMessageContaining("HTTP");
                 assertThat(requests).hasValue(0);
             }
         } finally { server.stop(0); }
@@ -105,7 +105,7 @@ class HttpConfigurationIntegrationTest {
                 var grant = editor.acquire();
                 invoke(context, "/records/a");
                 var draft = editor.value(grant, grant.draft(), "records.b", "/records/b");
-                var admitted = context.getBean(SkillInvocationHandoff.class).handoff("call", Map.of());
+                var admitted = context.getBean(SkillInvocationHandoff.class).handoff("default", "call", Map.of());
                 try {
                     editor.publish(grant, draft);
                     assertThat(context.getBean(ConfigurationGenerationRegistry.class).snapshotId(admitted.generationId()))
@@ -158,7 +158,7 @@ class HttpConfigurationIntegrationTest {
     }
 
     private static void invoke(ConfigurableApplicationContext context, String path) {
-        assertThat(context.getBean(SkillTemplate.class).invoke("call", Map.of())).isEqualTo(path);
+        assertThat(context.getBean(SkillTemplate.class).invoke("default", "call", Map.of())).isEqualTo(path);
     }
 
     private record Editor(ai.loomspan.sidecar.management.ManagementEditingService editing,
@@ -212,8 +212,8 @@ class HttpConfigurationIntegrationTest {
         try (var context = start(directory.resolve("file.db"), "--loomspan-sidecar.configuration.mode=file",
                 "--spring.config.additional-location=" + settings.toUri(), "--loomspan.skills.locations=" + skill.toUri())) {
             assertThat(context.getBean(RuntimeConfigurationService.class).current().readOnly()).isTrue();
-            assertThat(context.getBean(SkillReloader.class).snapshot("default").skill("default-call").orElseThrow().kind()).isEqualTo(SkillKind.JAVA);
-            assertThatThrownBy(() -> context.getBean(SkillTemplate.class).invoke("call", Map.of())).hasMessageContaining("HTTP");
+            assertThat(context.getBean(SkillReloader.class).snapshot("default").skill("call").orElseThrow().kind()).isEqualTo(SkillKind.JAVA);
+            assertThatThrownBy(() -> context.getBean(SkillTemplate.class).invoke("default", "call", Map.of())).hasMessageContaining("HTTP");
         }
     }
 
@@ -249,7 +249,7 @@ class HttpConfigurationIntegrationTest {
                         "--loomspan-sidecar.configuration.mode=file", "--spring.config.additional-location=" + settings.toUri(),
                         "--loomspan.skills.locations=" + skill.toUri(), "--app.region=" + installation.region(),
                         "--records.lookup-path=" + path + "{recordId}", "--service.authorization=" + installation.authorization())) {
-                    assertThat(context.getBean(SkillTemplate.class).invoke("call", Map.of("recordId", "42")))
+                    assertThat(context.getBean(SkillTemplate.class).invoke("default", "call", Map.of("recordId", "42")))
                             .isEqualTo(path + "42");
                 }
             }
@@ -281,7 +281,7 @@ class HttpConfigurationIntegrationTest {
             try (var context = start(directory.resolve("profile.db"), "--loomspan-sidecar.configuration.mode=file",
                     "--spring.profiles.active=chosen", "--spring.config.additional-location=" + settings.toUri(),
                     "--loomspan.skills.locations=" + skill.toUri())) {
-                assertThat(context.getBean(SkillTemplate.class).invoke("call", Map.of())).isEqualTo("/selected/actual");
+                assertThat(context.getBean(SkillTemplate.class).invoke("default", "call", Map.of())).isEqualTo("/selected/actual");
             }
         } finally { server.stop(0); }
     }
@@ -305,7 +305,7 @@ class HttpConfigurationIntegrationTest {
             assertThat(runtime.publishedSnapshot().localId()).isEqualTo(previous);
             publish(context, skill("{target: app, method: GET, path: /}"),
                     "loomspan: {executor-config: {default: {http: {targets: {}}}}}", List.of());
-            assertThatThrownBy(() -> context.getBean(SkillTemplate.class).invoke("call", Map.of())).hasMessageContaining("HTTP");
+            assertThatThrownBy(() -> context.getBean(SkillTemplate.class).invoke("default", "call", Map.of())).hasMessageContaining("HTTP");
         }
     }
 

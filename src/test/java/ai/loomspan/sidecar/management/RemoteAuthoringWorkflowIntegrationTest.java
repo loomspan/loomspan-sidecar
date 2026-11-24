@@ -107,7 +107,7 @@ class RemoteAuthoringWorkflowIntegrationTest {
             JsonNode checked = cli(edit, "validate", candidate(first, saved)).json();
             assertThat(checked.path("validation").path("successful").asBoolean()).as(checked.toPrettyString()).isTrue();
             assertThat(app.allowed.get() + app.denied.get()).isZero(); // validation is advisory
-            page.waitForFunction("() => document.getElementById('editor-saved-content')?.textContent.includes('readRecord')");
+            page.waitForFunction("() => document.getElementById('editor-saved-content')?.textContent.includes('read-record')");
             assertThat(page.locator("#editor-execution").isEditable()).isFalse();
             page.locator("#editor-handoff").click();
             page.waitForFunction("() => document.getElementById('editor-owner')?.textContent.includes('You hold editing control')");
@@ -138,7 +138,7 @@ class RemoteAuthoringWorkflowIntegrationTest {
             assertThat(published.path("localId").asText()).isNotBlank();
             assertThat(cli(publish, "draft", null).code()).isNotZero();
             execute("alice-record", true, app);
-            assertThat(send("GET", "/v1/skills", edit, null).statusCode()).isEqualTo(401);
+            assertThat(send("GET", "/v1/namespaces/default/skills", edit, null).statusCode()).isEqualTo(401);
         }
     }
 
@@ -193,7 +193,7 @@ class RemoteAuthoringWorkflowIntegrationTest {
 
     private void execute(String record, boolean allowed, RemoteAuthoringApplicationFixture app) throws Exception {
         String jwt = JwtTestTokens.token("alice", List.of("RECORD_READER"));
-        var response = send("POST", "/v1/skills/readRecord/executions", jwt,
+        var response = send("POST", "/v1/namespaces/default/skills/read-record/executions", jwt,
                 mapper.writeValueAsString(Map.of("recordId", record)));
         assertThat(response.statusCode()).as(response.body()).isEqualTo(202);
         String id = mapper.readTree(response.body()).path("id").asText();

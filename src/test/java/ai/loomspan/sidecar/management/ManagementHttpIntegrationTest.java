@@ -198,7 +198,7 @@ class ManagementHttpIntegrationTest {
         assertThat(browser.postForm("/management/password/change", "current=wrong&replacement=Another+Long+Password+1%21&_csrf="
                 + encode(csrf(changePage))).body()).contains("Password could not be changed");
         assertThat(browser.get("/api/management/accounts").statusCode()).isEqualTo(200);
-        assertThat(browser.get("/v1/skills").statusCode()).isEqualTo(401);
+        assertThat(browser.get("/v1/namespaces/default/skills").statusCode()).isEqualTo(401);
         assertThat(browser.postJson("/api/management/accounts", "{\"email\":\"other@example.test\",\"role\":\"viewer\"}", null)
                 .statusCode()).isEqualTo(403);
         var jwtOnly = new Browser();

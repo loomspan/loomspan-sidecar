@@ -53,6 +53,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 })
 @org.springframework.context.annotation.Import(SidecarApplicationFixture.Credentials.class)
 class AuthenticatedExecutionApiIntegrationTest {
+    private static final String DEFAULT_SKILLS = "/v1/namespaces/default/skills";
     @TempDir static Path storageDirectory;
     private static final Path TRUST_FILE = trustFile();
     private static final SidecarApplicationFixture FIXTURE = new SidecarApplicationFixture();
@@ -106,30 +107,55 @@ class AuthenticatedExecutionApiIntegrationTest {
 
     @Test
     void requiresJwtAndExposesCatalogWithoutRoleFiltering() throws Exception {
-        var unauthenticated = send("GET", "/v1/skills", null, null);
+        var unauthenticated = send("GET", DEFAULT_SKILLS, null, null);
         assertThat(unauthenticated.statusCode()).isEqualTo(401);
         assertThat(unauthenticated.headers().firstValue("cache-control")).contains("no-store");
 
-        var authenticated = send("GET", "/v1/skills", JwtTestTokens.token("reader", List.of()), null);
+        String token = JwtTestTokens.token("reader", List.of());
+        var authenticated = send("GET", DEFAULT_SKILLS, token, null);
         assertThat(authenticated.statusCode()).isEqualTo(200);
-        assertThat(authenticated.body()).contains("echoRest", "JAVA", "inputSchema");
+        assertThat(authenticated.body()).contains("echo-rest", "JAVA", "inputSchema");
 
-        var restSkill = send("GET", "/v1/skills/echoRest", JwtTestTokens.token("reader", List.of()), null);
+        var restSkill = send("GET", echoSkillPath(token), token, null);
         assertThat(restSkill.statusCode()).isEqualTo(200);
         JsonNode descriptor = mapper.readTree(restSkill.body());
+        assertEchoIdentity(descriptor);
         assertThat(descriptor.has("outputSchema")).isTrue();
         assertThat(descriptor.get("outputSchema").isNull()).isTrue();
 
-        var missing = send("GET", "/v1/skills/missing", JwtTestTokens.token("reader", List.of()), null);
+        var missing = send("GET", DEFAULT_SKILLS + "/missing", token, null);
         assertThat(missing.statusCode()).isEqualTo(404);
         assertThat(missing.headers().firstValue("content-type").orElse("")).contains("application/problem+json");
+    }
+
+    @Test
+    void distinguishesMalformedIdentityFromAbsentTargetsAndRejectsObsoleteNames() throws Exception {
+        String token = JwtTestTokens.token("reader", List.of("REST_USER"));
+        for (String namespace : List.of("Default", "bad_name", "bad--name", "my-claude", "a".repeat(65))) {
+            String skills = "/v1/namespaces/" + namespace + "/skills";
+            assertThat(send("GET", skills, token, null).statusCode()).as(skills).isEqualTo(400);
+            assertSkillRequestStatus(skills + "/echo-rest", token, 400);
+        }
+        for (String localName : List.of("Echo-rest", "bad_name", "bad--name", "anthropic-demo",
+                "default:echo-rest", "a".repeat(56))) {
+            assertSkillRequestStatus(DEFAULT_SKILLS + "/" + localName, token, 400);
+        }
+        String absent = "/v1/namespaces/absent/skills";
+        assertThat(send("GET", absent, token, null).statusCode()).isEqualTo(404);
+        assertSkillRequestStatus(absent + "/echo-rest", token, 404);
+        assertSkillRequestStatus(absent + "/Echo-rest", token, 400);
+        assertSkillRequestStatus(absent + "/" + "a".repeat(57), token, 400);
+        assertSkillRequestStatus(DEFAULT_SKILLS + "/" + "a".repeat(55), token, 404);
+        assertSkillRequestStatus(DEFAULT_SKILLS + "/default-echo-rest", token, 404);
+        assertThat(send("GET", "/v1/skills", token, null).statusCode()).isEqualTo(404);
+        assertSkillRequestStatus("/v1/skills/echo-rest", token, 404);
     }
 
     @Test
     void preservesMvcProblemStatusesWithoutWeakeningAuthentication() throws Exception {
         String token = JwtTestTokens.token("reader", List.of());
         var invalidId = send("GET", "/v1/executions/not-a-uuid", token, null);
-        var wrongMethod = send("DELETE", "/v1/skills", token, null);
+        var wrongMethod = send("DELETE", "/v1/namespaces/default/skills", token, null);
         assertThat(invalidId.statusCode()).isEqualTo(400);
         assertThat(wrongMethod.statusCode()).isEqualTo(405);
         for (var response : List.of(invalidId, wrongMethod)) {
@@ -143,11 +169,11 @@ class AuthenticatedExecutionApiIntegrationTest {
 
     @Test
     void rejectsInvalidInputAndMissingRoleBeforeAdmission() throws Exception {
-        var roleless = send("POST", "/v1/skills/echoRest/executions",
+        var roleless = send("POST", "/v1/namespaces/default/skills/echo-rest/executions",
                 JwtTestTokens.token("reader", List.of()), "{\"message\":\"hello\"}");
         assertThat(roleless.statusCode()).isEqualTo(403);
 
-        var invalid = send("POST", "/v1/skills/echoRest/executions",
+        var invalid = send("POST", "/v1/namespaces/default/skills/echo-rest/executions",
                 JwtTestTokens.token("reader", List.of("REST_USER")), "{}");
         assertThat(invalid.statusCode()).isEqualTo(400);
         assertThat(invalid.body()).contains("issues", "message");
@@ -161,7 +187,7 @@ class AuthenticatedExecutionApiIntegrationTest {
         long queuedBytes = coordinator.queuedBytes();
 
         for (String body : List.of("", "null", "[]", "1", "{broken", "{} {}", "{}")) {
-            var response = sendBytes("/v1/skills/echoRest/executions", token,
+            var response = sendBytes("/v1/namespaces/default/skills/echo-rest/executions", token,
                     body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             assertThat(response.statusCode()).isEqualTo(400);
             assertThat(response.headers().firstValue("content-type").orElse(""))
@@ -174,7 +200,7 @@ class AuthenticatedExecutionApiIntegrationTest {
 
         String exact = "{\"message\":\"" + "é".repeat(24) + "x".repeat(2) + "\"}";
         assertThat(exact.getBytes(java.nio.charset.StandardCharsets.UTF_8)).hasSize(64);
-        var accepted = sendBytes("/v1/skills/echoRest/executions", token,
+        var accepted = sendBytes("/v1/namespaces/default/skills/echo-rest/executions", token,
                 exact.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         assertThat(accepted.statusCode()).isEqualTo(202);
         poll(mapper.readTree(accepted.body()).path("id").asText(), token);
@@ -182,7 +208,7 @@ class AuthenticatedExecutionApiIntegrationTest {
 
         byte[] oversized = new byte[65];
         java.util.Arrays.fill(oversized, (byte) '{');
-        var response = sendBytes("/v1/skills/echoRest/executions", token, oversized);
+        var response = sendBytes("/v1/namespaces/default/skills/echo-rest/executions", token, oversized);
         assertThat(response.statusCode()).isEqualTo(413);
         assertThat(response.headers().firstValue("content-type").orElse(""))
                 .contains("application/problem+json");
@@ -215,7 +241,8 @@ class AuthenticatedExecutionApiIntegrationTest {
         CALLBACK.blockRelease = new CountDownLatch(1);
         String token = JwtTestTokens.token("utf8-owner", List.of("REST_USER"));
         try {
-            var active = send("POST", "/v1/skills/echoRest/executions", token, "{\"message\":\"block\"}");
+            String skillPath = echoSkillPath(token);
+            var active = send("POST", skillPath + "/executions", token, "{\"message\":\"block\"}");
             assertThat(active.statusCode()).isEqualTo(202);
             assertThat(CALLBACK.blockEntered.await(2, TimeUnit.SECONDS)).isTrue();
 
@@ -224,21 +251,26 @@ class AuthenticatedExecutionApiIntegrationTest {
             assertThat(exact.getBytes(StandardCharsets.UTF_8)).hasSize(32);
             String padded = "{  \"message\" : \"" + "é".repeat(9) + "\"  }";
             assertThat(padded.getBytes(StandardCharsets.UTF_8).length).isGreaterThan(32);
-            var queued = send("POST", "/v1/skills/echoRest/executions", token, padded);
+            var queued = send("POST", skillPath + "/executions", token, padded);
             assertThat(queued.statusCode()).isEqualTo(202);
+            String queuedId = mapper.readTree(queued.body()).path("id").asText();
+            JsonNode waiting = mapper.readTree(send("GET", "/v1/executions/" + queuedId, token, null).body());
+            assertThat(waiting.path("status").asText()).isEqualTo("QUEUED");
+            assertEchoIdentity(waiting);
             assertThat(coordinator.queuedCount()).isEqualTo(1);
             assertThat(coordinator.queuedBytes()).isEqualTo(32);
 
             int retained = coordinator.retainedCount();
-            var excess = send("POST", "/v1/skills/echoRest/executions", token,
+            var excess = send("POST", "/v1/namespaces/default/skills/echo-rest/executions", token,
                     "{\"message\":\"" + "é".repeat(10) + "\"}");
             assertThat(excess.statusCode()).isEqualTo(429);
             assertThat(coordinator.retainedCount()).isEqualTo(retained);
             assertThat(coordinator.queuedBytes()).isEqualTo(32);
 
             CALLBACK.blockRelease.countDown();
-            assertThat(poll(mapper.readTree(queued.body()).path("id").asText(), token)
-                    .path("result").asText()).isEqualTo("REST: " + "é".repeat(9));
+            JsonNode completed = poll(queuedId, token);
+            assertEchoIdentity(completed);
+            assertThat(completed.path("result").asText()).isEqualTo("REST: " + "é".repeat(9));
             poll(mapper.readTree(active.body()).path("id").asText(), token);
         } finally {
             CALLBACK.blockRelease.countDown();
@@ -248,13 +280,18 @@ class AuthenticatedExecutionApiIntegrationTest {
     @Test
     void acceptsAndPollsExactOwnedResultWithWorkerJwt() throws Exception {
         String token = JwtTestTokens.token("owner", List.of("REST_USER"));
-        var accepted = send("POST", "/v1/skills/echoRest/executions", token,
+        String skillPath = echoSkillPath(token);
+        JsonNode descriptor = mapper.readTree(send("GET", skillPath, token, null).body());
+        assertEchoIdentity(descriptor);
+        var accepted = send("POST", skillPath + "/executions", token,
                 "{\"message\":\"héllo\\nworld\"}");
         assertThat(accepted.statusCode()).isEqualTo(202);
-        assertThat(accepted.headers().firstValue("location")).isPresent();
         String id = mapper.readTree(accepted.body()).path("id").asText();
+        assertThat(accepted.headers().firstValue("location"))
+                .contains("http://127.0.0.1:" + port + "/v1/executions/" + id);
 
         JsonNode completed = poll(id, token);
+        assertEchoIdentity(completed);
         assertThat(completed.path("status").asText()).isEqualTo("COMPLETED");
         assertThat(completed.path("result").asText()).isEqualTo("REST: héllo\nworld");
         assertThat(completed.path("configurationSnapshotId").asText()).isEqualTo(snapshots.current().localId().toString());
@@ -274,12 +311,13 @@ class AuthenticatedExecutionApiIntegrationTest {
     @Test
     void returnsOwnedSkillFailureAsHttp200WithoutAStackTrace() throws Exception {
         String token = JwtTestTokens.token("owner-failure", List.of("REST_USER"));
-        var accepted = send("POST", "/v1/skills/echoRest/executions", token,
+        var accepted = send("POST", "/v1/namespaces/default/skills/echo-rest/executions", token,
                 "{\"message\":\"fail\"}");
         String id = mapper.readTree(accepted.body()).path("id").asText();
         var polled = send("GET", "/v1/executions/" + id, token, null);
         JsonNode terminal = poll(id, token);
         assertThat(polled.statusCode()).isEqualTo(200);
+        assertEchoIdentity(terminal);
         assertThat(terminal.path("status").asText()).isEqualTo("FAILED");
         assertThat(terminal.path("failure").path("kind").asText()).isEqualTo("SKILL_FAILURE");
         assertThat(terminal.path("failure").path("message").asText()).isEqualTo("HTTP 503\nfixture-secret");
@@ -292,13 +330,13 @@ class AuthenticatedExecutionApiIntegrationTest {
         CALLBACK.blockRelease = new CountDownLatch(1);
         CALLBACK.seenTokens.clear();
         String firstToken = JwtTestTokens.token("blocker", List.of("REST_USER"));
-        var first = send("POST", "/v1/skills/echoRest/executions", firstToken,
+        var first = send("POST", "/v1/namespaces/default/skills/echo-rest/executions", firstToken,
                 "{\"message\":\"block\"}");
         assertThat(CALLBACK.blockEntered.await(2, TimeUnit.SECONDS)).isTrue();
 
         String queuedToken = JwtTestTokens.token("https://issuer.test", "sidecar",
                 "queued-owner", List.of("REST_USER"), 1);
-        var queued = send("POST", "/v1/skills/echoRest/executions", queuedToken,
+        var queued = send("POST", "/v1/namespaces/default/skills/echo-rest/executions", queuedToken,
                 "{\"message\":\"queued\"}");
         String queuedId = mapper.readTree(queued.body()).path("id").asText();
         assertThat(mapper.readTree(send("GET", "/v1/executions/" + queuedId, queuedToken, null).body())
@@ -324,9 +362,9 @@ class AuthenticatedExecutionApiIntegrationTest {
         String renewed = JwtTestTokens.token("https://issuer.test", "sidecar", "withdraw-owner", List.of("REST_USER"), 600);
         assertThat(renewed).isNotEqualTo(original);
         try {
-            var active = send("POST", "/v1/skills/echoRest/executions", original, "{\"message\":\"block\"}");
+            var active = send("POST", "/v1/namespaces/default/skills/echo-rest/executions", original, "{\"message\":\"block\"}");
             assertThat(CALLBACK.blockEntered.await(2, TimeUnit.SECONDS)).isTrue();
-            var waiting = send("POST", "/v1/skills/echoRest/executions", original, "{\"message\":\"queued\"}");
+            var waiting = send("POST", "/v1/namespaces/default/skills/echo-rest/executions", original, "{\"message\":\"queued\"}");
             String id = mapper.readTree(waiting.body()).path("id").asText();
             assertThat(send("GET", "/v1/executions/" + id, renewed, null).statusCode()).isEqualTo(200);
             Files.writeString(TRUST_FILE, "{\"keys\":[]}"); trust.reload();
@@ -350,13 +388,13 @@ class AuthenticatedExecutionApiIntegrationTest {
     @Test
     void nestedExecutionExposesTheOriginalJwtToTheRestHandler() throws Exception {
         MODEL_RESPONSES.add(completion("""
-                {"capabilityName":"default-nestedRest","createdAt":"2026-09-13T00:00:00Z","status":"VALID",\
+                {"capabilityName":"default:nested-rest","createdAt":"2026-09-13T00:00:00Z","status":"VALID",\
                 "tasks":[{"taskId":"rest-task","title":"Call REST leaf","status":"PENDING",\
-                "capabilityName":"default-echoRest","intent":"Echo through REST","dependsOn":[],\
+                "capabilityName":"default:echo-rest","intent":"Echo through REST","dependsOn":[],\
                 "expectedOutputs":["REST echo"],"parallelGroup":null,"note":""}]}
                 """));
         MODEL_RESPONSES.add(completion("""
-                {"stepAction":"CALL_TOOL","taskId":"rest-task","toolName":"default-echoRest",\
+                {"stepAction":"CALL_TOOL","taskId":"rest-task","toolName":"default:echo-rest",\
                 "toolArguments":{"message":"nested-message"}}
                 """));
         MODEL_RESPONSES.add(completion("""
@@ -364,7 +402,7 @@ class AuthenticatedExecutionApiIntegrationTest {
                 """));
 
         String token = JwtTestTokens.token("nested-owner", List.of("REST_USER"));
-        var accepted = send("POST", "/v1/skills/nestedRest/executions", token,
+        var accepted = send("POST", "/v1/namespaces/default/skills/nested-rest/executions", token,
                 "{\"message\":\"start\"}");
         assertThat(accepted.statusCode()).isEqualTo(202);
         String id = mapper.readTree(accepted.body()).path("id").asText();
@@ -382,14 +420,14 @@ class AuthenticatedExecutionApiIntegrationTest {
     void nestedRestCallAfterPublicationKeepsItsAdmittedGeneration() throws Exception {
         var original = snapshots.current();
         MODEL_RESPONSES.add(completion("""
-                {"capabilityName":"default-nestedRest","createdAt":"2026-09-13T00:00:00Z","status":"VALID",\
+                {"capabilityName":"default:nested-rest","createdAt":"2026-09-13T00:00:00Z","status":"VALID",\
                 "tasks":[{"taskId":"rest-task","title":"Call REST leaf","status":"PENDING",\
-                "capabilityName":"default-echoRest","intent":"Echo through REST","dependsOn":[],\
+                "capabilityName":"default:echo-rest","intent":"Echo through REST","dependsOn":[],\
                 "expectedOutputs":["REST echo"],"parallelGroup":null,"note":""}]}
                 """));
         FIXTURE.blockNextModelResponse();
         MODEL_RESPONSES.add(completion("""
-                {"stepAction":"CALL_TOOL","taskId":"rest-task","toolName":"default-echoRest",\
+                {"stepAction":"CALL_TOOL","taskId":"rest-task","toolName":"default:echo-rest",\
                 "toolArguments":{"message":"nested-after-publication"}}
                 """));
         MODEL_RESPONSES.add(completion("""
@@ -407,7 +445,7 @@ class AuthenticatedExecutionApiIntegrationTest {
         });
         second.start();
         try {
-            var accepted = send("POST", "/v1/skills/nestedRest/executions", token, "{\"message\":\"start\"}");
+            var accepted = send("POST", "/v1/namespaces/default/skills/nested-rest/executions", token, "{\"message\":\"start\"}");
             assertThat(accepted.statusCode()).isEqualTo(202);
             assertThat(FIXTURE.awaitModelBlock(5, TimeUnit.SECONDS)).isTrue();
             String newExecution = original.configuration().executionConfigurationYaml().replace(
@@ -426,7 +464,7 @@ class AuthenticatedExecutionApiIntegrationTest {
             assertThat(nested.path("configurationSnapshotId").asText()).isEqualTo(original.localId().toString());
             assertThat(CALLBACK.lastToken).hasValue(token);
             assertThat(newCalls).hasValue(0);
-            var next = send("POST", "/v1/skills/echoRest/executions", token,
+            var next = send("POST", "/v1/namespaces/default/skills/echo-rest/executions", token,
                     "{\"message\":\"new\"}");
             assertThat(poll(mapper.readTree(next.body()).path("id").asText(), token)
                     .path("result").asText()).isEqualTo("new-generation");
@@ -445,7 +483,7 @@ class AuthenticatedExecutionApiIntegrationTest {
         CALLBACK.blockRelease = new CountDownLatch(1);
         String token = JwtTestTokens.token("publication-owner", List.of("REST_USER"));
         var old = snapshots.current();
-        var first = send("POST", "/v1/skills/echoRest/executions", token, "{\"message\":\"block\"}");
+        var first = send("POST", "/v1/namespaces/default/skills/echo-rest/executions", token, "{\"message\":\"block\"}");
         assertThat(first.statusCode()).isEqualTo(202);
         assertThat(CALLBACK.blockEntered.await(2, TimeUnit.SECONDS)).isTrue();
 
@@ -481,7 +519,7 @@ class AuthenticatedExecutionApiIntegrationTest {
             JsonNode prior = poll(mapper.readTree(first.body()).path("id").asText(), token);
             assertThat(prior.path("result").asText()).isEqualTo("REST: block");
             assertThat(prior.path("configurationSnapshotId").asText()).isEqualTo(old.localId().toString());
-            var next = send("POST", "/v1/skills/echoRest/executions", token, "{\"message\":\"new\"}");
+            var next = send("POST", "/v1/namespaces/default/skills/echo-rest/executions", token, "{\"message\":\"new\"}");
             JsonNode current = poll(mapper.readTree(next.body()).path("id").asText(), token);
             assertThat(current.path("result").asText()).isEqualTo("new-generation");
             assertThat(current.path("configurationSnapshotId").asText()).isEqualTo(currentPublished.toString());
@@ -509,14 +547,14 @@ class AuthenticatedExecutionApiIntegrationTest {
     void discoveryAndPostPrecheckFollowPublishedCompleteReplacement() throws Exception {
         String token = JwtTestTokens.token("current-catalog-owner", List.of("REST_USER"));
         var original = snapshots.current().configuration();
-        assertThat(send("GET", "/v1/skills", token, null).body()).contains("echoRest");
+        assertThat(send("GET", "/v1/namespaces/default/skills", token, null).body()).contains("echo-rest");
         try {
             var draft = new ai.loomspan.sidecar.storage.ConfigurationDraft(snapshots.current());
             draft.replaceContent(new ai.loomspan.sidecar.storage.ManagedConfiguration(List.of(), ai.loomspan.sidecar.storage.ConfigurationSnapshotStore.EMPTY_EXECUTION_CONFIGURATION));
             assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(runtimeConfiguration, draft, List.of()).successful()).isTrue();
             publicationFixture.publish(draft, List.of());
-            assertThat(mapper.readTree(send("GET", "/v1/skills", token, null).body()).isEmpty()).isTrue();
-            assertThat(send("POST", "/v1/skills/echoRest/executions", token, "{}").statusCode()).isEqualTo(404);
+            assertThat(mapper.readTree(send("GET", "/v1/namespaces/default/skills", token, null).body()).isEmpty()).isTrue();
+            assertThat(send("POST", "/v1/namespaces/default/skills/echo-rest/executions", token, "{}").statusCode()).isEqualTo(404);
         } finally { restoreConfiguration(original); }
     }
 
@@ -535,16 +573,16 @@ class AuthenticatedExecutionApiIntegrationTest {
         CALLBACK.blockEntered = new CountDownLatch(1);
         CALLBACK.blockRelease = new CountDownLatch(1);
         String token = JwtTestTokens.token("shutdown-owner", List.of("REST_USER"));
-        var active = send("POST", "/v1/skills/echoRest/executions", token, "{\"message\":\"block\"}");
+        var active = send("POST", "/v1/namespaces/default/skills/echo-rest/executions", token, "{\"message\":\"block\"}");
         assertThat(active.statusCode()).isEqualTo(202);
         assertThat(CALLBACK.blockEntered.await(2, TimeUnit.SECONDS)).isTrue();
-        var waiting = send("POST", "/v1/skills/echoRest/executions", token, "{\"message\":\"queued\"}");
+        var waiting = send("POST", "/v1/namespaces/default/skills/echo-rest/executions", token, "{\"message\":\"queued\"}");
         String activeId = mapper.readTree(active.body()).path("id").asText();
         String waitingId = mapper.readTree(waiting.body()).path("id").asText();
         assertThat(coordinator.queuedCount()).isEqualTo(1);
 
         coordinator.onApplicationEvent(new ContextClosedEvent(applicationContext));
-        assertThat(send("POST", "/v1/skills/echoRest/executions", token, "{\"message\":\"new\"}").statusCode())
+        assertThat(send("POST", "/v1/namespaces/default/skills/echo-rest/executions", token, "{\"message\":\"new\"}").statusCode())
                 .isEqualTo(503);
         assertThat(send("GET", "/v1/executions/" + waitingId, token, null).statusCode()).isEqualTo(404);
         assertThat(coordinator.queuedCount()).isZero();
@@ -575,6 +613,32 @@ class AuthenticatedExecutionApiIntegrationTest {
         assertThat(Instant.now()).isAfterOrEqualTo(expiry);
     }
 
+    private String echoSkillPath(String token) throws Exception {
+        var listing = send("GET", DEFAULT_SKILLS, token, null);
+        assertThat(listing.statusCode()).isEqualTo(200);
+        for (JsonNode skill : mapper.readTree(listing.body())) {
+            if (skill.path("localName").asText().equals("echo-rest")) {
+                assertEchoIdentity(skill);
+                return "/v1/namespaces/" + skill.path("namespace").asText()
+                        + "/skills/" + skill.path("localName").asText();
+            }
+        }
+        throw new AssertionError("Catalog does not contain echo-rest");
+    }
+
+    private static void assertEchoIdentity(JsonNode response) {
+        assertThat(response.path("namespace").asText()).isEqualTo("default");
+        assertThat(response.path("localName").asText()).isEqualTo("echo-rest");
+        assertThat(response.has("name")).isFalse();
+        assertThat(response.has("skillName")).isFalse();
+    }
+
+    private void assertSkillRequestStatus(String path, String token, int expected) throws Exception {
+        assertThat(send("GET", path, token, null).statusCode()).as("GET %s", path).isEqualTo(expected);
+        assertThat(send("POST", path + "/executions", token, "{}").statusCode())
+                .as("POST %s/executions", path).isEqualTo(expected);
+    }
+
     private HttpResponse<String> send(String method, String path, String token, String body) throws Exception {
         var builder = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
                 .timeout(Duration.ofSeconds(5));
@@ -598,7 +662,7 @@ class AuthenticatedExecutionApiIntegrationTest {
         var publisher = HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(bytes));
         assertThat(publisher.contentLength()).isEqualTo(-1);
         var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port
-                + "/v1/skills/echoRest/executions"))
+                + "/v1/namespaces/default/skills/echo-rest/executions"))
                 .timeout(Duration.ofSeconds(5))
                 .header("Authorization", "Bearer " + token)
                 .header("Content-Type", "application/json")

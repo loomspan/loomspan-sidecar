@@ -37,8 +37,8 @@ class MountedSkillRegistrationIntegrationTest
         try (var context = runApplication(modelProperties()))
         {
             var catalog = context.getBean(SkillReloader.class).snapshot("default");
-            assertThat(catalog.skills()).extracting(descriptor -> descriptor.name())
-                    .containsExactly("default-mountedYamlSkill", "default-mountedYmlSkill");
+            assertThat(catalog.skills()).extracting(descriptor -> descriptor.qualifiedName())
+                    .containsExactly("default:mounted-yaml-skill", "default:mounted-yml-skill");
             assertThat(catalog.skills()).extracting(descriptor -> descriptor.kind())
                     .containsOnly(SkillKind.YAML);
         }
@@ -56,8 +56,8 @@ class MountedSkillRegistrationIntegrationTest
         try (var context = runApplication(modelProperties()))
         {
             assertThat(context.getBean(SkillReloader.class).snapshot("default").skills())
-                    .extracting(descriptor -> descriptor.name())
-                    .containsExactly("default-mountedYmlSkill");
+                    .extracting(descriptor -> descriptor.qualifiedName())
+                    .containsExactly("default:mounted-yml-skill");
         }
     }
 
@@ -85,7 +85,7 @@ class MountedSkillRegistrationIntegrationTest
     void databaseModeIgnoresNonemptyConfiguredFrameworkStartupSource() throws IOException {
         Path skill = temporaryDirectory.resolve("external-rest.yaml");
         Files.writeString(skill, """
-                name: externalRest
+                name: external-rest
                 description: Must not bypass database selection.
                 executor: http
                 config: {target: missing, method: GET, path: /}

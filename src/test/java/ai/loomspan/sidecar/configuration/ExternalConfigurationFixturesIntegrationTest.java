@@ -41,9 +41,9 @@ class ExternalConfigurationFixturesIntegrationTest {
             }
         }
         var mapper = new YAMLMapper();
-        Set<String> expected = documents.stream().map(document -> "default-" + mapper.readTree(document.yaml())
+        Set<String> expected = documents.stream().map(document -> "default:" + mapper.readTree(document.yaml())
                 .path("name").asText()).collect(Collectors.toSet());
-        assertThat(expected).hasSize(documents.size()).contains("default-assetContext", "default-tsTriageFixed");
+        assertThat(expected).hasSize(documents.size()).contains("default:asset-context", "default:ts-triage-fixed");
         String authored = Files.readString(fixture.resolve("sidecar.yaml"))
                 .replace("http://fixtures:8080", "http://127.0.0.1:9")
                 .replace("http://python:8080", "http://127.0.0.1:9");
@@ -91,7 +91,7 @@ class ExternalConfigurationFixturesIntegrationTest {
 
     private Set<String> skills(ConfigurableApplicationContext context) {
         return context.getBean(SkillReloader.class).snapshot("default").skills().stream()
-                .map(skill -> skill.name()).collect(Collectors.toSet());
+                .map(skill -> skill.qualifiedName()).collect(Collectors.toSet());
     }
 
     private ConfigurableApplicationContext start(String name, String... extra) {

@@ -18,13 +18,18 @@ Java and synchronous and asynchronous Python callers can take a catalog entry, s
 
 ## Acceptance criteria
 
-- [ ] Java and both Python clients list an explicit namespace and use a returned pair with a hyphenated local name for lookup and submission. Requests use separate path segments, preserve the supplied input, and poll by execution ID. Parsed catalog and execution models expose the same pair.
-- [ ] Public SDK examples and naming-related tests exercise the replacement signatures, including convenience methods that accept a target. SDKs expose no obsolete single-name call or fallback.
-- [ ] The runnable quickstart submits the renamed planner in `default`; its references resolve to the intended renamed leaves and their HTTP executor. Consumer documentation and packaged examples show the current calls and declarations without migration instructions.
+- [x] Java and both Python clients list an explicit namespace and use a returned pair with a hyphenated local name for lookup and submission. Requests use separate path segments, preserve the supplied input, and poll by execution ID. Parsed catalog and execution models expose the same pair.
+- [x] Public SDK examples and naming-related tests exercise the replacement signatures, including convenience methods that accept a target. SDKs expose no obsolete single-name call or fallback.
+- [x] The runnable quickstart submits the renamed planner in `default`; its references resolve to the intended renamed leaves and their HTTP executor. Consumer documentation and packaged examples show the current calls and declarations without migration instructions.
 
 ## Context
 
 Sequence integration verification after the Sidecar naming ticket supplies the new routes and response fields. This ticket owns client and example adoption. It introduces no publication capability, SDK authentication change or Cloud work.
+
+The [SDK review](../reviews/2026-11-24-sdk-and-example-portable-skill-names-review-2.md)
+verified the client contract and installed examples. The [Sidecar testing
+plan](../plans/2026-11-24-sidecar-portable-skill-names-testing.md#step-4-verification-on-2026-11-24)
+records the combined quickstart and SDK verification against the actual routes.
 
 ## Execution profile
 

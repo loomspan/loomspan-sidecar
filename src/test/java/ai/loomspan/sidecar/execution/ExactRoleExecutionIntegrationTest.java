@@ -77,7 +77,7 @@ class ExactRoleExecutionIntegrationTest {
 
     private HttpResponse<String> post(String token) throws Exception {
         var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port
-                        + "/v1/skills/echoRest/executions"))
+                        + "/v1/namespaces/default/skills/echo-rest/executions"))
                 .timeout(Duration.ofSeconds(5))
                 .header("Authorization", "Bearer " + token)
                 .header("Content-Type", "application/json")

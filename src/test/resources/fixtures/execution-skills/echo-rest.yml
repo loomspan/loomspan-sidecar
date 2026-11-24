@@ -1,4 +1,4 @@
-name: echoRest
+name: echo-rest
 description: Echo a message through the application REST handler.
 executor: http
 config: {target: callback, method: POST, path: /echo, body: {source: input}}

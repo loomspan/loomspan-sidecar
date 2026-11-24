@@ -84,7 +84,7 @@ class HttpFailureEnvelopeIntegrationTest {
                 String token = JwtTestTokens.token("transport-owner", List.of());
                 var mapper = new ObjectMapper();
                 for (var scenario : Map.of("timeout", "transport failed", "oversize", "size limit", "media", "cannot be decoded").entrySet()) {
-                    var accepted = client.send(request(base + "/v1/skills/" + scenario.getKey() + "/executions", token)
+                    var accepted = client.send(request(base + "/v1/namespaces/default/skills/" + scenario.getKey() + "/executions", token)
                             .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString("{}")).build(),
                             HttpResponse.BodyHandlers.ofString());
                     assertThat(accepted.statusCode()).isEqualTo(202);

@@ -67,8 +67,10 @@ the ciphertext and must not be renamed. The manifest structure is:
 ```
 
 `payloads` inventories every entry except the manifest exactly once. Skill
-paths use five decimal digits starting at zero with no gaps; the generated
-ordinal defines the original skill order. The parser checks the supported format,
+paths use the case-sensitive form `skills/00000.yaml`, with five decimal digits
+starting at zero and no gaps. The generated ordinal defines the original skill
+order. A `sourceLabel` such as `Orders/Lookup.YAML` is preserved verbatim for
+diagnostics. The parser checks the supported format,
 inventory, entry names, duplicate names/labels, SHA-256 digests, ZIP CRC and
 sizes, UTF-8, JSON shape, and YAML mapping roots. Informational producer
 versions do not determine compatibility. It performs no filesystem extraction,

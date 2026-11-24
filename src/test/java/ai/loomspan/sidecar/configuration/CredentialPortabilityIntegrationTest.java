@@ -132,7 +132,7 @@ class CredentialPortabilityIntegrationTest {
         var auth = new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(jwt);
         var owner = ai.loomspan.sidecar.security.ExecutionOwner.from(auth);
         var coordinator = context.getBean(ai.loomspan.sidecar.execution.ExecutionCoordinator.class);
-        var id = coordinator.admit("mountedYamlSkill", Map.of(), 2, owner, auth);
+        var id = coordinator.admit("default", "mounted-yaml-skill", Map.of(), 2, owner, auth);
         long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
         while (System.nanoTime() < deadline) {
             var result = coordinator.find(id, owner).orElseThrow();

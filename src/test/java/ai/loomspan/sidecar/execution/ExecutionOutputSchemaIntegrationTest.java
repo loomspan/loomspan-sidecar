@@ -40,7 +40,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class ExecutionOutputSchemaIntegrationTest {
     private static final String CUSTOMER_MESSAGE = "I already contacted support about my delivery.";
-    private static final String TRIAGE = "tsTriageStructured";
+    private static final String TRIAGE = "ts-triage-structured";
     private static final String DEPENDENT = "dependent";
     private static final String FIRST = "first";
     private static final String SECOND = "second";
@@ -62,7 +62,7 @@ class ExecutionOutputSchemaIntegrationTest {
     void exposesSelectedTriageOutputFailure(Diagnostics diagnostics) throws Exception {
         writeSkill("parent", parent(DEPENDENT) + CUSTOMER_SCHEMA + """
                 allowed_skills:
-                  - name: tsTriageStructured
+                  - name: ts-triage-structured
                     required: true
                     max_tasks: 1
                     input_bindings:
@@ -71,10 +71,10 @@ class ExecutionOutputSchemaIntegrationTest {
                     required: true
                     max_tasks: 1
                     input_bindings:
-                      /probability: {from: child_result, skill: tsTriageStructured, path: /repeatContactProbability}
+                      /probability: {from: child_result, skill: ts-triage-structured, path: /repeatContactProbability}
                 """);
         writeSkill(TRIAGE, """
-                name: tsTriageStructured
+                name: ts-triage-structured
                 description: Assess whether this is a repeat contact.
                 executor: typesafe
                 input_transform:
@@ -165,7 +165,7 @@ class ExecutionOutputSchemaIntegrationTest {
     private static JsonNode assertOutputSchemaFailure(JsonNode snapshot, String child, String pointer) {
         JsonNode failure = snapshot.path("failure");
         assertThat(failure.path("kind").asText()).as("terminal failure in %s", snapshot).isEqualTo("OUTPUT_SCHEMA");
-        assertThat(failure.path("message").asText()).isEqualTo("Skill 'parent' execution failed.");
+        assertThat(failure.path("message").asText()).isEqualTo("Skill 'default:parent' execution failed.");
         assertThat(failure.path("producingSkillName").asText()).isEqualTo(canonical(child));
         assertThat(failure.propertyNames()).containsExactlyInAnyOrder("kind", "message", "producingSkillName", "issues");
         JsonNode issues = failure.path("issues");
@@ -224,7 +224,7 @@ class ExecutionOutputSchemaIntegrationTest {
     }
 
     private static String canonical(String name) {
-        return "default-" + name;
+        return "default:" + name;
     }
 
     private static Map<String, Object> task(String child, String group, String... dependencies) {
@@ -358,7 +358,7 @@ class ExecutionOutputSchemaIntegrationTest {
         }
 
         URI submit(String input) throws Exception {
-            var request = HttpRequest.newBuilder(base.resolve("/v1/skills/parent/executions"))
+            var request = HttpRequest.newBuilder(base.resolve("/v1/namespaces/default/skills/parent/executions"))
                     .timeout(Duration.ofSeconds(5))
                     .header("Authorization", "Bearer " + owner)
                     .header("Content-Type", "application/json")
@@ -383,7 +383,8 @@ class ExecutionOutputSchemaIntegrationTest {
                 if (status.equals("FAILED") || status.equals("COMPLETED")) break;
                 Thread.sleep(20);
             } while (Instant.now().isBefore(deadline));
-            assertThat(snapshot.path("skillName").asText()).isEqualTo("parent");
+            assertThat(snapshot.path("namespace").asText()).isEqualTo("default");
+            assertThat(snapshot.path("localName").asText()).isEqualTo("parent");
             assertThat(snapshot.path("status").asText()).as("terminal snapshot: %s", snapshot).isEqualTo("FAILED");
             assertThat(snapshot.path("result").isNull()).isTrue();
             return snapshot;

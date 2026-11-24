@@ -80,7 +80,7 @@ class ManagementPersonalTokenHttpIntegrationTest {
             var execution = HttpRequest.newBuilder(URI.create(path)).header("Authorization", "Bearer " +
                     ai.loomspan.sidecar.support.JwtTestTokens.token("owner", java.util.List.of("MGT_VIEWER"))).GET().build();
             assertThat(anonymous.send(execution, HttpResponse.BodyHandlers.ofString()).body()).doesNotContain("executionTrust", "kids");
-            assertThat(bearer(token, "GET", "/v1/skills", null).statusCode()).isEqualTo(401);
+            assertThat(bearer(token, "GET", "/v1/namespaces/default/skills", null).statusCode()).isEqualTo(401);
             tokens.revoke(owner, id);
             assertThat(anonymous.send(get.build(), HttpResponse.BodyHandlers.ofString()).body()).doesNotContain("executionTrust", "kids");
             var expiring = tokens.issue(owner, identity.account(owner).version(), "read", clock.instant().plusSeconds(1));

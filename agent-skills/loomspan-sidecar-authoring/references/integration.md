@@ -119,9 +119,9 @@ Choose a namespace explicitly, including `default`. Catalog discovery exposes
 the descriptors in that namespace, including role-restricted skills. Each
 descriptor includes `namespace`, `localName` and nullable `outputSchema`.
 Pass the returned components as separate path segments for detail and submission.
-Each component matches `[a-z][a-z0-9]*(?:-[a-z0-9]+)*` and excludes the
-substrings `anthropic` and `claude`. The two components plus a two-character
-separator budget fit within 64 characters. Display the resolved pair as
+Each component has 1–64 characters, matches `[a-z][a-z0-9]*(?:-[a-z0-9]+)*`,
+and excludes the substrings `anthropic` and `claude`. The two components plus a
+two-character separator budget fit within 64 characters. Display the resolved pair as
 `namespace:local-name`.
 Authorization is enforced when POST validates the JSON-object input. Accepted
 requests return `202`, an `id`, and a `Location` header without waiting. Poll the
@@ -147,7 +147,7 @@ from a failed parent execution.
   "result": null,
   "failure": {
     "kind": "OUTPUT_SCHEMA",
-    "message": "Skill 'parent' execution failed.",
+    "message": "Skill 'default:parent' execution failed.",
     "producingSkillName": "default:ts-triage-structured",
     "issues": [
       {
@@ -171,11 +171,13 @@ $accepted = Invoke-RestMethod "$skillUrl/executions" `
 Invoke-RestMethod "http://localhost:8080/v1/executions/$($accepted.id)" -Headers $headers
 ```
 
-Missing or invalid credentials return `401`; malformed/non-object or invalid
-input returns `400` (with validation issues when available); denied roles return
-`403`; unknown, expired or foreign records return `404`; raw bodies over the
-configured limit return `413`; capacity exhaustion returns `429`; and admission
-during shutdown returns `503`. Transport errors use `application/problem+json`.
+Missing or invalid credentials return `401`. Malformed skill components,
+overlength pairs, and malformed or invalid input return `400`, with input
+validation issues when available. Denied roles return `403`. A valid but absent
+namespace or local name and unknown, expired or foreign executions return `404`.
+Raw bodies over the configured limit return `413`. Capacity exhaustion returns
+`429` and admission during shutdown returns `503`. Transport errors use
+`application/problem+json`.
 Malformed execution IDs return `400`; unsupported HTTP methods return `405`.
 All API responses carry `Cache-Control: no-store`. Closing a client connection
 does not cancel accepted work.

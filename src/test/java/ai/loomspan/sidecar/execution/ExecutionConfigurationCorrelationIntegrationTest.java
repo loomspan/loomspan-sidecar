@@ -39,13 +39,13 @@ class ExecutionConfigurationCorrelationIntegrationTest {
             if (scenario.equals("retry")) oldProvider.modelResponses().add("RETRY");
             if (scenario.equals("child")) {
                 oldProvider.modelResponses().add(SidecarApplicationFixture.completion("""
-                        {"capabilityName":"default-parent","createdAt":"2026-09-27T00:00:00Z","status":"VALID",
+                        {"capabilityName":"default:parent","createdAt":"2026-09-27T00:00:00Z","status":"VALID",
                         "tasks":[{"taskId":"child-task","title":"Call child","status":"PENDING",
-                        "capabilityName":"default-mountedYamlSkill","intent":"Call child","dependsOn":[],
+                        "capabilityName":"default:mounted-yaml-skill","intent":"Call child","dependsOn":[],
                         "expectedOutputs":["result"],"parallelGroup":null,"note":""}]}
                         """));
                 oldProvider.modelResponses().add(SidecarApplicationFixture.completion("""
-                        {"stepAction":"CALL_TOOL","taskId":"child-task","toolName":"default-mountedYamlSkill","toolArguments":{}}
+                        {"stepAction":"CALL_TOOL","taskId":"child-task","toolName":"default:mounted-yaml-skill","toolArguments":{}}
                         """));
                 oldProvider.modelResponses().add(SidecarApplicationFixture.completion("child-provider"));
                 oldProvider.modelResponses().add(SidecarApplicationFixture.completion("""
@@ -64,7 +64,7 @@ class ExecutionConfigurationCorrelationIntegrationTest {
                     concurrency: false
                     max_steps: 2
                     allowed_skills:
-                      - name: mountedYamlSkill
+                      - name: mounted-yaml-skill
                     """);
             SidecarApplicationFixture.seedDatabase(database, List.of(skill, parent),
                     modelConfiguration(oldProvider.modelPort()), Map.of("fixture.model.key", "local-test-key"));
@@ -89,7 +89,7 @@ class ExecutionConfigurationCorrelationIntegrationTest {
                 var authentication = new JwtAuthenticationToken(jwt);
                 var owner = ExecutionOwner.from(authentication);
                 try {
-                    var oldId = coordinator.admit(scenario.equals("child") ? "parent" : "mountedYamlSkill", Map.of(), 2, owner, authentication);
+                    var oldId = coordinator.admit("default", scenario.equals("child") ? "parent" : "mounted-yaml-skill", Map.of(), 2, owner, authentication);
                     assertThat(oldProvider.awaitModelBlock(3, TimeUnit.SECONDS)).isTrue();
                     var draft = new ConfigurationDraft(oldSnapshot);
                     draft.replaceContent(new ManagedConfiguration(oldSnapshot.configuration().skillDocuments(), modelConfiguration(newProvider.modelPort())
@@ -98,7 +98,7 @@ class ExecutionConfigurationCorrelationIntegrationTest {
                     assertThat(ai.loomspan.sidecar.support.TestDrafts.validate(service, draft, newCredentials).successful()).isTrue();
                     var newSnapshot = context.getBean(ai.loomspan.sidecar.support.RuntimePublicationFixture.class)
                             .publish(draft, newCredentials);
-                    var newId = coordinator.admit("mountedYamlSkill", Map.of(), 2, owner, authentication);
+                    var newId = coordinator.admit("default", "mounted-yaml-skill", Map.of(), 2, owner, authentication);
                     var newResult = awaitTerminal(coordinator, newId, owner);
                     assertThat(newResult.status()).isEqualTo(ExecutionStatus.COMPLETED);
                     assertThat(newResult.result()).isEqualTo("new-provider");
@@ -176,7 +176,7 @@ class ExecutionConfigurationCorrelationIntegrationTest {
                         ai.loomspan.sidecar.support.JwtTestTokens.token("owner", List.of()));
                 var authentication = new JwtAuthenticationToken(jwt);
                 var owner = ExecutionOwner.from(authentication);
-                var id = coordinator.admit("mountedYamlSkill", Map.of(), 2, owner, authentication);
+                var id = coordinator.admit("default", "mounted-yaml-skill", Map.of(), 2, owner, authentication);
                 var terminal = awaitTerminal(coordinator, id, owner);
                 assertThat(terminal.configurationSnapshotId()).isEqualTo(a.localId());
                 assertThat(terminal.status()).isEqualTo(ExecutionStatus.COMPLETED);
@@ -202,9 +202,9 @@ class ExecutionConfigurationCorrelationIntegrationTest {
         });
         server.start();
         try {
-            Path skill = directory.resolve("echoRest.yaml");
+            Path skill = directory.resolve("echo-rest.yaml");
             Files.writeString(skill, """
-                    name: echoRest
+                    name: echo-rest
                     description: Captured generation fixture.
                     executor: http
                     config: {target: callback, method: GET, path: /echo}
@@ -233,7 +233,7 @@ class ExecutionConfigurationCorrelationIntegrationTest {
                         ai.loomspan.sidecar.support.JwtTestTokens.token("owner", List.of()));
                 var authentication = new JwtAuthenticationToken(jwt);
                 var owner = ExecutionOwner.from(authentication);
-                var id = coordinator.admit("echoRest", Map.of(), 2, owner, authentication);
+                var id = coordinator.admit("default", "echo-rest", Map.of(), 2, owner, authentication);
                 ExecutionSnapshot terminal = awaitTerminal(coordinator, id, owner);
                 assertThat(terminal.status()).isEqualTo(ExecutionStatus.COMPLETED);
                 assertThat(terminal.result()).isEqualTo("old-route");

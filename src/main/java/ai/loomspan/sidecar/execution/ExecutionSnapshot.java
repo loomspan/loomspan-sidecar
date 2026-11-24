@@ -6,7 +6,7 @@ import java.util.UUID;
 
 import ai.loomspan.api.SkillExecutionEvent;
 
-public record ExecutionSnapshot(UUID id, String skillName, ExecutionStatus status,
+public record ExecutionSnapshot(UUID id, String namespace, String localName, ExecutionStatus status,
         Instant createdAt, Instant completedAt, String result, ExecutionFailure failure,
         List<SkillExecutionEvent> events, UUID configurationSnapshotId) {
     public ExecutionSnapshot {
